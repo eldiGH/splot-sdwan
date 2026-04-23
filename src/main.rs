@@ -5,16 +5,27 @@ pub mod env;
 pub mod managers;
 pub mod pipeline;
 pub mod protocols;
+pub mod splot_config;
 pub mod types;
 pub mod uci;
+pub mod wg;
 
 fn main() {
     env::init();
 
+    let private_key = splot_config::ensure_initialized();
+
     let config = Config::parse_file("./splot.json").unwrap();
+    let own_name = config
+        .find_node_name_by_public_key(&wg::get_pubkey(&private_key))
+        .unwrap_or_else(|| {
+            eprintln!("Error: this router's public key was not found in splot.json.");
+            eprintln!("Add this node to the config and try again.");
+            std::process::exit(1);
+        });
 
     UciPipeline::new()
         .add(Box::new(NetworkManager))
-        .run(&config)
+        .run(&config, &own_name)
         .unwrap();
 }

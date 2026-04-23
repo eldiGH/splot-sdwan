@@ -93,9 +93,35 @@ impl UciExecutor {
     }
 
     pub fn show(file: &str) -> Child {
-        let mut command = Self::base();
-        command.arg("show").arg(file);
+        Self::base()
+            .arg("show")
+            .arg(file)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap()
+    }
 
-        command.stdout(Stdio::piped()).spawn().unwrap()
+    pub fn get(path: &str) -> Option<String> {
+        let output = Self::base()
+            .arg("get")
+            .arg(path)
+            .stdout(Stdio::piped())
+            .output()
+            .unwrap();
+
+        if output.status.success() {
+            let value = String::from_utf8(output.stdout).ok()?;
+            Some(value.trim_end().to_owned())
+        } else {
+            None
+        }
+    }
+
+    pub fn set(path: &str, value: &str) {
+        Self::base()
+            .arg("set")
+            .arg(format!("{path}='{value}'"))
+            .output()
+            .unwrap();
     }
 }

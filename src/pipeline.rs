@@ -29,13 +29,13 @@ impl UciPipeline {
         self
     }
 
-    pub fn run(&self, config: &Config) -> Result<(), ManagerErrors> {
+    pub fn run(&self, config: &Config, own_name: &str) -> Result<(), ManagerErrors> {
         let prefixes_to_delete = self.generate_delete_config_prefixes();
 
         let mut commands = generate_delete_commands(&prefixes_to_delete);
 
         for manager in &self.managers {
-            commands.extend(manager.generate_commands(config, "Jawo")?);
+            commands.extend(manager.generate_commands(config, own_name)?);
         }
 
         for file in prefixes_to_delete.into_keys() {

@@ -133,4 +133,14 @@ impl Config {
 
         Ok(config)
     }
+
+    pub fn find_node_name_by_public_key(&self, pubkey: &str) -> Option<String> {
+        for (name, node) in &self.nodes {
+            if node.public_key == pubkey {
+                return Some(name.clone());
+            }
+        }
+
+        None
+    }
 }
