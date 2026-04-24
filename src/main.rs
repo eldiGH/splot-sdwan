@@ -1,4 +1,8 @@
-use crate::{config::Config, managers::network::NetworkManager, pipeline::UciPipeline};
+use crate::{
+    config::Config,
+    managers::{firewall::FirewallManager, network::NetworkManager},
+    pipeline::UciPipeline,
+};
 
 pub mod config;
 pub mod env;
@@ -26,6 +30,7 @@ fn main() {
 
     UciPipeline::new()
         .add(Box::new(NetworkManager))
+        .add(Box::new(FirewallManager))
         .run(&config, &own_name)
         .unwrap();
 }

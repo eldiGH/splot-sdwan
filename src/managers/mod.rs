@@ -1,5 +1,6 @@
 use crate::{config::Config, uci::UciBatchCommand};
 
+pub mod firewall;
 pub mod network;
 
 #[derive(Debug)]

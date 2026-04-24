@@ -1,8 +1,9 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{self, HashMap, HashSet},
     fs::File,
     hash::Hash,
     net::Ipv4Addr,
+    ops::Deref,
 };
 
 use serde::Deserialize;
@@ -33,6 +34,21 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for OneOrMany<T> {
 
 #[derive(Debug)]
 pub struct OneOrManyUnique<T>(pub HashSet<T>);
+
+impl<T> Deref for OneOrManyUnique<T> {
+    type Target = HashSet<T>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a, T> IntoIterator for &'a OneOrManyUnique<T> {
+    type Item = &'a T;
+    type IntoIter = collections::hash_set::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
 
 impl<'de, T: Deserialize<'de> + Hash + Eq> Deserialize<'de> for OneOrManyUnique<T> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -73,19 +89,92 @@ pub struct NodeLanDevice {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct NodeHostedInterfaceClient {
+struct NodeHostedInterfaceClientRaw {
     pub public_key: String,
-    pub ip: IpSubnet,
+    pub address: IpSubnet,
     pub tags: Option<OneOrManyUnique<String>>,
 }
 
 #[derive(Deserialize, Debug)]
+#[serde(from = "NodeHostedInterfaceClientRaw")]
+pub struct NodeHostedInterfaceClient {
+    pub public_key: String,
+    pub address: IpSubnet,
+    pub ip: Ipv4Addr,
+    pub subnet: IpSubnet,
+    pub tags: Option<OneOrManyUnique<String>>,
+}
+
+impl From<NodeHostedInterfaceClientRaw> for NodeHostedInterfaceClient {
+    fn from(value: NodeHostedInterfaceClientRaw) -> Self {
+        Self {
+            address: value.address,
+            ip: value.address.ip(),
+            subnet: value.address.network(),
+            public_key: value.public_key,
+            tags: value.tags,
+        }
+    }
+}
+
+#[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+struct NodeHostedInterfaceRaw {
+    pub listen_port: u16,
+    pub address: IpSubnet,
+    pub tags: Option<OneOrManyUnique<String>>,
+    pub clients: HashMap<String, NodeHostedInterfaceClient>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(from = "NodeHostedInterfaceRaw")]
 pub struct NodeHostedInterface {
     pub listen_port: u16,
     pub address: IpSubnet,
-    pub tag: Option<String>,
+    pub ip: Ipv4Addr,
+    pub subnet: IpSubnet,
+    pub tags: Option<OneOrManyUnique<String>>,
     pub clients: HashMap<String, NodeHostedInterfaceClient>,
+}
+
+impl From<NodeHostedInterfaceRaw> for NodeHostedInterface {
+    fn from(value: NodeHostedInterfaceRaw) -> Self {
+        Self {
+            address: value.address,
+            ip: value.address.ip(),
+            subnet: value.address.network(),
+            clients: value.clients,
+            listen_port: value.listen_port,
+            tags: value.tags,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawNodeLan {
+    pub address: IpSubnet,
+    pub devices: Option<HashMap<String, NodeLanDevice>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(from = "RawNodeLan")]
+pub struct NodeLan {
+    pub address: IpSubnet,
+    pub devices: Option<HashMap<String, NodeLanDevice>>,
+    pub ip: Ipv4Addr,
+    pub subnet: IpSubnet,
+}
+
+impl From<RawNodeLan> for NodeLan {
+    fn from(value: RawNodeLan) -> Self {
+        NodeLan {
+            address: value.address,
+            devices: value.devices,
+            subnet: value.address.network(),
+            ip: value.address.ip(),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -95,10 +184,10 @@ pub struct Node {
     pub endpoint: Ipv4Addr,
     pub listen_port: u16,
     pub mesh_ip: IpSubnet,
-    pub lan_subnet: IpSubnet,
-    pub lan_devices: Option<HashMap<String, NodeLanDevice>>,
+    pub lan: NodeLan,
     pub hosted_interfaces: Option<HashMap<String, NodeHostedInterface>>,
     pub exposed_services: Option<HashMap<String, NodeExposedService>>,
+    pub tags: Option<OneOrManyUnique<String>>,
 }
 
 #[derive(Deserialize, Debug)]

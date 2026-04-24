@@ -34,7 +34,7 @@ fn build_interfaces_from_node_hosted_interface(
     for (client_name, client) in &node.clients {
         clients.push(WgClient {
             description: client_name.clone(),
-            allowed_ips: vec![client.ip],
+            allowed_ips: vec![client.address],
             public_key: client.public_key.clone(),
             route_allowed_ips: false,
             endpoint_host: None,
@@ -67,7 +67,7 @@ fn build_interfaces_from_config(
             continue;
         }
 
-        let mut allowed_ips = vec![node.mesh_ip, node.lan_subnet];
+        let mut allowed_ips = vec![node.mesh_ip, node.lan.subnet];
 
         if let Some(hosted_interfaces) = &node.hosted_interfaces {
             allowed_ips.extend(hosted_interfaces.values().map(|i| i.address));
@@ -176,7 +176,6 @@ fn get_interface_uci_create_commands(interface: &WgInterface) -> Vec<UciBatchCom
     commands
 }
 
-#[derive(Default)]
 pub struct NetworkManager;
 
 impl UciManager for NetworkManager {

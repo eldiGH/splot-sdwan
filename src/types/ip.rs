@@ -2,7 +2,7 @@ use std::net::Ipv4Addr;
 
 use serde::Deserialize;
 
-#[derive(Deserialize, Debug, Clone, Copy)]
+#[derive(Deserialize, Debug, Clone, Copy, Hash, PartialEq, Eq)]
 #[serde(try_from = "String")]
 pub struct IpSubnet {
     addr: Ipv4Addr,
@@ -78,6 +78,10 @@ impl IpSubnet {
             addr,
             prefix: self.prefix,
         }
+    }
+
+    pub fn ip(&self) -> Ipv4Addr {
+        self.addr
     }
 
     pub fn from_addr(addr: Ipv4Addr, prefix: u8) -> Result<Self, IpSubnetErrors> {
