@@ -71,11 +71,17 @@ fn build_interfaces_from_config(
             continue;
         }
 
+        let mut allowed_ips = vec![node.mesh_ip, node.lan_subnet];
+
+        if let Some(hosted_interfaces) = &node.hosted_interfaces {
+            allowed_ips.extend(hosted_interfaces.values().map(|i| i.address));
+        }
+
         clients.push(WgClient {
             description: name.clone(),
             public_key: node.public_key.clone(),
-            allowed_ips: vec![node.mesh_ip.clone(), node.lan_subnet.clone()],
-            route_allowed_ips: false,
+            allowed_ips,
+            route_allowed_ips: true,
             endpoint_host: Some(node.endpoint),
             endpoint_port: Some(node.listen_port),
         })
