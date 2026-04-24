@@ -12,8 +12,6 @@ struct WgInterface {
     private_key: String,
     listen_port: u16,
     addresses: Vec<IpSubnet>,
-    no_host_route: bool,
-    multipath: bool,
 
     clients: Vec<WgClient>,
 }
@@ -48,8 +46,6 @@ fn build_interfaces_from_node_hosted_interface(
         name: format!("spl_{}", name),
         addresses: vec![node.address],
         listen_port: node.listen_port,
-        multipath: false,
-        no_host_route: false,
         private_key: String::new(),
         clients,
     }
@@ -90,8 +86,6 @@ fn build_interfaces_from_config(
     let mesh_interface = WgInterface {
         addresses: vec![own_node.mesh_ip.clone()],
         listen_port: own_node.listen_port,
-        multipath: false,
-        no_host_route: false,
         private_key: String::new(),
         name: format!("spl_mesh_{}", own_name),
         clients,
@@ -137,16 +131,6 @@ fn get_interface_uci_create_commands(interface: &WgInterface) -> Vec<UciBatchCom
             address.to_string(),
         ));
     }
-
-    commands.push(UciBatchCommand::set(
-        prop("nohostroute"),
-        if interface.no_host_route { "1" } else { "0" },
-    ));
-
-    commands.push(UciBatchCommand::set(
-        prop("multipath"),
-        if interface.multipath { "on" } else { "off" },
-    ));
 
     let peer_config_name = format!("wireguard_{}", interface.name);
     for (i, client) in interface.clients.iter().enumerate() {
