@@ -68,7 +68,7 @@ impl UciExecutor {
         command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::inherit());
 
         command
     }

@@ -5,8 +5,10 @@ use crate::{
 };
 
 pub mod config;
+pub mod consts;
 pub mod env;
 pub mod managers;
+pub mod naming;
 pub mod pipeline;
 pub mod protocols;
 pub mod splot_config;

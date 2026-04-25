@@ -66,12 +66,16 @@ impl std::fmt::Display for IpSubnet {
 }
 
 impl IpSubnet {
+    pub fn from_ip(ip: Ipv4Addr, prefix: u8) -> Result<Self, IpSubnetErrors> {
+        if prefix > 32 {
+            return Err(IpSubnetErrors::InvalidPrefix(prefix.to_string()));
+        }
+
+        Ok(Self { addr: ip, prefix })
+    }
+
     pub fn network(&self) -> Self {
-        let mask: u32 = if self.prefix == 0 {
-            0
-        } else {
-            !0u32 << (32 - self.prefix)
-        };
+        let mask = self.mask();
         let addr = Ipv4Addr::from_bits(self.addr.to_bits() & mask);
 
         Self {
@@ -84,11 +88,21 @@ impl IpSubnet {
         self.addr
     }
 
-    pub fn from_addr(addr: Ipv4Addr, prefix: u8) -> Result<Self, IpSubnetErrors> {
-        if prefix > 32 {
-            return Err(IpSubnetErrors::InvalidPrefix(prefix.to_string()));
-        }
+    pub fn contains(&self, ip: Ipv4Addr) -> bool {
+        let mask = self.mask();
 
-        Ok(Self { addr, prefix })
+        (ip.to_bits() & mask) == (self.addr.to_bits() & mask)
+    }
+
+    pub fn mask(&self) -> u32 {
+        if self.prefix == 0 {
+            0
+        } else {
+            !0u32 << (32 - self.prefix)
+        }
+    }
+
+    pub fn prefix(&self) -> u8 {
+        self.prefix
     }
 }

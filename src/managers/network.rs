@@ -1,8 +1,12 @@
 use std::net::Ipv4Addr;
 
+use const_format::concatcp;
+
 use crate::{
-    config::{Config, NodeHostedInterface},
+    config::{Config, NodeVpnInterface},
+    consts::{self},
     managers::{ManagerErrors, UciManager},
+    naming,
     types::ip::IpSubnet,
     uci::UciBatchCommand,
 };
@@ -25,16 +29,13 @@ struct WgClient {
     endpoint_port: Option<u16>,
 }
 
-fn build_interfaces_from_node_hosted_interface(
-    name: &str,
-    node: &NodeHostedInterface,
-) -> WgInterface {
+fn build_interfaces_from_node_vpn_interface(name: &str, node: &NodeVpnInterface) -> WgInterface {
     let mut clients = Vec::new();
 
     for (client_name, client) in &node.clients {
         clients.push(WgClient {
             description: client_name.clone(),
-            allowed_ips: vec![client.address],
+            allowed_ips: vec![IpSubnet::from_ip(client.ip, 32).unwrap()],
             public_key: client.public_key.clone(),
             route_allowed_ips: false,
             endpoint_host: None,
@@ -43,7 +44,7 @@ fn build_interfaces_from_node_hosted_interface(
     }
 
     WgInterface {
-        name: format!("spl_{}", name),
+        name: naming::vpn_interface_name(name),
         addresses: vec![node.address],
         listen_port: node.listen_port,
         private_key: String::new(),
@@ -69,8 +70,8 @@ fn build_interfaces_from_config(
 
         let mut allowed_ips = vec![node.mesh_ip, node.lan.subnet];
 
-        if let Some(hosted_interfaces) = &node.hosted_interfaces {
-            allowed_ips.extend(hosted_interfaces.values().map(|i| i.address));
+        if let Some(vpn_interfaces) = &node.vpn_interfaces {
+            allowed_ips.extend(vpn_interfaces.values().map(|i| i.address));
         }
 
         clients.push(WgClient {
@@ -87,17 +88,17 @@ fn build_interfaces_from_config(
         addresses: vec![own_node.mesh_ip.clone()],
         listen_port: own_node.listen_port,
         private_key: String::new(),
-        name: format!("spl_mesh_{}", own_name),
+        name: naming::mesh_interface_name().to_owned(),
         clients,
     };
 
     let mut interfaces = vec![mesh_interface];
 
-    if let Some(hosted_interfaces) = &own_node.hosted_interfaces {
-        for (name, hosted_interface) in hosted_interfaces {
-            interfaces.push(build_interfaces_from_node_hosted_interface(
+    if let Some(vpn_interfaces) = &own_node.vpn_interfaces {
+        for (name, vpn_interface) in vpn_interfaces {
+            interfaces.push(build_interfaces_from_node_vpn_interface(
                 name,
-                hosted_interface,
+                vpn_interface,
             ))
         }
     }
@@ -199,10 +200,10 @@ impl UciManager for NetworkManager {
     }
 
     fn named_prefixes(&self) -> &'static [&'static str] {
-        &["spl_"]
+        &[consts::SPLOT_PREFIX]
     }
 
     fn anonymous_prefixes(&self) -> &'static [&'static str] {
-        &["wireguard_spl_"]
+        &[concatcp!("wireguard_", consts::SPLOT_PREFIX)]
     }
 }
