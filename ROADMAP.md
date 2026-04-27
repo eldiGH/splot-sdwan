@@ -15,7 +15,36 @@ A new `DhcpManager` implementing `UciManager` that generates static DHCP lease e
 
 ---
 
-## 2. Config validation
+## 2. Shared devices
+
+A top-level `sharedDevices` section for devices that roam across multiple nodes (phones, laptops). Defined once, propagated to every node that lists an address for it.
+
+**Config structure:**
+
+```json
+"sharedDevices": {
+  "Phone": {
+    "mac": ["aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"],
+    "tags": "admin",
+    "addresses": {
+      "HomeRouter": "192.168.1.50",
+      "OfficeRouter": "192.168.2.50"
+    },
+    "services": { ... }
+  }
+}
+```
+
+**Behavior:**
+
+- Each node looks up its own name in `addresses` — if present, the device is treated exactly like a `lanDevice` on that node (static DHCP lease per MAC, firewall rules, tag resolution)
+- Nodes not listed in `addresses` ignore the device entirely
+- Multiple MACs map to the same IP — valid for devices with separate ethernet and WiFi interfaces (mutually exclusive interfaces only; simultaneous same-subnet use is not supported)
+- `sharedDevices` names enter the global uniqueness namespace alongside all other names
+
+---
+
+## 3. Config validation
 
 Validate `splot.json` before any UCI commands are generated. Fail early with clear error messages.
 

@@ -1,15 +1,15 @@
 use std::net::Ipv4Addr;
 
-use const_format::concatcp;
-
 use crate::{
     config::{Config, NodeVpnInterface},
-    consts::{self},
-    managers::{ManagerErrors, UciManager},
+    consts,
+    managers::{ManagerErrors, UciManager, UciSectionBuilder},
     naming,
     types::ip::IpSubnet,
     uci::UciBatchCommand,
 };
+
+const FILE_NAME: &str = "network";
 
 struct WgInterface {
     name: String,
@@ -20,6 +20,28 @@ struct WgInterface {
     clients: Vec<WgClient>,
 }
 
+impl WgInterface {
+    fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
+        let mut commands = UciSectionBuilder::new(FILE_NAME, &self.name, "interface")
+            .set("proto", "wireguard")
+            .set("private_key", &self.private_key)
+            .set("listen_port", &self.listen_port.to_string())
+            .extend_list(
+                "address",
+                self.addresses.iter().map(|address| address.to_string()),
+            )
+            .build();
+
+        commands.extend(
+            self.clients
+                .iter()
+                .flat_map(|c| c.to_uci_commands(&self.name)),
+        );
+
+        commands
+    }
+}
+
 struct WgClient {
     description: String,
     public_key: String,
@@ -27,6 +49,33 @@ struct WgClient {
     route_allowed_ips: bool,
     endpoint_host: Option<Ipv4Addr>,
     endpoint_port: Option<u16>,
+}
+
+impl WgClient {
+    fn to_uci_commands(&self, interface_name: &str) -> Vec<UciBatchCommand> {
+        UciSectionBuilder::new(
+            FILE_NAME,
+            &self.description,
+            &format!("wireguard_{}", naming::interface(interface_name)),
+        )
+        .set("description", naming::name_prefixed(&self.description))
+        .set("public_key", &self.public_key)
+        .set(
+            "route_allowed_ips",
+            if self.route_allowed_ips { "1" } else { "0" },
+        )
+        .set("persistent_keepalive", "25")
+        .set_if_some(
+            "endpoint_host",
+            self.endpoint_host.map(|host| host.to_string()),
+        )
+        .set_if_some("endpoint_port", self.endpoint_port.map(|p| p.to_string()))
+        .extend_list(
+            "allowed_ips",
+            self.allowed_ips.iter().map(|ip| ip.to_string()),
+        )
+        .build()
+    }
 }
 
 fn build_interfaces_from_node_vpn_interface(name: &str, node: &NodeVpnInterface) -> WgInterface {
@@ -40,14 +89,14 @@ fn build_interfaces_from_node_vpn_interface(name: &str, node: &NodeVpnInterface)
             route_allowed_ips: false,
             endpoint_host: None,
             endpoint_port: None,
-        })
+        });
     }
 
     WgInterface {
-        name: naming::vpn_interface_name(name),
+        name: name.to_owned(),
         addresses: vec![node.address],
         listen_port: node.listen_port,
-        private_key: String::new(),
+        private_key: "TODO".to_owned(),
         clients,
     }
 }
@@ -61,7 +110,7 @@ fn build_interfaces_from_config(
         .get(own_name)
         .ok_or(ManagerErrors::OwnNodeNotFound)?;
 
-    let mut clients: Vec<WgClient> = Vec::new();
+    let mut clients = Vec::new();
 
     for (name, node) in &config.nodes {
         if name == own_name {
@@ -81,14 +130,14 @@ fn build_interfaces_from_config(
             route_allowed_ips: true,
             endpoint_host: Some(node.endpoint),
             endpoint_port: Some(node.listen_port),
-        })
+        });
     }
 
     let mesh_interface = WgInterface {
-        addresses: vec![own_node.mesh_ip.clone()],
+        addresses: vec![own_node.mesh_ip],
         listen_port: own_node.listen_port,
-        private_key: String::new(),
-        name: naming::mesh_interface_name().to_owned(),
+        private_key: "TODO".to_owned(),
+        name: consts::MESH_INTERFACE_RAW_NAME.to_owned(),
         clients,
     };
 
@@ -106,77 +155,6 @@ fn build_interfaces_from_config(
     Ok(interfaces)
 }
 
-fn get_interface_uci_create_commands(interface: &WgInterface) -> Vec<UciBatchCommand> {
-    let mut commands: Vec<UciBatchCommand> = Vec::new();
-
-    let interface_path = format!("network.{}", interface.name);
-
-    commands.push(UciBatchCommand::set(interface_path.clone(), "interface"));
-
-    let interface_path = interface_path;
-    let prop = |name: &str| format!("{interface_path}.{name}");
-
-    commands.push(UciBatchCommand::set(prop("proto"), "wireguard"));
-    commands.push(UciBatchCommand::set(
-        prop("private_key"),
-        &interface.private_key,
-    ));
-    commands.push(UciBatchCommand::set(
-        prop("listen_port"),
-        interface.listen_port.to_string(),
-    ));
-
-    for address in &interface.addresses {
-        commands.push(UciBatchCommand::add_list(
-            prop("addresses"),
-            address.to_string(),
-        ));
-    }
-
-    let peer_config_name = format!("wireguard_{}", interface.name);
-    for (i, client) in interface.clients.iter().enumerate() {
-        let peer =
-            |property_name: &str| format!("network.@{peer_config_name}[{i}].{property_name}");
-
-        commands.push(UciBatchCommand::add("network", &peer_config_name));
-        commands.push(UciBatchCommand::set(
-            peer("description"),
-            &client.description,
-        ));
-        commands.push(UciBatchCommand::set(peer("public_key"), &client.public_key));
-
-        for ip in &client.allowed_ips {
-            commands.push(UciBatchCommand::add_list(
-                peer("allowed_ips"),
-                ip.to_string(),
-            ));
-        }
-
-        commands.push(UciBatchCommand::set(
-            peer("route_allowed_ips"),
-            if client.route_allowed_ips { "1" } else { "0" },
-        ));
-
-        if let Some(endpoint_host) = &client.endpoint_host {
-            commands.push(UciBatchCommand::set(
-                peer("endpoint_host"),
-                endpoint_host.to_string(),
-            ))
-        }
-
-        if let Some(endpoint_port) = &client.endpoint_port {
-            commands.push(UciBatchCommand::set(
-                peer("endpoint_port"),
-                endpoint_port.to_string(),
-            ))
-        }
-
-        commands.push(UciBatchCommand::set(peer("persistent_keepalive"), "25"))
-    }
-
-    commands
-}
-
 pub struct NetworkManager;
 
 impl UciManager for NetworkManager {
@@ -187,23 +165,12 @@ impl UciManager for NetworkManager {
     ) -> Result<Vec<UciBatchCommand>, ManagerErrors> {
         let interfaces = build_interfaces_from_config(own_name, config)?;
 
-        let commands: Vec<UciBatchCommand> = interfaces
-            .iter()
-            .flat_map(get_interface_uci_create_commands)
-            .collect();
+        let commands = interfaces.iter().flat_map(|i| i.to_uci_commands());
 
-        Ok(commands)
+        Ok(commands.collect())
     }
 
     fn config_file(&self) -> &'static str {
-        "network"
-    }
-
-    fn named_prefixes(&self) -> &'static [&'static str] {
-        &[consts::SPLOT_PREFIX]
-    }
-
-    fn anonymous_prefixes(&self) -> &'static [&'static str] {
-        &[concatcp!("wireguard_", consts::SPLOT_PREFIX)]
+        FILE_NAME
     }
 }

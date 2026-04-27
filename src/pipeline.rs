@@ -1,10 +1,8 @@
-use std::{
-    collections::HashMap,
-    io::{BufRead, BufReader},
-};
+use std::io::{BufRead, BufReader};
 
 use crate::{
     config::Config,
+    consts,
     managers::{ManagerErrors, UciManager},
     uci::{UciBatchCommand, UciExecutor},
 };
@@ -30,15 +28,15 @@ impl UciPipeline {
     }
 
     pub fn run(&self, config: &Config, own_name: &str) -> Result<(), ManagerErrors> {
-        let prefixes_to_delete = self.generate_delete_config_prefixes();
+        let config_files_used: Vec<&'static str> = self.get_files_used().collect();
 
-        let mut commands = generate_delete_commands(&prefixes_to_delete);
+        let mut commands = generate_delete_commands(&config_files_used);
 
         for manager in &self.managers {
             commands.extend(manager.generate_commands(config, own_name)?);
         }
 
-        for file in prefixes_to_delete.into_keys() {
+        for file in config_files_used {
             commands.push(UciBatchCommand::commit(file));
         }
 
@@ -47,60 +45,34 @@ impl UciPipeline {
         Ok(())
     }
 
-    fn generate_delete_config_prefixes(&self) -> HashMap<String, Vec<(bool, String)>> {
-        let mut config_prefixes: HashMap<String, Vec<(bool, String)>> = HashMap::new();
-
-        for manager in &self.managers {
-            let config_file = manager.config_file();
-            let named_prefixes = manager.named_prefixes();
-            let anonymous_prefixes = manager.anonymous_prefixes();
-
-            let prefixes = config_prefixes.entry(config_file.to_owned()).or_default();
-
-            for named_prefix in named_prefixes {
-                prefixes.push((false, format!("{config_file}.{named_prefix}")));
-            }
-
-            for anonymous_prefix in anonymous_prefixes {
-                prefixes.push((true, format!("{config_file}.@{anonymous_prefix}")));
-            }
-        }
-
-        config_prefixes
+    fn get_files_used(&self) -> impl Iterator<Item = &'static str> {
+        self.managers.iter().map(|manager| manager.config_file())
     }
 }
 
-fn generate_delete_commands(
-    prefixes_to_delete: &HashMap<String, Vec<(bool, String)>>,
-) -> Vec<UciBatchCommand> {
+fn generate_delete_commands(files_used: &[&'static str]) -> Vec<UciBatchCommand> {
     let mut delete_commands: Vec<UciBatchCommand> = Vec::new();
 
-    for (file, prefixes) in prefixes_to_delete {
+    for file in files_used {
         let mut child = UciExecutor::show(file);
-
         let buf = BufReader::new(child.stdout.take().unwrap());
 
-        'line_loop: for line in buf.lines() {
+        let prefix = format!("{}.{}", file, consts::SPLOT_SECTION_PREFIX);
+
+        for line in buf.lines() {
             let line = line.unwrap();
 
-            for (is_anonymous, prefix) in prefixes {
-                if line.starts_with(prefix) {
-                    let rest = &line[prefix.len()..];
-                    match rest.find(|c| c == '=' || c == '.') {
-                        Some(pos) if rest.as_bytes()[pos] == b'=' => {
-                            let full = &line[..prefix.len() + pos];
-                            let command = if *is_anonymous {
-                                let base = full.rfind('[').map_or(full, |p| &full[..p]);
-                                UciBatchCommand::del(format!("{}[0]", base))
-                            } else {
-                                UciBatchCommand::del(full)
-                            };
-                            delete_commands.push(command);
-                            continue 'line_loop;
-                        }
-                        _ => break,
-                    }
-                }
+            if line.starts_with(&prefix) {
+                let rest = &line[prefix.len()..];
+
+                let Some(pos) = rest.find(|c| c == '=' || c == '.') else {
+                    continue;
+                };
+
+                let full = &line[..prefix.len() + pos];
+                let command = UciBatchCommand::del(full);
+
+                delete_commands.push(command);
             }
         }
 

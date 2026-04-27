@@ -76,6 +76,39 @@ While any node is in the "waiting for operator input" state, the master continuo
 
 ---
 
+## [MED] Dynamic device presence — local firewall
+
+A daemon running on each node that watches for DHCP lease events. When a known shared device's MAC address appears in the leases, the daemon dynamically applies the firewall rules for that device. When the lease expires or the device disconnects, the rules are removed.
+
+This is the DHCP-based counterpart to static shared device configuration — it enables roaming devices to gain firewall access automatically without needing a pre-assigned static IP.
+
+**How it works:**
+- Watch `/tmp/dhcp.leases` (or dnsmasq lease script hooks) for MAC addresses matching any `sharedDevice`
+- On appearance: generate and apply firewall rules for that device using its current leased IP
+- On expiry/removal: tear down those rules
+
+**Dependency:** Requires shared devices to be defined in the config (Roadmap item 2) so the daemon knows which MACs to watch for and what tags/services apply to them.
+
+---
+
+## [MED] Dynamic device presence — mesh-wide notification and DNS
+
+A daemon (same or separate from the local firewall daemon above) that broadcasts device presence events to all other nodes in the mesh. When a shared device appears on any node, all nodes (including the one it connected to) create or update a DNS record for it pointing to its current LAN IP on the hosting node.
+
+**How it works:**
+1. Local node detects a known shared device via DHCP lease
+2. Broadcasts a presence event to all other mesh nodes (IP, device name, MAC)
+3. All nodes update their local dnsmasq DNS record: `{deviceName}` → current IP
+4. On device disconnect: broadcast removal, all nodes delete or invalidate the DNS record
+
+**DNS integration:**
+This enables a dynamic variant of the Mesh-wide DNS explicit domain feature — `{deviceName}` resolves to wherever the device currently is, without knowing which node it's on in advance.
+
+**Inter-node communication:**
+The same broadcast/notification channel used here would also be needed by the Distributed Reload System. These two features could share a common inter-node messaging layer, or be implemented as separate lightweight connections — worth deciding when either is implemented.
+
+---
+
 ## [LOW] allowedIps / Client as Gateway
 
 Currently each VPN client has a single IP. Adding an optional `allowedIps` field would let a client act as a gateway to another network (e.g., a second router or a non-mesh subnet behind a VPN client).
