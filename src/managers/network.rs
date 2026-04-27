@@ -1,5 +1,7 @@
 use std::net::Ipv4Addr;
 
+use log::{debug, info, log_enabled, Level};
+
 use crate::{
     config::{Config, NodeVpnInterface},
     consts,
@@ -106,6 +108,8 @@ fn build_interfaces_from_node_vpn_interface(name: &str, node: &NodeVpnInterface)
 }
 
 fn build_interfaces_from_config(own_name: &str, config: &Config) -> Vec<WgInterface> {
+    info!("Generating network config for node '{own_name}'");
+
     let own_node = config
         .nodes
         .get(own_name)
@@ -129,6 +133,16 @@ fn build_interfaces_from_config(own_name: &str, config: &Config) -> Vec<WgInterf
             allowed_ips.extend(vpn_interfaces.values().map(|i| i.network));
         }
 
+        if log_enabled!(Level::Debug) {
+            debug!(
+                "  Mesh peer '{}': endpoint {}:{}, {} AllowedIPs",
+                name,
+                node.endpoint,
+                node.listen_port,
+                allowed_ips.len()
+            );
+        }
+
         clients.push(WgClient {
             description: name.clone(),
             public_key: node.public_key.clone(),
@@ -138,6 +152,11 @@ fn build_interfaces_from_config(own_name: &str, config: &Config) -> Vec<WgInterf
             endpoint_port: Some(node.listen_port),
         });
     }
+
+    info!(
+        "  Mesh interface: {} peer(s)",
+        clients.len()
+    );
 
     let mesh_interface = WgInterface {
         addresses: vec![
@@ -154,12 +173,17 @@ fn build_interfaces_from_config(own_name: &str, config: &Config) -> Vec<WgInterf
 
     if let Some(vpn_interfaces) = &own_node.vpn_interfaces {
         for (name, vpn_interface) in vpn_interfaces {
+            if log_enabled!(Level::Debug) {
+                debug!("  VPN interface '{name}': {} client(s)", vpn_interface.clients.len());
+            }
             interfaces.push(build_interfaces_from_node_vpn_interface(
                 name,
                 vpn_interface,
             ))
         }
     }
+
+    info!("  {} interface(s) total", interfaces.len());
 
     interfaces
 }

@@ -1,22 +1,15 @@
-use std::{fmt::Display, net::Ipv4Addr, str::FromStr};
+use std::{error::Error, fmt::Display, net::Ipv4Addr, str::FromStr};
 
 use serde::Deserialize;
 
-#[derive(Deserialize, Debug, Clone, Copy, Hash, PartialEq, Eq)]
-#[serde(try_from = "String")]
-pub struct Ipv4Interface {
-    addr: Ipv4Addr,
-    prefix: u8,
-}
-
 #[derive(Debug)]
-pub enum Ipv4InterfaceErrors {
+pub enum ParseCidrError {
     IpParse(String, std::net::AddrParseError),
     InvalidPrefix(String),
     NoPrefix(String),
 }
 
-impl Display for Ipv4InterfaceErrors {
+impl Display for ParseCidrError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::IpParse(address, error) => write!(f, "invalid address '{}': {}", address, error),
@@ -26,7 +19,7 @@ impl Display for Ipv4InterfaceErrors {
     }
 }
 
-impl std::error::Error for Ipv4InterfaceErrors {
+impl Error for ParseCidrError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::IpParse(_, e) => Some(e),
@@ -35,32 +28,94 @@ impl std::error::Error for Ipv4InterfaceErrors {
     }
 }
 
+fn parse_cidr(s: &str) -> Result<(Ipv4Addr, u8), ParseCidrError> {
+    let (ip, prefix) = s
+        .split_once('/')
+        .ok_or(ParseCidrError::NoPrefix(s.to_owned()))?;
+
+    let prefix: u8 = prefix
+        .parse()
+        .map_err(|_| ParseCidrError::InvalidPrefix(s.to_owned()))?;
+
+    if prefix > 32 {
+        return Err(ParseCidrError::InvalidPrefix(s.to_owned()));
+    }
+
+    let addr = ip
+        .parse()
+        .map_err(|e| ParseCidrError::IpParse(s.to_owned(), e))?;
+
+    Ok((addr, prefix))
+}
+
+fn mask_from_prefix(prefix: u8) -> u32 {
+    if prefix == 0 {
+        0
+    } else {
+        !0u32 << (32 - prefix)
+    }
+}
+
+fn fmt_cidr(ip: &Ipv4Addr, prefix: u8, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{ip}/{prefix}")
+}
+
+fn validate_interface_addr(ip: Ipv4Addr, prefix: u8) -> Result<Ipv4Interface, Ipv4InterfaceError> {
+    let bits = ip.to_bits();
+    let mask = mask_from_prefix(prefix);
+    if prefix < 32 && (bits & mask) == bits {
+        return Err(Ipv4InterfaceError::IsNetworkAddress(ip, prefix));
+    }
+
+    Ok(Ipv4Interface { addr: ip, prefix })
+}
+
+#[derive(Debug)]
+pub enum Ipv4InterfaceError {
+    ParseCidrError(ParseCidrError),
+    IsNetworkAddress(Ipv4Addr, u8),
+}
+
+impl Display for Ipv4InterfaceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ParseCidrError(error) => error.fmt(f),
+            Self::IsNetworkAddress(ip, prefix) => {
+                fmt_cidr(ip, *prefix, f)?;
+                write!(f, " is a network address, expected host address")
+            }
+        }
+    }
+}
+
+impl Error for Ipv4InterfaceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ParseCidrError(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[serde(try_from = "String")]
+pub struct Ipv4Interface {
+    addr: Ipv4Addr,
+    prefix: u8,
+}
+
 impl FromStr for Ipv4Interface {
-    type Err = Ipv4InterfaceErrors;
+    type Err = Ipv4InterfaceError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (ip, prefix) = s
-            .split_once('/')
-            .ok_or(Ipv4InterfaceErrors::NoPrefix(s.to_owned()))?;
+        let (addr, prefix) = parse_cidr(s).map_err(Ipv4InterfaceError::ParseCidrError)?;
 
-        let prefix: u8 = prefix
-            .parse()
-            .map_err(|_| Ipv4InterfaceErrors::InvalidPrefix(s.to_owned()))?;
-
-        if prefix > 32 {
-            return Err(Ipv4InterfaceErrors::InvalidPrefix(s.to_owned()));
-        }
-
-        let addr = ip
-            .parse()
-            .map_err(|e| Ipv4InterfaceErrors::IpParse(s.to_owned(), e))?;
-
-        Ok(Ipv4Interface { addr, prefix })
+        validate_interface_addr(addr, prefix)
     }
 }
 
 impl TryFrom<String> for Ipv4Interface {
-    type Error = Ipv4InterfaceErrors;
+    type Error = Ipv4InterfaceError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         value.parse()
@@ -69,93 +124,99 @@ impl TryFrom<String> for Ipv4Interface {
 
 impl std::fmt::Display for Ipv4Interface {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.addr, self.prefix)
+        fmt_cidr(&self.addr, self.prefix, f)
     }
 }
 
 impl Ipv4Interface {
-    pub fn from_ip(ip: Ipv4Addr, prefix: u8) -> Result<Self, Ipv4InterfaceErrors> {
-        if prefix > 32 {
-            return Err(Ipv4InterfaceErrors::InvalidPrefix(prefix.to_string()));
-        }
-
-        Ok(Self { addr: ip, prefix })
+    pub fn mask(&self) -> u32 {
+        mask_from_prefix(self.prefix)
     }
 
     pub fn network(&self) -> Ipv4Network {
-        let mask = self.mask();
-        let addr = Ipv4Addr::from_bits(self.addr.to_bits() & mask);
-
-        Ipv4Network(Self {
-            addr,
+        Ipv4Network {
+            addr: Ipv4Addr::from_bits(self.addr.to_bits() & self.mask()),
             prefix: self.prefix,
-        })
+        }
     }
 
     pub fn ip(&self) -> Ipv4Addr {
         self.addr
     }
 
-    pub fn contains(&self, ip: Ipv4Addr) -> bool {
-        let mask = self.mask();
-
-        (ip.to_bits() & mask) == (self.addr.to_bits() & mask)
-    }
-
-    pub fn mask(&self) -> u32 {
-        if self.prefix == 0 {
-            0
-        } else {
-            !0u32 << (32 - self.prefix)
-        }
-    }
-
     pub fn prefix(&self) -> u8 {
         self.prefix
     }
 
-    pub fn to_bits(self) -> u32 {
-        self.addr.to_bits()
+    pub fn from_ip(ip: Ipv4Addr, prefix: u8) -> Result<Self, Ipv4InterfaceError> {
+        if prefix > 32 {
+            return Err(Ipv4InterfaceError::ParseCidrError(
+                ParseCidrError::InvalidPrefix(prefix.to_string()),
+            ));
+        }
+
+        validate_interface_addr(ip, prefix)
+    }
+
+    pub fn is_in_same_network(&self, ip: Ipv4Addr) -> bool {
+        let mask = self.mask();
+
+        (ip.to_bits() & mask) == (self.addr.to_bits() & mask)
     }
 }
 
 #[derive(Debug)]
-pub enum Ipv4NetworkErrors {
-    Ipv4InterfaceError(Ipv4InterfaceErrors),
-    NotANetworkAddress(Ipv4Interface),
+pub enum Ipv4NetworkError {
+    ParseCidrError(ParseCidrError),
+    NotANetworkAddress(Ipv4Addr, u8),
 }
 
-impl Display for Ipv4NetworkErrors {
+impl Display for Ipv4NetworkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Ipv4InterfaceError(interface_error) => interface_error.fmt(f),
-            Self::NotANetworkAddress(interface) => write!(f, "not a network address: {interface}"),
+            Self::ParseCidrError(error) => error.fmt(f),
+            Self::NotANetworkAddress(ip, prefix) => {
+                fmt_cidr(ip, *prefix, f)?;
+                write!(f, " is not a network address")
+            }
+        }
+    }
+}
+
+impl Error for Ipv4NetworkError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ParseCidrError(e) => Some(e),
+            _ => None,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "String")]
-pub struct Ipv4Network(Ipv4Interface);
+pub struct Ipv4Network {
+    addr: Ipv4Addr,
+    prefix: u8,
+}
 
 impl FromStr for Ipv4Network {
-    type Err = Ipv4NetworkErrors;
+    type Err = Ipv4NetworkError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let ip_interface: Ipv4Interface =
-            s.parse().map_err(Ipv4NetworkErrors::Ipv4InterfaceError)?;
-        let bits = ip_interface.to_bits();
+        let (addr, prefix) = parse_cidr(s).map_err(Ipv4NetworkError::ParseCidrError)?;
+        let bits = addr.to_bits();
+        let mask = mask_from_prefix(prefix);
 
-        if (bits & ip_interface.mask()) != bits {
-            return Err(Ipv4NetworkErrors::NotANetworkAddress(ip_interface));
+        if (bits & mask) != bits {
+            return Err(Ipv4NetworkError::NotANetworkAddress(addr, prefix));
         }
 
-        Ok(Self(ip_interface))
+        Ok(Self { addr, prefix })
     }
 }
 
 impl TryFrom<String> for Ipv4Network {
-    type Error = Ipv4NetworkErrors;
+    type Error = Ipv4NetworkError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         value.parse()
@@ -164,16 +225,16 @@ impl TryFrom<String> for Ipv4Network {
 
 impl Display for Ipv4Network {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        fmt_cidr(&self.addr, self.prefix, f)
     }
 }
 
 impl Ipv4Network {
     pub fn ip(&self) -> Ipv4Addr {
-        self.0.ip()
+        self.addr
     }
 
     pub fn prefix(&self) -> u8 {
-        self.0.prefix()
+        self.prefix
     }
 }

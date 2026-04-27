@@ -1,5 +1,7 @@
 use std::{collections::HashSet, net::Ipv4Addr};
 
+use log::{debug, info, log_enabled, Level};
+
 use crate::{
     config::{Config, NodeLanDevice},
     managers::{UciManager, UciSectionBuilder},
@@ -71,7 +73,16 @@ impl UciManager for DhcpManager {
         config: &crate::config::Config,
         own_name: &str,
     ) -> Vec<UciBatchCommand> {
+        info!("Generating DHCP config for node '{own_name}'");
+
         let static_leases = get_static_leases(config, own_name);
+
+        info!("  {} static lease(s)", static_leases.len());
+        if log_enabled!(Level::Debug) {
+            for lease in &static_leases {
+                debug!("  Lease '{}': {} → {} MAC(s)", lease.name, lease.ip, lease.macs.len());
+            }
+        }
 
         static_leases
             .iter()

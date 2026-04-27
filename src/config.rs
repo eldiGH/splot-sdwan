@@ -220,9 +220,17 @@ impl From<serde_yml::Error> for ConfigError {
 
 impl Config {
     pub fn parse_file(path: &str) -> Result<Self, ConfigError> {
-        let file = File::open(path)?;
+        log::info!("Loading config from '{path}'");
 
-        let config = serde_yml::from_reader(file)?;
+        let file = File::open(path)?;
+        let config: Self = serde_yml::from_reader(file)?;
+
+        log::info!(
+            "Config loaded: {} node(s), {} client(s), mesh network {}",
+            config.nodes.len(),
+            config.clients.as_ref().map_or(0, |c| c.len()),
+            config.mesh_network,
+        );
 
         Ok(config)
     }

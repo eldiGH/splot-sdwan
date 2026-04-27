@@ -18,6 +18,7 @@ pub mod wg;
 
 fn main() {
     env::init();
+    env_logger::init();
 
     let private_key = splot_config::ensure_initialized();
 

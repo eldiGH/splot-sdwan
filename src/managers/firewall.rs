@@ -4,6 +4,8 @@ use std::{
     net::Ipv4Addr,
 };
 
+use log::{Level, debug, info, log_enabled};
+
 use crate::{
     config::{Config, Service},
     consts,
@@ -185,8 +187,10 @@ fn generate_rule_from_service(
                 .expect("allowFrom tag not found in resolution map")
                 .iter()
                 .filter(|resolution| match resolution {
-                    IpAddressNetwork::Ip(ip) => !dest_address.contains(*ip),
-                    IpAddressNetwork::Network(network) => !dest_address.contains(network.ip()),
+                    IpAddressNetwork::Ip(ip) => !dest_address.is_in_same_network(*ip),
+                    IpAddressNetwork::Network(network) => {
+                        !dest_address.is_in_same_network(network.ip())
+                    }
                 })
         })
         .cloned()
@@ -291,10 +295,34 @@ impl UciManager for FirewallManager {
     }
 
     fn generate_commands(&self, config: &Config, own_name: &str) -> Vec<UciBatchCommand> {
+        info!("Generating firewall config for node '{own_name}'");
+
         let tags = build_tags_resolution_map(config, own_name);
+        debug!("  Resolved {} tag(s)", tags.len());
 
         let zones = get_firewall_zones(config, own_name);
         let rules = get_firewall_rules(config, own_name, &tags);
+
+        info!("  {} zone(s), {} rule(s)", zones.len(), rules.len());
+
+        if log_enabled!(Level::Debug) {
+            for zone in &zones {
+                debug!(
+                    "  Zone '{}': networks [{}]",
+                    zone.name,
+                    zone.network.join(", ")
+                );
+            }
+            for rule in &rules {
+                debug!(
+                    "  Rule '{}': {} src_ip(s) → {}:{}",
+                    rule.name,
+                    rule.src_ip.len(),
+                    rule.dest_ip,
+                    rule.dest_port
+                );
+            }
+        }
 
         zones
             .iter()
