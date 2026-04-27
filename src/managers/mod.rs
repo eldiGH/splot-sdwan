@@ -1,5 +1,6 @@
 use crate::{config::Config, consts, uci::UciBatchCommand};
 
+pub mod dhcp;
 pub mod firewall;
 pub mod network;
 

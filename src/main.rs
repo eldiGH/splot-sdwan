@@ -1,6 +1,6 @@
 use crate::{
     config::Config,
-    managers::{firewall::FirewallManager, network::NetworkManager},
+    managers::{dhcp::DhcpManager, firewall::FirewallManager, network::NetworkManager},
     pipeline::UciPipeline,
 };
 
@@ -33,5 +33,6 @@ fn main() {
     UciPipeline::new()
         .add(Box::new(NetworkManager))
         .add(Box::new(FirewallManager))
+        .add(Box::new(DhcpManager))
         .run(&config, &own_name);
 }

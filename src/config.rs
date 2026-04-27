@@ -8,7 +8,10 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::{protocols::Protocols, types::ip::IpSubnet};
+use crate::{
+    protocols::Protocols,
+    types::{ip::IpSubnet, mac::MacAddress},
+};
 
 #[derive(Debug)]
 pub struct OneOrMany<T>(pub Vec<T>);
@@ -88,7 +91,7 @@ pub struct NodeService {
 #[serde(rename_all = "camelCase")]
 pub struct NodeLanDevice {
     pub ip: Ipv4Addr,
-    pub mac: Option<String>,
+    pub macs: Option<OneOrManyUnique<MacAddress>>,
     pub tags: Option<OneOrManyUnique<String>>,
     pub services: Option<HashMap<String, NodeService>>,
 }
