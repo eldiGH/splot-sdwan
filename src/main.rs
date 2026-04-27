@@ -21,7 +21,7 @@ fn main() {
 
     let private_key = splot_config::ensure_initialized();
 
-    let config = Config::parse_file("./splot.json").unwrap();
+    let config = Config::parse_file("./splot.yml").unwrap();
     let own_name = config
         .find_node_name_by_public_key(&wg::get_pubkey(&private_key))
         .unwrap_or_else(|| {

@@ -5,7 +5,7 @@ use crate::{
     consts,
     managers::{UciManager, UciSectionBuilder},
     naming,
-    types::ip::IpSubnet,
+    types::ip::{Ipv4Interface, Ipv4Network},
     uci::UciBatchCommand,
 };
 
@@ -15,7 +15,7 @@ struct WgInterface {
     name: String,
     private_key: String,
     listen_port: u16,
-    addresses: Vec<IpSubnet>,
+    addresses: Vec<Ipv4Interface>,
 
     clients: Vec<WgClient>,
 }
@@ -45,7 +45,7 @@ impl WgInterface {
 struct WgClient {
     description: String,
     public_key: String,
-    allowed_ips: Vec<IpSubnet>,
+    allowed_ips: Vec<Ipv4Network>,
     route_allowed_ips: bool,
     endpoint_host: Option<Ipv4Addr>,
     endpoint_port: Option<u16>,
@@ -84,7 +84,11 @@ fn build_interfaces_from_node_vpn_interface(name: &str, node: &NodeVpnInterface)
     for (client_name, client) in &node.clients {
         clients.push(WgClient {
             description: client_name.clone(),
-            allowed_ips: vec![IpSubnet::from_ip(client.ip, 32).unwrap()],
+            allowed_ips: vec![
+                Ipv4Interface::from_ip(client.ip, 32)
+                    .expect("only throws if prefix is invalid, here it is constant")
+                    .network(),
+            ],
             public_key: client.public_key.clone(),
             route_allowed_ips: false,
             endpoint_host: None,
@@ -114,10 +118,15 @@ fn build_interfaces_from_config(own_name: &str, config: &Config) -> Vec<WgInterf
             continue;
         }
 
-        let mut allowed_ips = vec![node.mesh_ip, node.lan.subnet];
+        let mut allowed_ips = vec![
+            Ipv4Interface::from_ip(node.mesh_ip, 32)
+                .expect("only errors if prefix is invalid, here is constant")
+                .network(),
+            node.lan.network,
+        ];
 
         if let Some(vpn_interfaces) = &node.vpn_interfaces {
-            allowed_ips.extend(vpn_interfaces.values().map(|i| i.address));
+            allowed_ips.extend(vpn_interfaces.values().map(|i| i.network));
         }
 
         clients.push(WgClient {
@@ -131,7 +140,10 @@ fn build_interfaces_from_config(own_name: &str, config: &Config) -> Vec<WgInterf
     }
 
     let mesh_interface = WgInterface {
-        addresses: vec![own_node.mesh_ip],
+        addresses: vec![
+            Ipv4Interface::from_ip(own_node.mesh_ip, config.mesh_network.prefix())
+                .expect("invalid prefix, should be validated"),
+        ],
         listen_port: own_node.listen_port,
         private_key: "TODO".to_owned(),
         name: consts::MESH_INTERFACE_RAW_NAME.to_owned(),

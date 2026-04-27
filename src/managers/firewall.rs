@@ -5,12 +5,12 @@ use std::{
 };
 
 use crate::{
-    config::{Config, NodeService},
+    config::{Config, Service},
     consts,
     managers::{UciManager, UciSectionBuilder},
     naming,
     protocols::Protocols,
-    types::ip::IpSubnet,
+    types::ip::{Ipv4Interface, Ipv4Network},
     uci::UciBatchCommand,
 };
 
@@ -32,7 +32,7 @@ impl fmt::Display for FirewallAction {
 
 struct FirewallRule {
     name: String,
-    src_ip: Vec<IpOrSubnet>,
+    src_ip: Vec<IpAddressNetwork>,
     proto: HashSet<Protocols>,
     dest_port: String,
     dest_ip: Ipv4Addr,
@@ -87,27 +87,27 @@ impl FirewallZone {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
-enum IpOrSubnet {
+enum IpAddressNetwork {
     Ip(Ipv4Addr),
-    Subnet(IpSubnet),
+    Network(Ipv4Network),
 }
 
-impl fmt::Display for IpOrSubnet {
+impl fmt::Display for IpAddressNetwork {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Ip(ip) => ip.fmt(f),
-            Self::Subnet(subnet) => subnet.fmt(f),
+            Self::Network(network) => network.fmt(f),
         }
     }
 }
 
-type TagResolution = HashSet<IpOrSubnet>;
+type TagResolution = HashSet<IpAddressNetwork>;
 
 pub struct FirewallManager;
 
 fn add_tags(
     tags_map: &mut HashMap<String, TagResolution>,
-    address: IpOrSubnet,
+    address: IpAddressNetwork,
     tags: impl IntoIterator<Item = String>,
 ) {
     for tag in tags {
@@ -122,7 +122,7 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
         if node_name == own_name {
             add_tags(
                 &mut tags_map,
-                IpOrSubnet::Ip(node.lan.ip),
+                IpAddressNetwork::Ip(node.lan.ip),
                 iter::once("$node".to_owned()),
             )
         }
@@ -131,7 +131,7 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
             .chain(node.tags.iter().flat_map(|tag| tag.iter().cloned()));
         add_tags(
             &mut tags_map,
-            IpOrSubnet::Subnet(node.lan.subnet),
+            IpAddressNetwork::Network(node.lan.network),
             node_tags,
         );
 
@@ -140,7 +140,7 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
                 let device_tags = iter::once(device_name.clone())
                     .chain(device.tags.iter().flat_map(|t| t.iter().cloned()));
 
-                add_tags(&mut tags_map, IpOrSubnet::Ip(device.ip), device_tags);
+                add_tags(&mut tags_map, IpAddressNetwork::Ip(device.ip), device_tags);
             }
         }
 
@@ -151,7 +151,7 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
 
                 add_tags(
                     &mut tags_map,
-                    IpOrSubnet::Subnet(interface.subnet),
+                    IpAddressNetwork::Network(interface.network),
                     interface_tags,
                 );
 
@@ -159,7 +159,7 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
                     let client_tags = iter::once(client_name.clone())
                         .chain(client.tags.iter().flat_map(|c| c.iter().cloned()));
 
-                    add_tags(&mut tags_map, IpOrSubnet::Ip(client.ip), client_tags);
+                    add_tags(&mut tags_map, IpAddressNetwork::Ip(client.ip), client_tags);
                 }
             }
         }
@@ -169,13 +169,13 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
 }
 
 fn generate_rule_from_service(
-    service: &NodeService,
-    dest_address: IpSubnet,
+    service: &Service,
+    dest_address: Ipv4Interface,
     name: &str,
     device_name: &str,
     tag_resolutions: &HashMap<String, TagResolution>,
 ) -> Option<FirewallRule> {
-    let src_ip: Vec<IpOrSubnet> = service
+    let src_ip: Vec<IpAddressNetwork> = service
         .allow_from
         .iter()
         .flatten()
@@ -185,8 +185,8 @@ fn generate_rule_from_service(
                 .expect("allowFrom tag not found in resolution map")
                 .iter()
                 .filter(|resolution| match resolution {
-                    IpOrSubnet::Ip(ip) => !dest_address.contains(*ip),
-                    IpOrSubnet::Subnet(subnet) => !dest_address.contains(subnet.ip()),
+                    IpAddressNetwork::Ip(ip) => !dest_address.contains(*ip),
+                    IpAddressNetwork::Network(network) => !dest_address.contains(network.ip()),
                 })
         })
         .cloned()
@@ -234,7 +234,7 @@ fn get_firewall_rules(
         for (service_name, service) in device.services.iter().flatten() {
             rules.extend(generate_rule_from_service(
                 service,
-                IpSubnet::from_ip(device.ip, node.lan.address.prefix()).unwrap(),
+                Ipv4Interface::from_ip(device.ip, node.lan.address.prefix()).unwrap(),
                 service_name,
                 device_name,
                 tags,
@@ -247,7 +247,7 @@ fn get_firewall_rules(
             for (service_name, service) in client.services.iter().flatten() {
                 rules.extend(generate_rule_from_service(
                     service,
-                    IpSubnet::from_ip(client.ip, interface.address.prefix()).unwrap(),
+                    Ipv4Interface::from_ip(client.ip, interface.address.prefix()).unwrap(),
                     service_name,
                     client_name,
                     tags,

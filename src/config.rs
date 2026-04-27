@@ -10,7 +10,10 @@ use serde::Deserialize;
 
 use crate::{
     protocols::Protocols,
-    types::{ip::IpSubnet, mac::MacAddress},
+    types::{
+        ip::{Ipv4Interface, Ipv4Network},
+        mac::MacAddress,
+    },
 };
 
 #[derive(Debug)]
@@ -81,7 +84,7 @@ impl<'de, T: Deserialize<'de> + Hash + Eq> Deserialize<'de> for OneOrManyUnique<
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct NodeService {
+pub struct Service {
     pub port: String,
     pub proto: OneOrManyUnique<Protocols>,
     pub allow_from: Option<OneOrManyUnique<String>>,
@@ -93,7 +96,7 @@ pub struct NodeLanDevice {
     pub ip: Ipv4Addr,
     pub macs: Option<OneOrManyUnique<MacAddress>>,
     pub tags: Option<OneOrManyUnique<String>>,
-    pub services: Option<HashMap<String, NodeService>>,
+    pub services: Option<HashMap<String, Service>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -102,14 +105,14 @@ pub struct NodeVpnInterfaceClient {
     pub public_key: String,
     pub ip: Ipv4Addr,
     pub tags: Option<OneOrManyUnique<String>>,
-    pub services: Option<HashMap<String, NodeService>>,
+    pub services: Option<HashMap<String, Service>>,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct NodeVpnInterfaceRaw {
     pub listen_port: u16,
-    pub address: IpSubnet,
+    pub address: Ipv4Interface,
     pub tags: Option<OneOrManyUnique<String>>,
     pub clients: HashMap<String, NodeVpnInterfaceClient>,
 }
@@ -118,9 +121,9 @@ struct NodeVpnInterfaceRaw {
 #[serde(from = "NodeVpnInterfaceRaw")]
 pub struct NodeVpnInterface {
     pub listen_port: u16,
-    pub address: IpSubnet,
+    pub address: Ipv4Interface,
     pub ip: Ipv4Addr,
-    pub subnet: IpSubnet,
+    pub network: Ipv4Network,
     pub tags: Option<OneOrManyUnique<String>>,
     pub clients: HashMap<String, NodeVpnInterfaceClient>,
 }
@@ -130,7 +133,7 @@ impl From<NodeVpnInterfaceRaw> for NodeVpnInterface {
         Self {
             address: value.address,
             ip: value.address.ip(),
-            subnet: value.address.network(),
+            network: value.address.network(),
             clients: value.clients,
             listen_port: value.listen_port,
             tags: value.tags,
@@ -141,17 +144,17 @@ impl From<NodeVpnInterfaceRaw> for NodeVpnInterface {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawNodeLan {
-    pub address: IpSubnet,
+    pub address: Ipv4Interface,
     pub devices: Option<HashMap<String, NodeLanDevice>>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(from = "RawNodeLan")]
 pub struct NodeLan {
-    pub address: IpSubnet,
+    pub address: Ipv4Interface,
     pub devices: Option<HashMap<String, NodeLanDevice>>,
     pub ip: Ipv4Addr,
-    pub subnet: IpSubnet,
+    pub network: Ipv4Network,
 }
 
 impl From<RawNodeLan> for NodeLan {
@@ -159,7 +162,7 @@ impl From<RawNodeLan> for NodeLan {
         NodeLan {
             address: value.address,
             devices: value.devices,
-            subnet: value.address.network(),
+            network: value.address.network(),
             ip: value.address.ip(),
         }
     }
@@ -171,23 +174,36 @@ pub struct Node {
     pub public_key: String,
     pub endpoint: Ipv4Addr,
     pub listen_port: u16,
-    pub mesh_ip: IpSubnet,
+    pub mesh_ip: Ipv4Addr,
     pub lan: NodeLan,
     pub vpn_interfaces: Option<HashMap<String, NodeVpnInterface>>,
     pub tags: Option<OneOrManyUnique<String>>,
-    pub services: Option<HashMap<String, NodeService>>,
+    pub services: Option<HashMap<String, Service>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Client {
+    pub mesh_ip: Option<Ipv4Addr>,
+    pub public_key: Option<String>,
+    pub macs: Option<OneOrManyUnique<MacAddress>>,
+    pub ips: Option<HashMap<String, Ipv4Addr>>,
+    pub services: Option<HashMap<String, Service>>,
+    pub tags: OneOrManyUnique<String>,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
+    pub mesh_network: Ipv4Network,
     pub nodes: HashMap<String, Node>,
+    pub clients: Option<HashMap<String, Client>>,
 }
 
 #[derive(Debug)]
 pub enum ConfigError {
     Io(std::io::Error),
-    Parse(serde_json::Error),
+    Parse(serde_yml::Error),
 }
 
 impl From<std::io::Error> for ConfigError {
@@ -196,8 +212,8 @@ impl From<std::io::Error> for ConfigError {
     }
 }
 
-impl From<serde_json::Error> for ConfigError {
-    fn from(e: serde_json::Error) -> Self {
+impl From<serde_yml::Error> for ConfigError {
+    fn from(e: serde_yml::Error) -> Self {
         ConfigError::Parse(e)
     }
 }
@@ -206,7 +222,7 @@ impl Config {
     pub fn parse_file(path: &str) -> Result<Self, ConfigError> {
         let file = File::open(path)?;
 
-        let config = serde_json::from_reader(file)?;
+        let config = serde_yml::from_reader(file)?;
 
         Ok(config)
     }

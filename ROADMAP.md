@@ -4,18 +4,7 @@ Confirmed next implementation steps, in priority order.
 
 ---
 
-## 1. Static DHCP leases (DhcpManager)
-
-A new `DhcpManager` implementing `UciManager` that generates static DHCP lease entries for LAN devices that have a `mac` field.
-
-- Config file: `dhcp`
-- For each node's LAN device with a `mac` address: emit a `host` section binding that MAC to the device's IP
-- Named section prefix: `spl_` (consistent with other managers)
-- Devices without a `mac` field are skipped silently
-
----
-
-## 2. Shared devices
+## 1. Shared devices
 
 A top-level `sharedDevices` section for devices that roam across multiple nodes (phones, laptops). Defined once, propagated to every node that lists an address for it.
 
@@ -44,7 +33,7 @@ A top-level `sharedDevices` section for devices that roam across multiple nodes 
 
 ---
 
-## 3. Config validation
+## 2. Config validation
 
 Validate `splot.json` before any UCI commands are generated. Fail early with clear error messages.
 
