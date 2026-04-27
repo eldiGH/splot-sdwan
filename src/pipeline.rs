@@ -67,6 +67,10 @@ fn generate_delete_commands(files_used: &[&'static str]) -> Vec<UciBatchCommand>
                     continue;
                 };
 
+                if rest.as_bytes()[pos] == b'.' {
+                    continue;
+                }
+
                 let full = &line[..prefix.len() + pos];
                 let command = UciBatchCommand::del(full);
 
