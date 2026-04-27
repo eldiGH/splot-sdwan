@@ -33,6 +33,5 @@ fn main() {
     UciPipeline::new()
         .add(Box::new(NetworkManager))
         .add(Box::new(FirewallManager))
-        .run(&config, &own_name)
-        .unwrap();
+        .run(&config, &own_name);
 }

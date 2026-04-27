@@ -3,7 +3,7 @@ use std::net::Ipv4Addr;
 use crate::{
     config::{Config, NodeVpnInterface},
     consts,
-    managers::{ManagerErrors, UciManager, UciSectionBuilder},
+    managers::{UciManager, UciSectionBuilder},
     naming,
     types::ip::IpSubnet,
     uci::UciBatchCommand,
@@ -101,14 +101,11 @@ fn build_interfaces_from_node_vpn_interface(name: &str, node: &NodeVpnInterface)
     }
 }
 
-fn build_interfaces_from_config(
-    own_name: &str,
-    config: &Config,
-) -> Result<Vec<WgInterface>, ManagerErrors> {
+fn build_interfaces_from_config(own_name: &str, config: &Config) -> Vec<WgInterface> {
     let own_node = config
         .nodes
         .get(own_name)
-        .ok_or(ManagerErrors::OwnNodeNotFound)?;
+        .expect("own node not found — config should be validated before calling managers");
 
     let mut clients = Vec::new();
 
@@ -152,22 +149,18 @@ fn build_interfaces_from_config(
         }
     }
 
-    Ok(interfaces)
+    interfaces
 }
 
 pub struct NetworkManager;
 
 impl UciManager for NetworkManager {
-    fn generate_commands(
-        &self,
-        config: &Config,
-        own_name: &str,
-    ) -> Result<Vec<UciBatchCommand>, ManagerErrors> {
-        let interfaces = build_interfaces_from_config(own_name, config)?;
+    fn generate_commands(&self, config: &Config, own_name: &str) -> Vec<UciBatchCommand> {
+        let interfaces = build_interfaces_from_config(own_name, config);
 
         let commands = interfaces.iter().flat_map(|i| i.to_uci_commands());
 
-        Ok(commands.collect())
+        commands.collect()
     }
 
     fn config_file(&self) -> &'static str {

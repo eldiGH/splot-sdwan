@@ -290,20 +290,16 @@ impl UciManager for FirewallManager {
         "firewall"
     }
 
-    fn generate_commands(
-        &self,
-        config: &Config,
-        own_name: &str,
-    ) -> Result<Vec<crate::uci::UciBatchCommand>, super::ManagerErrors> {
+    fn generate_commands(&self, config: &Config, own_name: &str) -> Vec<UciBatchCommand> {
         let tags = build_tags_resolution_map(config, own_name);
 
         let zones = get_firewall_zones(config, own_name);
         let rules = get_firewall_rules(config, own_name, &tags);
 
-        Ok(zones
+        zones
             .iter()
             .flat_map(|zone| zone.to_uci_commands())
             .chain(rules.iter().flat_map(|rule| rule.to_uci_commands()))
-            .collect())
+            .collect()
     }
 }

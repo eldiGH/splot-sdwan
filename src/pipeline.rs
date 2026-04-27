@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader};
 use crate::{
     config::Config,
     consts,
-    managers::{ManagerErrors, UciManager},
+    managers::UciManager,
     uci::{UciBatchCommand, UciExecutor},
 };
 
@@ -27,13 +27,13 @@ impl UciPipeline {
         self
     }
 
-    pub fn run(&self, config: &Config, own_name: &str) -> Result<(), ManagerErrors> {
+    pub fn run(&self, config: &Config, own_name: &str) {
         let config_files_used: Vec<&'static str> = self.get_files_used().collect();
 
         let mut commands = generate_delete_commands(&config_files_used);
 
         for manager in &self.managers {
-            commands.extend(manager.generate_commands(config, own_name)?);
+            commands.extend(manager.generate_commands(config, own_name));
         }
 
         for file in config_files_used {
@@ -41,8 +41,6 @@ impl UciPipeline {
         }
 
         UciExecutor::batch(commands);
-
-        Ok(())
     }
 
     fn get_files_used(&self) -> impl Iterator<Item = &'static str> {
