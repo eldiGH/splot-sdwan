@@ -1,8 +1,6 @@
-use std::{fmt::Display, net::Ipv4Addr, ops::Deref, str::FromStr};
+use std::{fmt::Display, net::Ipv4Addr, str::FromStr};
 
 use serde::Deserialize;
-
-use crate::types::ip;
 
 #[derive(Deserialize, Debug, Clone, Copy, Hash, PartialEq, Eq)]
 #[serde(try_from = "String")]
