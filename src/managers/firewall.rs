@@ -34,7 +34,7 @@ impl fmt::Display for FirewallAction {
 
 struct FirewallRule {
     name: String,
-    src_ip: Vec<IpAddressNetwork>,
+    src_ip: Vec<DestinationIpOrNetwork>,
     proto: HashSet<Protocols>,
     dest_port: String,
     dest_ip: Ipv4Addr,
@@ -89,12 +89,12 @@ impl FirewallZone {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
-enum IpAddressNetwork {
+enum DestinationIpOrNetwork {
     Ip(Ipv4Addr),
     Network(Ipv4Network),
 }
 
-impl fmt::Display for IpAddressNetwork {
+impl fmt::Display for DestinationIpOrNetwork {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Ip(ip) => ip.fmt(f),
@@ -103,13 +103,13 @@ impl fmt::Display for IpAddressNetwork {
     }
 }
 
-type TagResolution = HashSet<IpAddressNetwork>;
+type TagResolution = HashSet<DestinationIpOrNetwork>;
 
 pub struct FirewallManager;
 
 fn add_tags(
     tags_map: &mut HashMap<String, TagResolution>,
-    address: IpAddressNetwork,
+    address: DestinationIpOrNetwork,
     tags: impl IntoIterator<Item = String>,
 ) {
     for tag in tags {
@@ -124,7 +124,7 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
         if node_name == own_name {
             add_tags(
                 &mut tags_map,
-                IpAddressNetwork::Ip(node.lan.ip),
+                DestinationIpOrNetwork::Ip(node.lan.ip),
                 iter::once("$node".to_owned()),
             )
         }
@@ -133,7 +133,7 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
             .chain(node.tags.iter().flat_map(|tag| tag.iter().cloned()));
         add_tags(
             &mut tags_map,
-            IpAddressNetwork::Network(node.lan.network),
+            DestinationIpOrNetwork::Network(node.lan.network),
             node_tags,
         );
 
@@ -142,7 +142,11 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
                 let device_tags = iter::once(device_name.clone())
                     .chain(device.tags.iter().flat_map(|t| t.iter().cloned()));
 
-                add_tags(&mut tags_map, IpAddressNetwork::Ip(device.ip), device_tags);
+                add_tags(
+                    &mut tags_map,
+                    DestinationIpOrNetwork::Ip(device.ip),
+                    device_tags,
+                );
             }
         }
 
@@ -153,7 +157,7 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
 
                 add_tags(
                     &mut tags_map,
-                    IpAddressNetwork::Network(interface.network),
+                    DestinationIpOrNetwork::Network(interface.network),
                     interface_tags,
                 );
 
@@ -161,7 +165,11 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
                     let client_tags = iter::once(client_name.clone())
                         .chain(client.tags.iter().flat_map(|c| c.iter().cloned()));
 
-                    add_tags(&mut tags_map, IpAddressNetwork::Ip(client.ip), client_tags);
+                    add_tags(
+                        &mut tags_map,
+                        DestinationIpOrNetwork::Ip(client.ip),
+                        client_tags,
+                    );
                 }
             }
         }
@@ -178,7 +186,7 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
         for ip in ips {
             add_tags(
                 &mut tags_map,
-                IpAddressNetwork::Ip(ip.to_owned()),
+                DestinationIpOrNetwork::Ip(ip.to_owned()),
                 tags.clone(),
             );
         }
@@ -194,7 +202,7 @@ fn generate_rule_from_service(
     device_name: &str,
     tag_resolutions: &HashMap<String, TagResolution>,
 ) -> Option<FirewallRule> {
-    let src_ip: Vec<IpAddressNetwork> = service
+    let src_ip: Vec<DestinationIpOrNetwork> = service
         .allow_from
         .iter()
         .flatten()
@@ -204,8 +212,8 @@ fn generate_rule_from_service(
                 .expect("allowFrom tag not found in resolution map")
                 .iter()
                 .filter(|resolution| match resolution {
-                    IpAddressNetwork::Ip(ip) => !dest_address.is_in_same_network(*ip),
-                    IpAddressNetwork::Network(network) => {
+                    DestinationIpOrNetwork::Ip(ip) => !dest_address.is_in_same_network(*ip),
+                    DestinationIpOrNetwork::Network(network) => {
                         !dest_address.is_in_same_network(network.ip())
                     }
                 })
