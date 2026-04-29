@@ -1,11 +1,11 @@
 use crate::consts;
 
-pub fn interface(device_name: &str) -> String {
-    format!("{}{device_name}", consts::SPLOT_SECTION_PREFIX)
+pub fn interface(name: &str) -> String {
+    format!("{}{name}", consts::SPLOT_SECTION_PREFIX)
 }
 
 pub fn mesh_interface() -> String {
-    interface("mesh")
+    interface(consts::MESH_INTERFACE_NAME)
 }
 
 pub fn name_prefixed(name: &str) -> String {

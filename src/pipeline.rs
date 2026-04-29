@@ -22,8 +22,8 @@ impl UciPipeline {
         Self { managers: vec![] }
     }
 
-    pub fn add(mut self, manager: Box<dyn UciManager>) -> Self {
-        self.managers.push(manager);
+    pub fn register<M: UciManager + 'static>(mut self, manager: M) -> Self {
+        self.managers.push(Box::new(manager));
         self
     }
 
@@ -63,7 +63,7 @@ fn generate_delete_commands(files_used: &[&'static str]) -> Vec<UciBatchCommand>
             if line.starts_with(&prefix) {
                 let rest = &line[prefix.len()..];
 
-                let Some(pos) = rest.find(|c| c == '=' || c == '.') else {
+                let Some(pos) = rest.find(['=', '.']) else {
                     continue;
                 };
 

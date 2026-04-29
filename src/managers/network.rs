@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 
-use log::{Level, debug, info, log_enabled};
+use log::{debug, info};
 
 use crate::{
     config::{Config, NodeVpnInterface},
@@ -27,7 +27,7 @@ impl WgInterface {
         let mut commands = UciSectionBuilder::new(FILE_NAME, &self.name, "interface")
             .set("proto", "wireguard")
             .set("private_key", &self.private_key)
-            .set("listen_port", &self.listen_port.to_string())
+            .set("listen_port", self.listen_port.to_string())
             .extend_list(
                 "address",
                 self.addresses.iter().map(|address| address.to_string()),
@@ -86,11 +86,7 @@ fn build_vpn_interface(name: &str, node: &NodeVpnInterface, config: &Config) -> 
     for (client_name, client) in &node.clients {
         clients.push(WgClient {
             description: client_name.clone(),
-            allowed_ips: vec![
-                Ipv4Interface::from_ip(client.ip, 32)
-                    .expect("only throws if prefix is invalid, here it is constant")
-                    .network(),
-            ],
+            allowed_ips: vec![Ipv4Network::host(client.ip)],
             public_key: client.public_key.clone(),
             route_allowed_ips: false,
             endpoint_host: None,
@@ -98,29 +94,19 @@ fn build_vpn_interface(name: &str, node: &NodeVpnInterface, config: &Config) -> 
         });
     }
 
-    clients.extend(
-        config
-            .clients
-            .iter()
-            .flatten()
-            .filter_map(|(client_name, client)| {
-                let public_key = client.public_key.as_ref()?;
-                let ip = client.ips.as_ref()?.get(name)?;
+    clients.extend(config.clients.iter().filter_map(|(client_name, client)| {
+        let public_key = client.public_key.as_ref()?;
+        let ip = client.ips.get(name)?;
 
-                Some(WgClient {
-                    allowed_ips: vec![
-                        Ipv4Interface::from_ip(ip.to_owned(), 32)
-                            .expect("prefix is constant")
-                            .network(),
-                    ],
-                    description: client_name.to_owned(),
-                    endpoint_host: None,
-                    endpoint_port: None,
-                    public_key: public_key.to_owned(),
-                    route_allowed_ips: false,
-                })
-            }),
-    );
+        Some(WgClient {
+            allowed_ips: vec![Ipv4Network::host(*ip)],
+            description: client_name.to_owned(),
+            endpoint_host: None,
+            endpoint_port: None,
+            public_key: public_key.to_owned(),
+            route_allowed_ips: false,
+        })
+    }));
 
     WgInterface {
         name: name.to_owned(),
@@ -135,7 +121,6 @@ fn build_mesh_clients(config: &Config) -> Vec<WgClient> {
     config
         .clients
         .iter()
-        .flatten()
         .filter_map(|(client_name, client)| {
             let public_key = client.public_key.as_ref()?;
             let mesh_ip = client.mesh_ip.as_ref()?;
@@ -143,11 +128,7 @@ fn build_mesh_clients(config: &Config) -> Vec<WgClient> {
             Some(WgClient {
                 description: client_name.to_owned(),
                 public_key: public_key.to_owned(),
-                allowed_ips: vec![
-                    Ipv4Interface::from_ip(mesh_ip.to_owned(), 32)
-                        .expect("both address and prefix should be validated at this point")
-                        .network(),
-                ],
+                allowed_ips: vec![Ipv4Network::host(*mesh_ip)],
                 route_allowed_ips: false,
                 endpoint_host: None,
                 endpoint_port: None,
@@ -171,26 +152,17 @@ fn build_node_interfaces(own_name: &str, config: &Config) -> Vec<WgInterface> {
             continue;
         }
 
-        let mut allowed_ips = vec![
-            Ipv4Interface::from_ip(node.mesh_ip, 32)
-                .expect("only errors if prefix is invalid, here is constant")
-                .network(),
-            node.lan.network,
-        ];
+        let mut allowed_ips = vec![Ipv4Network::host(node.mesh_ip), node.lan.address.network()];
 
-        if let Some(vpn_interfaces) = &node.vpn_interfaces {
-            allowed_ips.extend(vpn_interfaces.values().map(|i| i.network));
-        }
+        allowed_ips.extend(node.vpn_interfaces.values().map(|i| i.address.network()));
 
-        if log_enabled!(Level::Debug) {
-            debug!(
-                "  Mesh peer '{}': endpoint {}:{}, {} AllowedIPs",
-                name,
-                node.endpoint,
-                node.listen_port,
-                allowed_ips.len()
-            );
-        }
+        debug!(
+            "  Mesh peer '{}': endpoint {}:{}, {} AllowedIPs",
+            name,
+            node.endpoint,
+            node.listen_port,
+            allowed_ips.len()
+        );
 
         clients.push(WgClient {
             description: name.clone(),
@@ -213,24 +185,21 @@ fn build_node_interfaces(own_name: &str, config: &Config) -> Vec<WgInterface> {
         ],
         listen_port: own_node.listen_port,
         private_key: "TODO".to_owned(),
-        name: consts::MESH_INTERFACE_RAW_NAME.to_owned(),
+        name: consts::MESH_INTERFACE_NAME.to_owned(),
         clients,
     };
 
     let mut interfaces = vec![mesh_interface];
 
-    if let Some(vpn_interfaces) = &own_node.vpn_interfaces {
-        for (name, vpn_interface) in vpn_interfaces {
-            let wg_interface = build_vpn_interface(name, vpn_interface, config);
+    for (name, vpn_interface) in &own_node.vpn_interfaces {
+        let wg_interface = build_vpn_interface(name, vpn_interface, config);
 
-            if log_enabled!(Level::Debug) {
-                debug!(
-                    "  VPN interface '{name}': {} client(s)",
-                    wg_interface.clients.len()
-                );
-            }
-            interfaces.push(wg_interface)
-        }
+        debug!(
+            "  VPN interface '{name}': {} client(s)",
+            wg_interface.clients.len()
+        );
+
+        interfaces.push(wg_interface)
     }
 
     info!("  {} interface(s) total", interfaces.len());

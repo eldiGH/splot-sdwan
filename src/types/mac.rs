@@ -1,7 +1,4 @@
-use std::{
-    fmt::Display,
-    str::{Bytes, FromStr},
-};
+use std::{fmt::Display, str::FromStr};
 
 use serde::Deserialize;
 
@@ -40,21 +37,36 @@ impl Display for ParseMacError {
 
 const MAC_LEN: usize = 17;
 
-fn byte_char_to_nibble(byte: u8) -> Option<u8> {
+fn parse_nibble(byte: u8) -> Result<u8, ParseMacError> {
     match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(ParseMacError::InvalidDigit(byte)),
     }
 }
 
-fn parse_hex_nibble(bytes: &mut Bytes) -> Result<u8, ParseMacError> {
-    let digit = bytes
-        .next()
-        .unwrap_or_else(|| unreachable!("length pre-validated"));
+fn check_delimiter(byte: u8, delimiter: &mut Option<u8>) -> Result<(), ParseMacError> {
+    match delimiter {
+        None => {
+            if byte != b':' && byte != b'-' {
+                return Err(ParseMacError::InvalidDelimiter(byte));
+            }
 
-    byte_char_to_nibble(digit).ok_or(ParseMacError::InvalidDigit(digit))
+            *delimiter = Some(byte);
+            Ok(())
+        }
+        Some(delimiter) => {
+            if byte != *delimiter {
+                return Err(ParseMacError::InconsistentDelimiter {
+                    expected: *delimiter,
+                    got: byte,
+                });
+            }
+
+            Ok(())
+        }
+    }
 }
 
 impl FromStr for MacAddress {
@@ -63,41 +75,18 @@ impl FromStr for MacAddress {
         let mut delimiter: Option<u8> = None;
         let mut octets: [u8; 6] = [0; 6];
 
-        let mut bytes = s.bytes();
+        let bytes = s.as_bytes();
 
         if bytes.len() != MAC_LEN {
             return Err(ParseMacError::InvalidLen { got: bytes.len() });
         }
 
-        for i in 0..6 {
-            let byte = (parse_hex_nibble(&mut bytes)? << 4) | parse_hex_nibble(&mut bytes)?;
-            octets[i] = byte;
+        for (i, octet) in octets.iter_mut().enumerate() {
+            let off = i * 3;
+            *octet = (parse_nibble(bytes[off])? << 4) | parse_nibble(bytes[off + 1])?;
 
             if i < 5 {
-                let delimiter_char = bytes
-                    .next()
-                    .unwrap_or_else(|| unreachable!("length pre-validated"));
-
-                match delimiter {
-                    None => {
-                        if delimiter_char != b':' && delimiter_char != b'-' {
-                            return Err(ParseMacError::InvalidDelimiter(delimiter_char));
-                        }
-
-                        delimiter = Some(delimiter_char);
-                        Ok(())
-                    }
-                    Some(delimiter) => {
-                        if delimiter_char != delimiter {
-                            return Err(ParseMacError::InconsistentDelimiter {
-                                expected: delimiter,
-                                got: delimiter_char,
-                            });
-                        }
-
-                        Ok(())
-                    }
-                }?
+                check_delimiter(bytes[off + 2], &mut delimiter)?;
             }
         }
 

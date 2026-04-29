@@ -116,12 +116,4 @@ impl UciExecutor {
             None
         }
     }
-
-    pub fn set(path: &str, value: &str) {
-        Self::base()
-            .arg("set")
-            .arg(format!("{path}='{value}'"))
-            .output()
-            .unwrap();
-    }
 }

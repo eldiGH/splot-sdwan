@@ -237,4 +237,11 @@ impl Ipv4Network {
     pub fn prefix(&self) -> u8 {
         self.prefix
     }
+
+    pub fn host(ip: Ipv4Addr) -> Self {
+        Self {
+            addr: ip,
+            prefix: 32,
+        }
+    }
 }

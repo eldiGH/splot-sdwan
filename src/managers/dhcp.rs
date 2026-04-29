@@ -33,12 +33,7 @@ impl DhcpStaticLease {
 fn lan_device_to_lease(device_name: &str, device: &NodeLanDevice) -> DhcpStaticLease {
     DhcpStaticLease {
         ip: device.ip,
-        macs: device
-            .macs
-            .as_ref()
-            .expect("devices without macs should already be filtered out")
-            .clone()
-            .into(),
+        macs: device.macs.clone().into(),
         name: device_name.to_owned(),
     }
 }
@@ -55,8 +50,7 @@ fn get_static_leases(config: &Config, own_name: &str) -> Vec<DhcpStaticLease> {
         node.lan
             .devices
             .iter()
-            .flatten()
-            .filter(|(_, device)| device.macs.as_ref().is_some_and(|macs| !macs.is_empty()))
+            .filter(|(_, device)| !device.macs.is_empty())
             .map(|(device_name, device)| lan_device_to_lease(device_name, device)),
     );
 
@@ -67,13 +61,14 @@ fn get_client_static_leases(config: &Config, own_name: &str) -> Vec<DhcpStaticLe
     config
         .clients
         .iter()
-        .flatten()
         .filter_map(|(client_name, client)| {
-            let macs = client.macs.as_ref().filter(|macs| !macs.is_empty())?;
-            let ip = client.ips.as_ref()?.get(own_name)?;
+            if client.macs.is_empty() {
+                return None;
+            };
+            let ip = client.ips.get(own_name)?;
 
             Some(DhcpStaticLease {
-                macs: macs.to_owned().into(),
+                macs: client.macs.to_owned().into(),
                 ip: ip.to_owned(),
                 name: client_name.to_owned(),
             })

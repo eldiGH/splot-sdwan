@@ -11,7 +11,7 @@ use crate::{
     consts,
     managers::{UciManager, UciSectionBuilder},
     naming,
-    protocols::Protocols,
+    protocol::Protocol,
     types::ip::{Ipv4Interface, Ipv4Network},
     uci::UciBatchCommand,
 };
@@ -34,8 +34,8 @@ impl fmt::Display for FirewallAction {
 
 struct FirewallRule {
     name: String,
-    src_ip: Vec<DestinationIpOrNetwork>,
-    proto: HashSet<Protocols>,
+    src_ip: Vec<IpOrNetwork>,
+    proto: HashSet<Protocol>,
     dest_port: String,
     dest_ip: Ipv4Addr,
     target: FirewallAction,
@@ -89,12 +89,12 @@ impl FirewallZone {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
-enum DestinationIpOrNetwork {
+enum IpOrNetwork {
     Ip(Ipv4Addr),
     Network(Ipv4Network),
 }
 
-impl fmt::Display for DestinationIpOrNetwork {
+impl fmt::Display for IpOrNetwork {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Ip(ip) => ip.fmt(f),
@@ -103,13 +103,13 @@ impl fmt::Display for DestinationIpOrNetwork {
     }
 }
 
-type TagResolution = HashSet<DestinationIpOrNetwork>;
+type TagResolution = HashSet<IpOrNetwork>;
 
 pub struct FirewallManager;
 
 fn add_tags(
     tags_map: &mut HashMap<String, TagResolution>,
-    address: DestinationIpOrNetwork,
+    address: IpOrNetwork,
     tags: impl IntoIterator<Item = String>,
 ) {
     for tag in tags {
@@ -124,71 +124,50 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
         if node_name == own_name {
             add_tags(
                 &mut tags_map,
-                DestinationIpOrNetwork::Ip(node.lan.ip),
+                IpOrNetwork::Ip(node.lan.address.ip()),
                 iter::once("$node".to_owned()),
             )
         }
 
-        let node_tags = iter::once(node_name.clone())
-            .chain(node.tags.iter().flat_map(|tag| tag.iter().cloned()));
+        let node_tags = iter::once(node_name.clone()).chain(node.tags.iter().cloned());
         add_tags(
             &mut tags_map,
-            DestinationIpOrNetwork::Network(node.lan.network),
+            IpOrNetwork::Network(node.lan.address.network()),
             node_tags,
         );
 
-        if let Some(lan_devices) = &node.lan.devices {
-            for (device_name, device) in lan_devices {
-                let device_tags = iter::once(device_name.clone())
-                    .chain(device.tags.iter().flat_map(|t| t.iter().cloned()));
+        for (device_name, device) in &node.lan.devices {
+            let device_tags = iter::once(device_name.clone()).chain(device.tags.iter().cloned());
 
-                add_tags(
-                    &mut tags_map,
-                    DestinationIpOrNetwork::Ip(device.ip),
-                    device_tags,
-                );
-            }
+            add_tags(&mut tags_map, IpOrNetwork::Ip(device.ip), device_tags);
         }
 
-        if let Some(vpn_interfaces) = &node.vpn_interfaces {
-            for (interface_name, interface) in vpn_interfaces {
-                let interface_tags = iter::once(interface_name.clone())
-                    .chain(interface.tags.iter().flat_map(|i| i.iter().cloned()));
+        for (interface_name, interface) in &node.vpn_interfaces {
+            let interface_tags =
+                iter::once(interface_name.clone()).chain(interface.tags.iter().cloned());
 
-                add_tags(
-                    &mut tags_map,
-                    DestinationIpOrNetwork::Network(interface.network),
-                    interface_tags,
-                );
+            add_tags(
+                &mut tags_map,
+                IpOrNetwork::Network(interface.address.network()),
+                interface_tags,
+            );
 
-                for (client_name, client) in &interface.clients {
-                    let client_tags = iter::once(client_name.clone())
-                        .chain(client.tags.iter().flat_map(|c| c.iter().cloned()));
+            for (client_name, client) in &interface.clients {
+                let client_tags =
+                    iter::once(client_name.clone()).chain(client.tags.iter().cloned());
 
-                    add_tags(
-                        &mut tags_map,
-                        DestinationIpOrNetwork::Ip(client.ip),
-                        client_tags,
-                    );
-                }
+                add_tags(&mut tags_map, IpOrNetwork::Ip(client.ip), client_tags);
             }
         }
     }
 
-    for (client_name, client) in config.clients.iter().flatten() {
-        let ips = client
-            .mesh_ip
-            .iter()
-            .chain(client.ips.iter().flatten().map(|(_, ip)| ip));
+    for (client_name, client) in &config.clients {
+        let ips = client.mesh_ip.iter().chain(client.ips.values());
 
         let tags = iter::once(client_name.clone()).chain(client.tags.iter().cloned());
 
         for ip in ips {
-            add_tags(
-                &mut tags_map,
-                DestinationIpOrNetwork::Ip(ip.to_owned()),
-                tags.clone(),
-            );
+            add_tags(&mut tags_map, IpOrNetwork::Ip(ip.to_owned()), tags.clone());
         }
     }
 
@@ -202,20 +181,18 @@ fn generate_rule_from_service(
     device_name: &str,
     tag_resolutions: &HashMap<String, TagResolution>,
 ) -> Option<FirewallRule> {
-    let src_ip: Vec<DestinationIpOrNetwork> = service
+    let src_ip: Vec<IpOrNetwork> = service
         .allow_from
         .iter()
-        .flatten()
         .flat_map(|tag| {
             tag_resolutions
                 .get(tag)
                 .expect("allowFrom tag not found in resolution map")
                 .iter()
+                // skip same-LAN sources — they don't traverse this router's firewall
                 .filter(|resolution| match resolution {
-                    DestinationIpOrNetwork::Ip(ip) => !dest_address.is_in_same_network(*ip),
-                    DestinationIpOrNetwork::Network(network) => {
-                        !dest_address.is_in_same_network(network.ip())
-                    }
+                    IpOrNetwork::Ip(ip) => !dest_address.is_in_same_network(*ip),
+                    IpOrNetwork::Network(network) => !dest_address.is_in_same_network(network.ip()),
                 })
         })
         .cloned()
@@ -249,7 +226,7 @@ fn get_firewall_rules(
         .get(own_name)
         .expect("own node not found — config should be validated before calling managers");
 
-    for (service_name, service) in node.services.iter().flatten() {
+    for (service_name, service) in &node.services {
         rules.extend(generate_rule_from_service(
             service,
             node.lan.address,
@@ -259,8 +236,8 @@ fn get_firewall_rules(
         ));
     }
 
-    for (device_name, device) in node.lan.devices.iter().flatten() {
-        for (service_name, service) in device.services.iter().flatten() {
+    for (device_name, device) in &node.lan.devices {
+        for (service_name, service) in &device.services {
             rules.extend(generate_rule_from_service(
                 service,
                 Ipv4Interface::from_ip(device.ip, node.lan.address.prefix()).unwrap(),
@@ -271,9 +248,9 @@ fn get_firewall_rules(
         }
     }
 
-    for (_, interface) in node.vpn_interfaces.iter().flatten() {
+    for interface in node.vpn_interfaces.values() {
         for (client_name, client) in &interface.clients {
-            for (service_name, service) in client.services.iter().flatten() {
+            for (service_name, service) in &client.services {
                 rules.extend(generate_rule_from_service(
                     service,
                     Ipv4Interface::from_ip(client.ip, interface.address.prefix()).unwrap(),
@@ -285,12 +262,12 @@ fn get_firewall_rules(
         }
     }
 
-    for (client_name, client) in config.clients.iter().flatten() {
-        let Some(ip) = client.ips.as_ref().and_then(|ips| ips.get(own_name)) else {
+    for (client_name, client) in &config.clients {
+        let Some(ip) = client.ips.get(own_name) else {
             continue;
         };
 
-        for (service_name, service) in client.services.iter().flatten() {
+        for (service_name, service) in &client.services {
             rules.extend(generate_rule_from_service(
                 service,
                 Ipv4Interface::from_ip(ip.to_owned(), node.lan.address.prefix())
@@ -307,7 +284,7 @@ fn get_firewall_rules(
 
 fn get_firewall_zones(config: &Config, own_name: &str) -> Vec<FirewallZone> {
     let mut zones = vec![FirewallZone {
-        name: consts::MESH_INTERFACE_RAW_NAME.to_owned(),
+        name: consts::MESH_INTERFACE_NAME.to_owned(),
         network: vec![naming::mesh_interface()],
 
         ..Default::default()
@@ -318,11 +295,7 @@ fn get_firewall_zones(config: &Config, own_name: &str) -> Vec<FirewallZone> {
         .get(own_name)
         .expect("own node not found — config should be validated before calling managers");
 
-    let Some(vpn_interfaces) = &node.vpn_interfaces else {
-        return zones;
-    };
-
-    zones.extend(vpn_interfaces.keys().map(|name| FirewallZone {
+    zones.extend(node.vpn_interfaces.keys().map(|name| FirewallZone {
         name: name.clone(),
         network: vec![naming::interface(name)],
         ..Default::default()
@@ -333,7 +306,7 @@ fn get_firewall_zones(config: &Config, own_name: &str) -> Vec<FirewallZone> {
 
 impl UciManager for FirewallManager {
     fn config_file(&self) -> &'static str {
-        "firewall"
+        FILE_NAME
     }
 
     fn generate_commands(&self, config: &Config, own_name: &str) -> Vec<UciBatchCommand> {

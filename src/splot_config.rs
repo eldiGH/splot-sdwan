@@ -7,7 +7,7 @@ use crate::{
 };
 
 fn get_config_dir() -> PathBuf {
-    PathBuf::from(env::uci_config_dir().unwrap_or("/etc/config".to_owned()))
+    PathBuf::from(env::uci_config_dir().unwrap_or_else(|| "/etc/config".to_owned()))
 }
 
 fn add_splot_section() -> String {
