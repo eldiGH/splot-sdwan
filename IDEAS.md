@@ -1,16 +1,5 @@
 # Future Ideas
 
-## [HIGH] CLI Interface
-
-A proper CLI for interacting with splot on a router:
-- `splot validate` — validate the local config file and report errors
-- `splot dry-run` — generate and print all UCI commands that would be applied, without executing them
-- `splot apply` — full pipeline: validate, generate, apply via uci, reload affected services
-
-This should be the first thing built after core config generation logic is complete.
-
----
-
 ## [MED-HIGH] Mesh-wide DNS
 
 Local DNS resolution on every router so that human-readable names are reachable across the entire mesh without relying on any external DNS.

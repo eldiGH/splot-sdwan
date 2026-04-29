@@ -4,36 +4,7 @@ Confirmed next implementation steps, in priority order.
 
 ---
 
-## 1. Shared devices
-
-A top-level `sharedDevices` section for devices that roam across multiple nodes (phones, laptops). Defined once, propagated to every node that lists an address for it.
-
-**Config structure:**
-
-```json
-"sharedDevices": {
-  "Phone": {
-    "mac": ["aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"],
-    "tags": "admin",
-    "addresses": {
-      "HomeRouter": "192.168.1.50",
-      "OfficeRouter": "192.168.2.50"
-    },
-    "services": { ... }
-  }
-}
-```
-
-**Behavior:**
-
-- Each node looks up its own name in `addresses` — if present, the device is treated exactly like a `lanDevice` on that node (static DHCP lease per MAC, firewall rules, tag resolution)
-- Nodes not listed in `addresses` ignore the device entirely
-- Multiple MACs map to the same IP — valid for devices with separate ethernet and WiFi interfaces (mutually exclusive interfaces only; simultaneous same-subnet use is not supported)
-- `sharedDevices` names enter the global uniqueness namespace alongside all other names
-
----
-
-## 2. Config validation
+## 1. Config validation
 
 Validate `splot.json` before any UCI commands are generated. Fail early with clear error messages.
 
@@ -46,3 +17,27 @@ Rules to enforce (see CONFIG.md for full definitions):
 - **Device IPs within LAN subnet** — each LAN device `ip` must fall within its node's `lan.address` subnet
 - **VPN client IPs within interface subnet** — each VPN client `ip` must fall within its interface's `address` subnet
 - **`allowFrom` references must exist** — every tag/name used in `allowFrom` must resolve to at least one known entity
+
+---
+
+## 2. CLI Interface
+
+A proper CLI for interacting with splot on a router:
+
+- `splot validate` — validate the local config file and report errors
+- `splot dry-run` — generate and print all UCI commands that would be applied, without executing them
+- `splot apply` — full pipeline: validate, generate, apply via uci, reload affected services
+
+This is the first user-facing entry point and should land right after validation so the validator is reachable without a wrapper.
+
+Implement structured logging (e.g. `tracing`) at the same time — not deferred. Each pipeline stage (load, validate, generate, apply) should emit actionable log output at appropriate levels (`info` for progress, `debug` for generated commands, `error` for failures). This makes `dry-run` and `apply` debuggable from day one.
+
+---
+
+## 3. Per-zone firewall rule generation (security hardening)
+
+Generated traffic rules currently match on `src_ip` alone, without constraining which zone the packet entered from. Splitting each rule per source zone prevents a packet from one zone matching a rule intended for another (spoofed-source-IP scenarios).
+
+When a rule's `allowFrom` resolves to IPs/subnets spanning multiple zones, emit one rule per zone — each scoped to its specific `src` zone in addition to `src_ip`. The `dest` zone is set from the zone the target IP belongs to. Local and remote sources stay symmetric in the config; only the generated UCI output gains the zone scoping.
+
+Deferred to the end of the roadmap — purely a hardening pass on generated rules; does not affect mesh connectivity or behavior.
