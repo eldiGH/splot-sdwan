@@ -167,6 +167,23 @@ fn build_tags_resolution_map(config: &Config, own_name: &str) -> HashMap<String,
         }
     }
 
+    for (client_name, client) in config.clients.iter().flatten() {
+        let ips = client
+            .mesh_ip
+            .iter()
+            .chain(client.ips.iter().flatten().map(|(_, ip)| ip));
+
+        let tags = iter::once(client_name.clone()).chain(client.tags.iter().cloned());
+
+        for ip in ips {
+            add_tags(
+                &mut tags_map,
+                IpAddressNetwork::Ip(ip.to_owned()),
+                tags.clone(),
+            );
+        }
+    }
+
     tags_map
 }
 
@@ -257,6 +274,23 @@ fn get_firewall_rules(
                     tags,
                 ));
             }
+        }
+    }
+
+    for (client_name, client) in config.clients.iter().flatten() {
+        let Some(ip) = client.ips.as_ref().and_then(|ips| ips.get(own_name)) else {
+            continue;
+        };
+
+        for (service_name, service) in client.services.iter().flatten() {
+            rules.extend(generate_rule_from_service(
+                service,
+                Ipv4Interface::from_ip(ip.to_owned(), node.lan.address.prefix())
+                    .expect("ip and prefix should be validated"),
+                service_name,
+                client_name,
+                tags,
+            ));
         }
     }
 

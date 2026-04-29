@@ -1,6 +1,6 @@
 use std::{collections::HashSet, net::Ipv4Addr};
 
-use log::{debug, info, log_enabled, Level};
+use log::{Level, debug, info, log_enabled};
 
 use crate::{
     config::{Config, NodeLanDevice},
@@ -63,6 +63,24 @@ fn get_static_leases(config: &Config, own_name: &str) -> Vec<DhcpStaticLease> {
     static_leases
 }
 
+fn get_client_static_leases(config: &Config, own_name: &str) -> Vec<DhcpStaticLease> {
+    config
+        .clients
+        .iter()
+        .flatten()
+        .filter_map(|(client_name, client)| {
+            let macs = client.macs.as_ref().filter(|macs| !macs.is_empty())?;
+            let ip = client.ips.as_ref()?.get(own_name)?;
+
+            Some(DhcpStaticLease {
+                macs: macs.to_owned().into(),
+                ip: ip.to_owned(),
+                name: client_name.to_owned(),
+            })
+        })
+        .collect()
+}
+
 impl UciManager for DhcpManager {
     fn config_file(&self) -> &'static str {
         FILE_NAME
@@ -75,12 +93,18 @@ impl UciManager for DhcpManager {
     ) -> Vec<UciBatchCommand> {
         info!("Generating DHCP config for node '{own_name}'");
 
-        let static_leases = get_static_leases(config, own_name);
+        let mut static_leases = get_static_leases(config, own_name);
+        static_leases.extend(get_client_static_leases(config, own_name));
 
         info!("  {} static lease(s)", static_leases.len());
         if log_enabled!(Level::Debug) {
             for lease in &static_leases {
-                debug!("  Lease '{}': {} → {} MAC(s)", lease.name, lease.ip, lease.macs.len());
+                debug!(
+                    "  Lease '{}': {} → {} MAC(s)",
+                    lease.name,
+                    lease.ip,
+                    lease.macs.len()
+                );
             }
         }
 
