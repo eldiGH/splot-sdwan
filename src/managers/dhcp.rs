@@ -3,7 +3,7 @@ use std::{collections::HashSet, net::Ipv4Addr};
 use log::{Level, debug, info, log_enabled};
 
 use crate::{
-    config::{Config, NodeLanDevice},
+    config::{Config, NodeZoneDevice, ZoneOrVpnInterface},
     managers::{UciManager, UciSectionBuilder},
     naming,
     types::mac::MacAddress,
@@ -30,7 +30,7 @@ impl DhcpStaticLease {
     }
 }
 
-fn lan_device_to_lease(device_name: &str, device: &NodeLanDevice) -> DhcpStaticLease {
+fn zone_device_to_lease(device_name: &str, device: &NodeZoneDevice) -> DhcpStaticLease {
     DhcpStaticLease {
         ip: device.ip,
         macs: device.macs.clone().into(),
@@ -46,18 +46,22 @@ fn get_static_leases(config: &Config, own_name: &str) -> Vec<DhcpStaticLease> {
         .get(own_name)
         .expect("own node not found — config should be validated before calling managers");
 
-    static_leases.extend(
-        node.lan
-            .devices
+    static_leases.extend(node.zones.values().flat_map(|zone| {
+        zone.devices
             .iter()
             .filter(|(_, device)| !device.macs.is_empty())
-            .map(|(device_name, device)| lan_device_to_lease(device_name, device)),
-    );
+            .map(|(device_name, device)| zone_device_to_lease(device_name, device))
+    }));
 
     static_leases
 }
 
 fn get_client_static_leases(config: &Config, own_name: &str) -> Vec<DhcpStaticLease> {
+    let node = config
+        .nodes
+        .get(own_name)
+        .expect("own node not found — config should be validated before calling managers");
+
     config
         .clients
         .iter()
@@ -65,14 +69,22 @@ fn get_client_static_leases(config: &Config, own_name: &str) -> Vec<DhcpStaticLe
             if client.macs.is_empty() {
                 return None;
             };
-            let ip = client.ips.get(own_name)?;
+            let networks = client.ips.get(own_name)?;
 
-            Some(DhcpStaticLease {
-                macs: client.macs.to_owned().into(),
-                ip: ip.to_owned(),
-                name: client_name.to_owned(),
-            })
+            let leases = networks.iter().filter_map(|(network_name, ip)| {
+                match node.network_by_name(network_name)? {
+                    ZoneOrVpnInterface::VpnInterface(_) => None,
+                    ZoneOrVpnInterface::Zone(_) => Some(DhcpStaticLease {
+                        macs: client.macs.to_owned().into(),
+                        ip: *ip,
+                        name: client_name.to_owned(),
+                    }),
+                }
+            });
+
+            Some(leases.collect::<Vec<_>>())
         })
+        .flatten()
         .collect()
 }
 

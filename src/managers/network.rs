@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::{iter, net::Ipv4Addr};
 
 use log::{debug, info};
 
@@ -80,7 +80,12 @@ impl WgClient {
     }
 }
 
-fn build_vpn_interface(name: &str, node: &NodeVpnInterface, config: &Config) -> WgInterface {
+fn build_vpn_interface(
+    name: &str,
+    node: &NodeVpnInterface,
+    own_name: &str,
+    config: &Config,
+) -> WgInterface {
     let mut clients = Vec::new();
 
     for (client_name, client) in &node.clients {
@@ -96,7 +101,8 @@ fn build_vpn_interface(name: &str, node: &NodeVpnInterface, config: &Config) -> 
 
     clients.extend(config.clients.iter().filter_map(|(client_name, client)| {
         let public_key = client.public_key.as_ref()?;
-        let ip = client.ips.get(name)?;
+        let networks = client.ips.get(own_name)?;
+        let ip = networks.get(name)?;
 
         Some(WgClient {
             allowed_ips: vec![Ipv4Network::host(*ip)],
@@ -147,25 +153,30 @@ fn build_node_interfaces(own_name: &str, config: &Config) -> Vec<WgInterface> {
 
     let mut clients = Vec::new();
 
-    for (name, node) in &config.nodes {
-        if name == own_name {
+    for (node_name, node) in &config.nodes {
+        if node_name == own_name {
             continue;
         }
 
-        let mut allowed_ips = vec![Ipv4Network::host(node.mesh_ip), node.lan.address.network()];
-
-        allowed_ips.extend(node.vpn_interfaces.values().map(|i| i.address.network()));
+        let allowed_ips: Vec<Ipv4Network> = iter::once(Ipv4Network::host(node.mesh_ip))
+            .chain(
+                node.zones
+                    .values()
+                    .filter_map(|zone| zone.address.map(|a| a.network())),
+            )
+            .chain(node.vpn_interfaces.values().map(|i| i.address.network()))
+            .collect();
 
         debug!(
             "  Mesh peer '{}': endpoint {}:{}, {} AllowedIPs",
-            name,
+            node_name,
             node.endpoint,
             node.listen_port,
             allowed_ips.len()
         );
 
         clients.push(WgClient {
-            description: name.clone(),
+            description: node_name.clone(),
             public_key: node.public_key.clone(),
             allowed_ips,
             route_allowed_ips: true,
@@ -191,11 +202,11 @@ fn build_node_interfaces(own_name: &str, config: &Config) -> Vec<WgInterface> {
 
     let mut interfaces = vec![mesh_interface];
 
-    for (name, vpn_interface) in &own_node.vpn_interfaces {
-        let wg_interface = build_vpn_interface(name, vpn_interface, config);
+    for (vpn_interface_name, vpn_interface) in &own_node.vpn_interfaces {
+        let wg_interface = build_vpn_interface(vpn_interface_name, vpn_interface, own_name, config);
 
         debug!(
-            "  VPN interface '{name}': {} client(s)",
+            "  VPN interface '{vpn_interface_name}': {} client(s)",
             wg_interface.clients.len()
         );
 

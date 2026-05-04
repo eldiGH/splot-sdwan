@@ -79,7 +79,7 @@ pub struct Service {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct NodeLanDevice {
+pub struct NodeZoneDevice {
     pub ip: Ipv4Addr,
 
     #[serde(default)]
@@ -115,11 +115,13 @@ pub struct NodeVpnInterface {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NodeLan {
-    pub address: Ipv4Interface,
+pub struct NodeZone {
+    pub address: Option<Ipv4Interface>,
 
     #[serde(default)]
-    pub devices: HashMap<String, NodeLanDevice>,
+    pub devices: HashMap<String, NodeZoneDevice>,
+    #[serde(default)]
+    pub tags: OneOrManyUnique<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -129,7 +131,6 @@ pub struct Node {
     pub endpoint: Ipv4Addr,
     pub listen_port: u16,
     pub mesh_ip: Ipv4Addr,
-    pub lan: NodeLan,
 
     #[serde(default)]
     pub vpn_interfaces: HashMap<String, NodeVpnInterface>,
@@ -137,6 +138,51 @@ pub struct Node {
     pub tags: OneOrManyUnique<String>,
     #[serde(default)]
     pub services: HashMap<String, Service>,
+    #[serde(default)]
+    pub zones: HashMap<String, NodeZone>,
+}
+
+pub enum ZoneOrVpnInterface<'a> {
+    Zone(&'a NodeZone),
+    VpnInterface(&'a NodeVpnInterface),
+}
+
+impl ZoneOrVpnInterface<'_> {
+    pub fn address(&self) -> Option<Ipv4Interface> {
+        match self {
+            Self::VpnInterface(vpn_interface) => Some(vpn_interface.address),
+            Self::Zone(zone) => zone.address,
+        }
+    }
+}
+
+impl Node {
+    pub fn network_for_ip(&self, ip: Ipv4Addr) -> Option<(&str, Ipv4Interface)> {
+        self.zones
+            .iter()
+            .filter_map(|(zone_name, zone)| {
+                zone.address.map(|address| (zone_name.as_str(), address))
+            })
+            .chain(
+                self.vpn_interfaces
+                    .iter()
+                    .map(|(vpn_interface_name, vpn_interface)| {
+                        (vpn_interface_name.as_str(), vpn_interface.address)
+                    }),
+            )
+            .find(|(_, address)| address.is_in_same_network(ip))
+    }
+
+    pub fn network_by_name(&self, name: &str) -> Option<ZoneOrVpnInterface<'_>> {
+        self.zones
+            .get(name)
+            .map(ZoneOrVpnInterface::Zone)
+            .or_else(|| {
+                self.vpn_interfaces
+                    .get(name)
+                    .map(ZoneOrVpnInterface::VpnInterface)
+            })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,7 +194,7 @@ pub struct Client {
     #[serde(default)]
     pub macs: OneOrManyUnique<MacAddress>,
     #[serde(default)]
-    pub ips: HashMap<String, Ipv4Addr>,
+    pub ips: HashMap<String, HashMap<String, Ipv4Addr>>,
     #[serde(default)]
     pub services: HashMap<String, Service>,
     #[serde(default)]
