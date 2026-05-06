@@ -3,6 +3,7 @@ use std::{
     fmt::Display,
     fs::File,
     hash::Hash,
+    iter,
     net::Ipv4Addr,
     ops::Deref,
 };
@@ -182,6 +183,26 @@ impl Node {
                     .get(name)
                     .map(ZoneOrVpnInterface::VpnInterface)
             })
+    }
+
+    pub fn addresses(&self) -> impl Iterator<Item = Ipv4Interface> {
+        let zone_networks = self.zones.values().filter_map(|zone| zone.address);
+
+        let vpn_interfaces_networks = self
+            .vpn_interfaces
+            .values()
+            .map(|vpn_interface| vpn_interface.address);
+
+        zone_networks.chain(vpn_interfaces_networks)
+    }
+
+    pub fn networks(&self) -> impl Iterator<Item = Ipv4Network> {
+        self.addresses().map(|address| address.network())
+    }
+
+    pub fn host_interfaces(&self) -> impl Iterator<Item = Ipv4Interface> {
+        let mesh = Ipv4Interface::host(self.mesh_ip);
+        iter::once(mesh).chain(self.addresses())
     }
 }
 

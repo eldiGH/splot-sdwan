@@ -3,14 +3,15 @@ use std::{collections::HashMap, iter};
 use crate::{
     config::{Client, Config, Node},
     consts,
-    managers::firewall::types::{IpOrNetwork, TagResolution},
+    managers::firewall::types::TagResolution,
+    types::ip::Ipv4Network,
 };
 
 const CURRENT_NODE_IDENTIFIER: &str = "$node";
 
 fn add_tags(
     tags_map: &mut HashMap<String, TagResolution>,
-    address: IpOrNetwork,
+    network: Ipv4Network,
     tags: impl IntoIterator<Item = String>,
     zone_name: &str,
 ) {
@@ -20,7 +21,7 @@ fn add_tags(
             .or_default()
             .entry(zone_name.to_owned())
             .or_default()
-            .insert(address);
+            .insert(network);
     }
 }
 
@@ -41,7 +42,7 @@ fn add_current_node_identifier_tag(node: &Node, tags_map: &mut HashMap<String, T
 
         add_tags(
             tags_map,
-            IpOrNetwork::Ip(address.ip()),
+            Ipv4Network::host(address.ip()),
             zone_tags,
             zone_name,
         );
@@ -55,7 +56,7 @@ fn add_current_node_identifier_tag(node: &Node, tags_map: &mut HashMap<String, T
 
         add_tags(
             tags_map,
-            IpOrNetwork::Ip(vpn_interface.address.ip()),
+            Ipv4Network::host(vpn_interface.address.ip()),
             vpn_interface_tags,
             vpn_interface_name,
         );
@@ -69,18 +70,13 @@ fn add_node_tag(node_name: &str, node: &Node, tags_map: &mut HashMap<String, Tag
             continue;
         };
 
-        add_tags(
-            tags_map,
-            IpOrNetwork::Network(address.network()),
-            node_tags.clone(),
-            zone_name,
-        );
+        add_tags(tags_map, address.network(), node_tags.clone(), zone_name);
     }
 
     for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
         add_tags(
             tags_map,
-            IpOrNetwork::Network(vpn_interface.address.network()),
+            vpn_interface.address.network(),
             node_tags.clone(),
             vpn_interface_name,
         )
@@ -100,7 +96,7 @@ fn add_client_tag(
     if let Some(mesh_ip) = client.mesh_ip {
         add_tags(
             tags_map,
-            IpOrNetwork::Ip(mesh_ip),
+            Ipv4Network::host(mesh_ip),
             tags.iter().cloned(),
             consts::MESH_INTERFACE_NAME,
         );
@@ -116,7 +112,7 @@ fn add_client_tag(
 
             add_tags(
                 tags_map,
-                IpOrNetwork::Ip(*ip),
+                Ipv4Network::host(*ip),
                 tags.iter().cloned(),
                 zone_name,
             );
@@ -136,17 +132,17 @@ fn add_zones_tags(node_name: &str, node: &Node, tags_map: &mut HashMap<String, T
 
         let zone_tags = iter::once(node_scoped_identifier(node_name, zone_name))
             .chain(zone.tags.iter().cloned());
-        add_tags(
-            tags_map,
-            IpOrNetwork::Network(address.network()),
-            zone_tags,
-            zone_name,
-        );
+        add_tags(tags_map, address.network(), zone_tags, zone_name);
 
         for (device_name, device) in &zone.devices {
             let device_tags = iter::once(node_scoped_identifier(node_name, device_name))
                 .chain(device.tags.iter().cloned());
-            add_tags(tags_map, IpOrNetwork::Ip(device.ip), device_tags, zone_name);
+            add_tags(
+                tags_map,
+                Ipv4Network::host(device.ip),
+                device_tags,
+                zone_name,
+            );
         }
     }
 }
@@ -161,7 +157,7 @@ fn add_vpn_interfaces_tags(
             .chain(vpn_interface.tags.iter().cloned());
         add_tags(
             tags_map,
-            IpOrNetwork::Network(vpn_interface.address.network()),
+            vpn_interface.address.network(),
             vpn_interface_tags,
             vpn_interface_name,
         );
@@ -173,7 +169,7 @@ fn add_vpn_interfaces_tags(
 
             add_tags(
                 tags_map,
-                IpOrNetwork::Ip(vpn_interface_client.ip),
+                Ipv4Network::host(vpn_interface_client.ip),
                 vpn_interface_client_tags,
                 vpn_interface_name,
             );

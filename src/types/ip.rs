@@ -163,6 +163,13 @@ impl Ipv4Interface {
 
         (ip.to_bits() & mask) == (self.addr.to_bits() & mask)
     }
+
+    pub fn host(ip: Ipv4Addr) -> Self {
+        Self {
+            addr: ip,
+            prefix: 32,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -238,10 +245,18 @@ impl Ipv4Network {
         self.prefix
     }
 
+    pub fn mask(&self) -> u32 {
+        mask_from_prefix(self.prefix)
+    }
+
     pub fn host(ip: Ipv4Addr) -> Self {
         Self {
             addr: ip,
             prefix: 32,
         }
+    }
+
+    pub fn contains(&self, ip: Ipv4Addr) -> bool {
+        (self.mask() & ip.to_bits()) == self.addr.to_bits()
     }
 }

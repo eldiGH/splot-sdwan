@@ -307,6 +307,12 @@ The qualified `{NodeName}.{LocalName}` syntax is intentionally only **two levels
 
 Names must contain only alphanumeric characters, `-`, and `_`. Spaces, dots, and other special characters are forbidden — names are used as part of generated UCI section identifiers, and `.` is reserved as the qualified-reference separator.
 
+### Reserved prefixes for per-node-scoped names
+
+A per-node-scoped name (zone, zone device, VPN interface, VPN interface client) must not start with `{NodeName}_` where `{NodeName}` is the name of any node in the config. For example, if there is a node named `Jawo`, no per-node-scoped name anywhere may be `Jawo_printer`, `Jawo_lan`, etc.
+
+The reason is generated UCI rule names. Splot qualifies a rule for a remote node's object by prefixing the node name with `_` (e.g. `Jawo_printer_ssh` for an `ssh` service on Jawo's `printer`). A literal name like `Jawo_printer` on another node would collide with that qualified form. `_` itself stays a valid character — only the specific `{NodeName}_` prefix is reserved.
+
 ---
 
 ## Subnet uniqueness

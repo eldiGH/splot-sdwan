@@ -11,8 +11,10 @@ use crate::{
     managers::{
         UciManager,
         firewall::{
-            consts::FIREWALL_FILE_NAME, rules::get_firewall_ingress_rules,
-            tag_resolution::build_tags_resolution_map, zones::get_firewall_zones,
+            consts::FIREWALL_FILE_NAME,
+            rules::{get_firewall_egress_rules, get_firewall_ingress_rules},
+            tag_resolution::build_tags_resolution_map,
+            zones::get_firewall_zones,
         },
     },
     uci::UciBatchCommand,
@@ -32,7 +34,8 @@ impl UciManager for FirewallManager {
         debug!("  Resolved {} tag(s)", tags.len());
 
         let zones = get_firewall_zones(config, own_name);
-        let rules = get_firewall_ingress_rules(config, own_name, &tags);
+        let mut rules = get_firewall_ingress_rules(config, own_name, &tags);
+        rules.extend(get_firewall_egress_rules(config, own_name, &tags));
 
         info!("  {} zone(s), {} rule(s)", zones.len(), rules.len());
 

@@ -1,26 +1,26 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    config::{Config, Service},
+    config::{Config, Service, ZoneOrVpnInterface},
     managers::{
         UciSectionBuilder,
         firewall::{
             consts::FIREWALL_FILE_NAME,
-            types::{FirewallAction, IpOrNetwork, TagResolution},
+            types::{FirewallAction, TagResolution},
         },
     },
     naming,
     protocol::Protocol,
-    types::ip::Ipv4Interface,
+    types::ip::{Ipv4Interface, Ipv4Network},
     uci::UciBatchCommand,
 };
 
 pub struct FirewallRule {
     pub name: String,
-    pub src_ip: Vec<IpOrNetwork>,
+    pub src_ip: Vec<Ipv4Network>,
     pub proto: HashSet<Protocol>,
     pub dest_port: String,
-    pub dest_ip: Vec<Ipv4Interface>,
+    pub dest_ip: Vec<Ipv4Network>,
     pub target: FirewallAction,
 }
 
@@ -40,15 +40,16 @@ impl FirewallRule {
 }
 
 fn generate_rule_from_service(
+    service_name: &str,
     service: &Service,
     dest_addresses: impl IntoIterator<Item = Ipv4Interface>,
-    name: &str,
     owner_name: &str,
     tag_resolutions: &HashMap<String, TagResolution>,
+    src_ip_filter: Option<&Vec<Ipv4Network>>,
 ) -> Option<FirewallRule> {
     let dest_addresses: Vec<Ipv4Interface> = dest_addresses.into_iter().collect();
 
-    let src_ip: Vec<IpOrNetwork> = service
+    let src_ips: Vec<Ipv4Network> = service
         .allow_from
         .iter()
         .flat_map(|tag| {
@@ -58,28 +59,37 @@ fn generate_rule_from_service(
                 .values()
                 .flatten()
                 // skip same-LAN sources — they don't traverse this router's firewall
-                .filter(|resolution| match resolution {
-                    IpOrNetwork::Ip(ip) => !dest_addresses
+                .filter(|resolution| {
+                    !dest_addresses
                         .iter()
-                        .all(|dest_address| dest_address.is_in_same_network(*ip)),
-                    IpOrNetwork::Network(network) => !dest_addresses
-                        .iter()
-                        .all(|dest_address| dest_address.is_in_same_network(network.ip())),
+                        .all(|dest_address| dest_address.is_in_same_network(resolution.ip()))
                 })
+        })
+        .filter(|network| {
+            let Some(src_ip_filter) = src_ip_filter else {
+                return true;
+            };
+
+            src_ip_filter
+                .iter()
+                .any(|address| address.contains(network.ip()))
         })
         .cloned()
         .collect();
 
-    if src_ip.is_empty() {
+    if src_ips.is_empty() {
         return None;
     }
 
-    let rule_name = format!("{}_{}", owner_name, name);
+    let rule_name = format!("{}_{}", owner_name, service_name);
 
     Some(FirewallRule {
-        src_ip,
+        src_ip: src_ips,
         name: rule_name,
-        dest_ip: dest_addresses,
+        dest_ip: dest_addresses
+            .iter()
+            .map(|address| Ipv4Network::host(address.ip()))
+            .collect(),
         dest_port: service.port.clone(),
         proto: service.proto.clone().into(),
         target: FirewallAction::Accept,
@@ -98,19 +108,14 @@ pub fn get_firewall_ingress_rules(
         .get(own_name)
         .expect("own node not found — config should be validated before calling managers");
 
-    let node_ips = node.zones.values().filter_map(|zone| zone.address).chain(
-        node.vpn_interfaces
-            .values()
-            .map(|vpn_interface| vpn_interface.address),
-    );
-
     for (service_name, service) in &node.services {
         rules.extend(generate_rule_from_service(
-            service,
-            node_ips.clone(),
             service_name,
+            service,
+            node.host_interfaces(),
             own_name,
             tags,
+            None,
         ));
     }
 
@@ -122,12 +127,13 @@ pub fn get_firewall_ingress_rules(
         for (device_name, device) in &zone.devices {
             for (service_name, service) in &device.services {
                 rules.extend(generate_rule_from_service(
+                    service_name,
                     service,
                     [Ipv4Interface::from_ip(device.ip, zone_address.prefix())
-                        .expect("Invalid addresses should be validated before running manager")],
-                    service_name,
+                        .expect("ip and prefix should already be validated")],
                     device_name,
                     tags,
+                    None,
                 ));
             }
         }
@@ -136,15 +142,16 @@ pub fn get_firewall_ingress_rules(
     for interface in node.vpn_interfaces.values() {
         for (client_name, client) in &interface.clients {
             for (service_name, service) in &client.services {
+                // /32 dest: VPN interfaces are routed, not L2-bridged — peers on the same
+                // interface traverse the firewall, so the same-network filter must keep
+                // same-subnet sources rather than treating them as no-ops.
                 rules.extend(generate_rule_from_service(
-                    service,
-                    [
-                        Ipv4Interface::from_ip(client.ip, interface.address.prefix())
-                            .expect("Invalid addresses should be validated before running manager"),
-                    ],
                     service_name,
+                    service,
+                    [Ipv4Interface::host(client.ip)],
                     client_name,
                     tags,
+                    None,
                 ));
             }
         }
@@ -158,10 +165,14 @@ pub fn get_firewall_ingress_rules(
         let ips: Vec<Ipv4Interface> = networks
             .iter()
             .filter_map(|(network_name, ip)| {
-                let network_address = node.network_by_name(network_name)?.address()?;
+                let network_address = node.network_by_name(network_name)?;
+                let prefix = match network_address {
+                    ZoneOrVpnInterface::VpnInterface(_) => 32,
+                    ZoneOrVpnInterface::Zone(zone) => zone.address?.prefix(),
+                };
 
                 Some(
-                    Ipv4Interface::from_ip(*ip, network_address.prefix())
+                    Ipv4Interface::from_ip(*ip, prefix)
                         .expect("ip and prefix should be validated at this point."),
                 )
             })
@@ -169,12 +180,125 @@ pub fn get_firewall_ingress_rules(
 
         for (service_name, service) in &client.services {
             rules.extend(generate_rule_from_service(
+                service_name,
                 service,
                 ips.iter().cloned(),
-                service_name,
                 client_name,
                 tags,
+                None,
             ));
+        }
+    }
+
+    rules
+}
+
+pub fn get_firewall_egress_rules(
+    config: &Config,
+    own_name: &str,
+    tags: &HashMap<String, TagResolution>,
+) -> Vec<FirewallRule> {
+    let mut rules = Vec::new();
+
+    let local_networks: Vec<Ipv4Network> = config
+        .nodes
+        .get(own_name)
+        .expect("own node not found - should be validated before running manager")
+        .networks()
+        .collect();
+
+    for (node_name, node) in &config.nodes {
+        if node_name == own_name {
+            continue;
+        }
+
+        rules.extend(node.services.iter().filter_map(|(service_name, service)| {
+            generate_rule_from_service(
+                service_name,
+                service,
+                node.host_interfaces(),
+                node_name,
+                tags,
+                Some(&local_networks),
+            )
+        }));
+
+        let with_node_prefix = |owner_name: &str| format!("{node_name}_{owner_name}");
+
+        for zone in node.zones.values() {
+            let Some(zone_address) = zone.address else {
+                continue;
+            };
+
+            for (device_name, device) in &zone.devices {
+                for (service_name, service) in &device.services {
+                    rules.extend(generate_rule_from_service(
+                        service_name,
+                        service,
+                        [Ipv4Interface::from_ip(device.ip, zone_address.prefix())
+                            .expect("ip and prefix should already be validated")],
+                        &with_node_prefix(device_name),
+                        tags,
+                        Some(&local_networks),
+                    ))
+                }
+            }
+        }
+
+        for vpn_interface in node.vpn_interfaces.values() {
+            for (client_name, client) in &vpn_interface.clients {
+                for (service_name, service) in &client.services {
+                    // /32 dest: VPN interfaces are routed, not L2-bridged — peers on the same
+                    // interface traverse the firewall, so the same-network filter must keep
+                    // same-subnet sources rather than treating them as no-ops.
+                    rules.extend(generate_rule_from_service(
+                        service_name,
+                        service,
+                        [Ipv4Interface::host(client.ip)],
+                        &with_node_prefix(client_name),
+                        tags,
+                        Some(&local_networks),
+                    ))
+                }
+            }
+        }
+    }
+
+    for (client_name, client) in &config.clients {
+        let external_client_addresses: Vec<Ipv4Interface> = client
+            .ips
+            .iter()
+            .filter_map(|(node_name, networks)| {
+                if *node_name == own_name {
+                    return None;
+                }
+
+                Some(networks.iter().filter_map(|(network_name, ip)| {
+                    let node = config.nodes.get(node_name)?;
+                    let network = node.network_by_name(network_name)?;
+                    let prefix = match network {
+                        ZoneOrVpnInterface::VpnInterface(_) => 32,
+                        ZoneOrVpnInterface::Zone(zone) => zone.address?.prefix(),
+                    };
+
+                    Some(
+                        Ipv4Interface::from_ip(*ip, prefix)
+                            .expect("ip and prefix should already be validated"),
+                    )
+                }))
+            })
+            .flatten()
+            .collect();
+
+        for (service_name, service) in &client.services {
+            rules.extend(generate_rule_from_service(
+                service_name,
+                service,
+                external_client_addresses.iter().cloned(),
+                client_name,
+                tags,
+                Some(&local_networks),
+            ))
         }
     }
 
