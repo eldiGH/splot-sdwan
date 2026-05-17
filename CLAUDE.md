@@ -73,7 +73,7 @@ A reference in `allowFrom` is one of:
 
 - **Bare name** — globally-scoped: explicit tag, node, or global client
 - **Qualified `{NodeName}.{LocalName}`** — anything inside a node (zone, device, VPN interface, VPN client)
-- **`$node`** or **`$node.{LocalName}`** — the current router; context-dependent (resolves differently per router being configured)
+- **`$node`** — the current router; context-dependent (resolves differently per router being configured)
 
 Resolution always produces a set of IPs or subnets — never zone names. Zone names are tracked separately on the resolved IPs and used to scope generated firewall rules.
 
@@ -87,9 +87,8 @@ Resolution always produces a set of IPs or subnets — never zone names. Zone na
 | `{Node}.{VpnInterface}`                  | The interface's subnet                                                   |
 | `{Node}.{VpnClient}`                     | The client's IP                                                          |
 | `$node`                                  | Union of router's own IPs across all its `zones` and `vpnInterfaces`     |
-| `$node.{Zone}` or `$node.{VpnInterface}` | Router's own IP on that specific zone or VPN interface                   |
 
-**Subnets vs IPs.** Bare/qualified node-name forms (`Jawo`, `Jawo.lan`) resolve to *subnets* — broad, "any device on those networks." `$node` forms resolve to *IPs* — narrow, "the router itself as a host." These are complementary, not interchangeable.
+**Subnets vs IPs.** Bare/qualified node-name forms (`Jawo`, `Jawo.lan`) resolve to *subnets* — broad, "any device on those networks." `$node` resolves to *IPs* — narrow, "the router itself as a host." These are complementary, not interchangeable.
 
 **Addressless zones contribute nothing.** A zone declared without an `address` (e.g. a NAT-ed WAN whose IP is managed by the operator) is silently excluded from anything that aggregates subnets or IPs — including bare node names and bare `$node`.
 

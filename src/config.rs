@@ -73,8 +73,6 @@ impl<'de, T: Deserialize<'de> + Hash + Eq> Deserialize<'de> for OneOrManyUnique<
 pub struct Service {
     pub port: String,
     pub proto: OneOrManyUnique<Protocol>,
-
-    #[serde(default)]
     pub allow_from: OneOrManyUnique<String>,
 }
 
@@ -82,9 +80,8 @@ pub struct Service {
 #[serde(rename_all = "camelCase")]
 pub struct NodeZoneDevice {
     pub ip: Ipv4Addr,
-
-    #[serde(default)]
     pub macs: OneOrManyUnique<MacAddress>,
+
     #[serde(default)]
     pub tags: OneOrManyUnique<String>,
     #[serde(default)]
@@ -220,6 +217,12 @@ pub struct Client {
     pub services: HashMap<String, Service>,
     #[serde(default)]
     pub tags: OneOrManyUnique<String>,
+}
+
+impl Client {
+    pub fn network_by_name(&self, node_name: &str, network_name: &str) -> Option<Ipv4Addr> {
+        self.ips.get(node_name)?.get(network_name).copied()
+    }
 }
 
 #[derive(Deserialize, Debug)]

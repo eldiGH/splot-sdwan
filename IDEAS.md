@@ -142,7 +142,7 @@ nodes:
               ssh:
                 port: "2222:22" # external 2222 → internal 22
                 proto: tcp
-                allowFrom: [admin, $node.wan, Karcze.wan]
+                allowFrom: [admin, Jawo.wan, Karcze.wan]
       wan:
         nat: true # marks the zone as NAT-ed; enables port-forward rendering
         # no address — the operator manages this zone in OpenWRT

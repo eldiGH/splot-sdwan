@@ -14,6 +14,7 @@ pub mod protocol;
 pub mod splot_config;
 pub mod types;
 pub mod uci;
+pub mod validator;
 pub mod wg;
 
 fn main() {

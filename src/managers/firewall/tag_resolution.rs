@@ -7,8 +7,6 @@ use crate::{
     types::ip::Ipv4Network,
 };
 
-const CURRENT_NODE_IDENTIFIER: &str = "$node";
-
 fn add_tags(
     tags_map: &mut HashMap<String, TagResolution>,
     network: Ipv4Network,
@@ -25,39 +23,25 @@ fn add_tags(
     }
 }
 
-fn scoped_current_node_identifier(identifier: &str) -> String {
-    format!("{}.{identifier}", CURRENT_NODE_IDENTIFIER)
-}
-
 fn add_current_node_identifier_tag(node: &Node, tags_map: &mut HashMap<String, TagResolution>) {
     for (zone_name, zone) in &node.zones {
         let Some(address) = zone.address else {
             continue;
         };
 
-        let zone_tags = [
-            CURRENT_NODE_IDENTIFIER.to_owned(),
-            scoped_current_node_identifier(zone_name),
-        ];
-
         add_tags(
             tags_map,
             Ipv4Network::host(address.ip()),
-            zone_tags,
+            [consts::CURRENT_NODE_IDENTIFIER.to_owned()],
             zone_name,
         );
     }
 
     for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-        let vpn_interface_tags = [
-            CURRENT_NODE_IDENTIFIER.to_owned(),
-            scoped_current_node_identifier(vpn_interface_name),
-        ];
-
         add_tags(
             tags_map,
             Ipv4Network::host(vpn_interface.address.ip()),
-            vpn_interface_tags,
+            [consts::CURRENT_NODE_IDENTIFIER.to_owned()],
             vpn_interface_name,
         );
     }

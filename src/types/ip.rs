@@ -259,4 +259,12 @@ impl Ipv4Network {
     pub fn contains(&self, ip: Ipv4Addr) -> bool {
         (self.mask() & ip.to_bits()) == self.addr.to_bits()
     }
+
+    pub fn overlap(&self, network: Ipv4Network) -> bool {
+        if self.prefix <= network.prefix {
+            self.contains(network.addr)
+        } else {
+            network.contains(self.addr)
+        }
+    }
 }

@@ -215,7 +215,7 @@ A reference is one of:
 
 - **Bare name** — resolves in the global namespace: an explicit tag, a node name, or a global client name
 - **Qualified `{NodeName}.{LocalName}`** — resolves in that node's per-node namespace: a zone, zone device, VPN interface, or VPN interface client
-- **`$node`** or **`$node.{LocalName}`** — the current router being configured (context-dependent — resolves to a different router per node being generated)
+- **`$node`** — the current router being configured (context-dependent — resolves to a different router per node being generated)
 
 ### What a reference resolves to
 
@@ -231,13 +231,12 @@ Resolution always produces a set of IP addresses or subnets — never zone names
 | `{Node}.{VpnInterface}`                           | The interface's subnet                                                   |
 | `{Node}.{VpnInterfaceClient}`                     | The client's IP                                                          |
 | `$node`                                           | Union of the router's own IPs across all its `zones` and `vpnInterfaces` |
-| `$node.{Zone}` or `$node.{VpnInterface}`          | The router's own IP on that specific zone or VPN interface               |
 
 A single tag can group multiple objects if they share it. `allowFrom: admin` grants access from every device, client, or interface tagged `admin` — across multiple nodes.
 
 ### Subnets vs IPs
 
-Bare and qualified node-name forms (`HomeRouter`, `HomeRouter.lan`) resolve to **subnets** — broad, meaning "any device on those networks." `$node` forms resolve to **IPs** — narrow, meaning "the router itself as a host." These are complementary, not interchangeable.
+Bare and qualified node-name forms (`HomeRouter`, `HomeRouter.lan`) resolve to **subnets** — broad, meaning "any device on those networks." `$node` resolves to **IPs** — narrow, meaning "the router itself as a host." These are complementary, not interchangeable.
 
 Use the bare node name when you want any traffic from that node's downstream networks. Use `$node` (on that node's own rules) when you specifically want the router's interface IPs as source or destination.
 
@@ -256,7 +255,6 @@ allowFrom: HomeRouter.wg_admin            # specific VPN interface's subnet
 allowFrom: Phone                          # global client's IPs
 allowFrom: [admin, HomeRouter.iot]        # admin-tagged things + the node's iot zone subnet
 allowFrom: $node                          # the router's own IPs across all its interfaces
-allowFrom: $node.lan                      # only the router's IP on its lan zone
 ```
 
 ---
@@ -299,9 +297,9 @@ Every named object has an implicit tag equal to its name. Where that tag lives:
 
 The qualified `{NodeName}.{LocalName}` syntax is intentionally only **two levels deep** — the per-node namespace is flat. There is no `{NodeName}.{Zone}.{Device}` form; a device is referenced as `{NodeName}.{Device}` directly. This works because per-node names across all four categories are unique.
 
-### `$node` and `$node.{name}`
+### `$node`
 
-`$node` is a special context-dependent tag that resolves to the router currently being configured. It produces the router's own IPs across all of its `zones` and `vpnInterfaces`. The qualified form `$node.{name}` narrows to a single zone or VPN interface on that router.
+`$node` is a special context-dependent tag that resolves to the router currently being configured. It produces the router's own IPs across all of its `zones` and `vpnInterfaces`.
 
 ### Allowed characters
 
