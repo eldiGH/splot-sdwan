@@ -14,11 +14,11 @@ clients:
   <clientName>: { ... }
 ```
 
-| Field         | Type                              | Required | Description                                                                          |
-| ------------- | --------------------------------- | -------- | ------------------------------------------------------------------------------------ |
-| `meshNetwork` | CIDR (`x.x.x.x/prefix`)           | yes      | Subnet for the WireGuard mesh substrate that connects all nodes.                     |
-| `nodes`       | map of name → Node                | yes      | Routers participating in the mesh.                                                   |
-| `clients`     | map of name → Client              | no       | Roaming devices accessible across the mesh (phones, laptops). Global, cross-node.    |
+| Field         | Type                    | Required | Description                                                                       |
+| ------------- | ----------------------- | -------- | --------------------------------------------------------------------------------- |
+| `meshNetwork` | CIDR (`x.x.x.x/prefix`) | yes      | Subnet for the WireGuard mesh substrate that connects all nodes.                  |
+| `nodes`       | map of name → Node      | yes      | Routers participating in the mesh.                                                |
+| `clients`     | map of name → Client    | no       | Roaming devices accessible across the mesh (phones, laptops). Global, cross-node. |
 
 ---
 
@@ -40,16 +40,17 @@ HomeRouter:
   tags: home
 ```
 
-| Field           | Type                          | Required | Description                                                                            |
-| --------------- | ----------------------------- | -------- | -------------------------------------------------------------------------------------- |
-| `publicKey`     | string                        | yes      | WireGuard public key (base64). splot uses this to identify which node it's running on. |
-| `endpoint`      | IPv4 address                  | yes      | Public IP used by other mesh nodes to establish WireGuard connections.                 |
-| `listenPort`    | integer                       | yes      | WireGuard listen port for the mesh interface.                                          |
-| `meshIp`        | IPv4 address                  | yes      | This node's IP on the mesh WireGuard interface (within `meshNetwork`).                 |
-| `zones`         | map of name → Zone            | no       | Downstream networks the router serves (LAN, VLANs).                                    |
-| `vpnInterfaces` | map of name → VpnInterface    | no       | Additional WireGuard interfaces hosted by this router for external clients.            |
-| `services`      | map of name → Service         | no       | Services exposed by the router itself (e.g. SSH, admin UI).                            |
-| `tags`          | string or list of strings     | no       | Explicit tags assigned to the node. See [Tags](#tags).                                 |
+| Field           | Type                       | Required | Description                                                                                                                                                                                                       |
+| --------------- | -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `publicKey`     | string                     | yes      | WireGuard public key (base64). splot uses this to identify which node it's running on.                                                                                                                            |
+| `endpoint`      | IPv4 address               | yes      | Public IP used by other mesh nodes to establish WireGuard connections.                                                                                                                                            |
+| `listenPort`    | integer                    | yes      | WireGuard listen port for the mesh interface.                                                                                                                                                                     |
+| `meshIp`        | IPv4 address               | yes      | This node's IP on the mesh WireGuard interface (within `meshNetwork`).                                                                                                                                            |
+| `zones`         | map of name → Zone         | no       | Downstream networks the router serves (LAN, VLANs).                                                                                                                                                               |
+| `vpnInterfaces` | map of name → VpnInterface | no       | Additional WireGuard interfaces hosted by this router for external clients.                                                                                                                                       |
+| `services`      | map of name → Service      | no       | Services exposed by the router itself (e.g. SSH, admin UI).                                                                                                                                                       |
+| `wanZone`       | string                     | no\*     | Name of the OpenWRT firewall zone that is WAN-facing on this router. Splot does not manage this zone; it only references it when generating port forwards. \*Required if any service uses this node in `wan.via`. |
+| `tags`          | string or list of strings  | no       | Explicit tags assigned to the node. See [Tags](#tags).                                                                                                                                                            |
 
 ---
 
@@ -65,13 +66,13 @@ lan:
   tags: trusted
 ```
 
-| Field     | Type                          | Required | Description                                                                                                                        |
-| --------- | ----------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `address` | CIDR (`x.x.x.x/prefix`)       | no       | The router's IP and subnet on this zone. Omit for zones managed externally with no splot-known IP (e.g. a NAT-ed WAN zone).        |
-| `devices` | map of name → ZoneDevice      | no       | Known devices on this zone.                                                                                                        |
-| `tags`    | string or list of strings     | no       | Explicit tags assigned to this zone. Resolves to the zone's subnet.                                                                |
+| Field     | Type                      | Required | Description                                                         |
+| --------- | ------------------------- | -------- | ------------------------------------------------------------------- |
+| `address` | CIDR (`x.x.x.x/prefix`)   | yes      | The router's IP and subnet on this zone.                            |
+| `devices` | map of name → ZoneDevice  | no       | Known devices on this zone.                                         |
+| `tags`    | string or list of strings | no       | Explicit tags assigned to this zone. Resolves to the zone's subnet. |
 
-A zone with no `address` is silently excluded from broad references like bare node names or bare `$node`. See [Addressless zones](#addressless-zones).
+WAN zones are not modeled here — they are not splot zones. If a router has a WAN interface that needs port forwards, declare its OpenWRT zone name in the node's `wanZone` field. See [WAN exposure](#wan-exposure).
 
 ---
 
@@ -91,12 +92,12 @@ Printer:
       allowFrom: admin
 ```
 
-| Field      | Type                            | Required | Description                                                                |
-| ---------- | ------------------------------- | -------- | -------------------------------------------------------------------------- |
-| `ip`       | IPv4 address                    | yes      | Device's IP. Must fall within its containing zone's `address` subnet.      |
-| `macs`     | MAC string or list              | no       | MAC addresses. Used to generate static DHCP leases on the hosting node.    |
-| `tags`     | string or list of strings       | no       | Explicit tags assigned to this device.                                     |
-| `services` | map of name → Service           | no       | Services exposed by this device.                                           |
+| Field      | Type                      | Required | Description                                                             |
+| ---------- | ------------------------- | -------- | ----------------------------------------------------------------------- |
+| `ip`       | IPv4 address              | yes      | Device's IP. Must fall within its containing zone's `address` subnet.   |
+| `macs`     | MAC string or list        | no       | MAC addresses. Used to generate static DHCP leases on the hosting node. |
+| `tags`     | string or list of strings | no       | Explicit tags assigned to this device.                                  |
+| `services` | map of name → Service     | no       | Services exposed by this device.                                        |
 
 ---
 
@@ -113,12 +114,12 @@ wg_admin:
   tags: admin
 ```
 
-| Field        | Type                               | Required | Description                                                                                                |
-| ------------ | ---------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `listenPort` | integer                            | yes      | WireGuard listen port for this interface. Must differ from the mesh listen port and other VPN interfaces.  |
-| `address`    | CIDR (`x.x.x.x/prefix`)            | yes      | The router's IP on this interface and its subnet. The host part is the router; the prefix defines clients. |
-| `clients`    | map of name → VpnInterfaceClient   | no       | WireGuard peers allowed to connect to this interface.                                                      |
-| `tags`       | string or list of strings          | no       | Explicit tags assigned to the interface. Resolves to the interface's subnet.                               |
+| Field        | Type                             | Required | Description                                                                                                |
+| ------------ | -------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `listenPort` | integer                          | yes      | WireGuard listen port for this interface. Must differ from the mesh listen port and other VPN interfaces.  |
+| `address`    | CIDR (`x.x.x.x/prefix`)          | yes      | The router's IP on this interface and its subnet. The host part is the router; the prefix defines clients. |
+| `clients`    | map of name → VpnInterfaceClient | no       | WireGuard peers allowed to connect to this interface.                                                      |
+| `tags`       | string or list of strings        | no       | Explicit tags assigned to the interface. Resolves to the interface's subnet.                               |
 
 ---
 
@@ -134,12 +135,12 @@ Phone:
   services: { ... }
 ```
 
-| Field       | Type                            | Required | Description                                                                |
-| ----------- | ------------------------------- | -------- | -------------------------------------------------------------------------- |
-| `publicKey` | string                          | yes      | WireGuard public key of this client (base64).                              |
-| `ip`        | IPv4 address                    | yes      | The client's IP on the interface's subnet.                                 |
-| `tags`      | string or list of strings       | no       | Explicit tags assigned to this client.                                     |
-| `services`  | map of name → Service           | no       | Services exposed by this client and accessible through the mesh.           |
+| Field       | Type                      | Required | Description                                                      |
+| ----------- | ------------------------- | -------- | ---------------------------------------------------------------- |
+| `publicKey` | string                    | yes      | WireGuard public key of this client (base64).                    |
+| `ip`        | IPv4 address              | yes      | The client's IP on the interface's subnet.                       |
+| `tags`      | string or list of strings | no       | Explicit tags assigned to this client.                           |
+| `services`  | map of name → Service     | no       | Services exposed by this client and accessible through the mesh. |
 
 ---
 
@@ -164,33 +165,39 @@ Phone:
   tags: admin
 ```
 
-| Field       | Type                                                | Required | Description                                                                                                                                                                                |
-| ----------- | --------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `meshIp`    | IPv4 address                                        | no       | The client's IP on the mesh interface (within `meshNetwork`). Set when the client connects directly to the mesh via WireGuard.                                                             |
-| `publicKey` | string                                              | no       | WireGuard public key (base64). Required if `meshIp` or any VPN interface IP is set — otherwise the client can't be a WireGuard peer.                                                       |
-| `macs`      | MAC string or list                                  | no       | MAC addresses. Used to generate static DHCP leases for the client's zone IPs on each node.                                                                                                 |
-| `ips`       | map of nodeName → (map of localName → IPv4 address) | no       | The client's IPs on each node, keyed by zone or VPN interface name within that node. See [Tags](#tags) for resolution.                                                                     |
-| `services`  | map of name → Service                               | no       | Services exposed by this client.                                                                                                                                                           |
-| `tags`      | string or list of strings                           | no       | Explicit tags assigned to this client.                                                                                                                                                     |
+| Field       | Type                                                | Required | Description                                                                                                                          |
+| ----------- | --------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `meshIp`    | IPv4 address                                        | no       | The client's IP on the mesh interface (within `meshNetwork`). Set when the client connects directly to the mesh via WireGuard.       |
+| `publicKey` | string                                              | no       | WireGuard public key (base64). Required if `meshIp` or any VPN interface IP is set — otherwise the client can't be a WireGuard peer. |
+| `macs`      | MAC string or list                                  | no       | MAC addresses. Used to generate static DHCP leases for the client's zone IPs on each node.                                           |
+| `ips`       | map of nodeName → (map of localName → IPv4 address) | no       | The client's IPs on each node, keyed by zone or VPN interface name within that node. See [Tags](#tags) for resolution.               |
+| `services`  | map of name → Service                               | no       | Services exposed by this client.                                                                                                     |
+| `tags`      | string or list of strings                           | no       | Explicit tags assigned to this client.                                                                                               |
 
 ---
 
 ## Service
 
-A network service that should be reachable from specific parts of the mesh.
+A network service that should be reachable from specific parts of the mesh, externally via WAN, or both.
 
 ```yaml
 ssh:
   port: "22"
   proto: tcp
   allowFrom: [admin, HomeRouter.Printer]
+  wan:
+    via: [HomeRouter]
+    sourceAddresses: ["1.2.3.4/32"]
 ```
 
-| Field       | Type                          | Required | Description                                                                                  |
-| ----------- | ----------------------------- | -------- | -------------------------------------------------------------------------------------------- |
-| `port`      | string                        | yes      | Port number or range.                                                                        |
-| `proto`     | string or list of strings     | yes      | Protocol(s). Accepted values: `tcp`, `udp`.                                                  |
-| `allowFrom` | string or list of strings     | no       | Tags or qualified references whose resolved addresses are granted access. See [Tags](#tags). |
+| Field       | Type                      | Required | Description                                                                                                                         |
+| ----------- | ------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `port`      | string                    | yes      | Port number or range. Use `"external:internal"` form to translate ports for WAN forwards; bare `"22"` means same external/internal. |
+| `proto`     | string or list of strings | yes      | Protocol(s). Accepted values: `tcp`, `udp`.                                                                                         |
+| `allowFrom` | string or list of strings | no       | Tags or qualified references whose resolved addresses are granted LAN/mesh access. See [Tags](#tags).                               |
+| `wan`       | WAN exposure object       | no       | Declares external (WAN) exposure of this service. See [WAN exposure](#wan-exposure).                                                |
+
+A service must grant access in at least one direction — either `allowFrom` or `wan` must be set. A service with neither is operationally meaningless (warning).
 
 Services may be declared on:
 
@@ -198,6 +205,56 @@ Services may be declared on:
 - A **zone device** (`zone.devices.<name>.services`) — the device hosts the service
 - A **VPN interface client** (`vpnInterface.clients.<name>.services`) — the client hosts the service
 - A **global client** (`client.services`) — the client hosts the service, reachable on any node where it has an IP
+
+---
+
+## WAN exposure
+
+A service can be exposed on the public internet via one or more routers' WAN zones using its `wan` field. This generates an OpenWRT port forward (DNAT) on each listed router.
+
+```yaml
+wan:
+  via: [HomeRouter, BackupRouter]
+  sourceAddresses: ["1.2.3.4/32", "203.0.113.0/24"]
+```
+
+| Field             | Type                                    | Required | Description                                                                                        |
+| ----------------- | --------------------------------------- | -------- | -------------------------------------------------------------------------------------------------- |
+| `via`             | string or list of node names            | yes      | Nodes whose `wanZone` should forward to this service. Each listed node must declare `wanZone`. Must be explicit node names — special identifiers like `$node` are *not* allowed here. |
+| `sourceAddresses` | CIDR string or list (e.g. `1.2.3.4/32`) | no       | Allowlist of public source CIDRs that may hit the forward. Missing or empty = publicly accessible.    |
+
+### Semantics
+
+- **`via` lists which routers expose this service.** The forward is rendered on each listed router's `wanZone`. Multi-router exposure is just adding to the list.
+- **`via` accepts only explicit node names.** Special identifiers like `$node` are deliberately not allowed — WAN exposure is security-sensitive, and shortcuts here invite mass-exposure accidents. List the routers you actually mean.
+- **The forward destination is the service's hosting IP**, automatically resolved — splot picks an IP reachable from the WAN-providing router (e.g., a global client's mesh IP when the service is on a global client).
+- **`sourceAddresses` is CIDR-only** — splot identifiers are not accepted because they all resolve to internal addresses with no meaningful WAN-side semantics. Real WAN allowlists (office IP, partner CIDRs, webhook source ranges) are always arbitrary public CIDRs.
+- **Empty/missing `sourceAddresses` means public** — anyone on the internet can reach the forwarded port. Use `sourceAddresses` to restrict.
+- **`wan.sourceAddresses` does not overlap with service-level `allowFrom`**: `allowFrom` controls LAN/mesh accept rules using splot identifiers; `sourceAddresses` restricts WAN-side sources using raw CIDRs. They're independent.
+- **Splot does not gate WAN exposure beyond `sourceAddresses`** — if you need richer logic, configure the OpenWRT firewall directly.
+
+### Cross-node WAN exposure
+
+A service on a global client can be forwarded by any router that can reach the client. For example, a service on `Phone` (with a mesh IP) can be exposed via `HomeRouter`'s WAN:
+
+```yaml
+clients:
+  Phone:
+    meshIp: 10.0.0.100
+    publicKey: ...
+    services:
+      webApp:
+        port: 8080
+        proto: tcp
+        wan:
+          via: [HomeRouter] # HomeRouter forwards 8080 → Phone's mesh IP:8080
+```
+
+`Phone`'s config doesn't reference `HomeRouter`. If `WorkRouter` should also expose Phone's service, just add it to `via`. The two forwards are independent.
+
+### Security note
+
+The splot WAN model is intentionally minimal: a service is either WAN-exposed or it isn't, with optional CIDR-based source filtering. No splot identifier participates in WAN allowlisting. The principle is to minimize external attack surface — every `wan` field in `splot.yml` is a publicly visible port, easy to audit with `grep wan splot.yml`.
 
 ---
 
@@ -239,10 +296,6 @@ A single tag can group multiple objects if they share it. `allowFrom: admin` gra
 Bare and qualified node-name forms (`HomeRouter`, `HomeRouter.lan`) resolve to **subnets** — broad, meaning "any device on those networks." `$node` resolves to **IPs** — narrow, meaning "the router itself as a host." These are complementary, not interchangeable.
 
 Use the bare node name when you want any traffic from that node's downstream networks. Use `$node` (on that node's own rules) when you specifically want the router's interface IPs as source or destination.
-
-### Addressless zones
-
-A zone declared without an `address` (e.g. a NAT-ed WAN zone whose IP is managed by the operator at the OpenWRT level) is silently excluded from anything that aggregates subnets or IPs — including bare node names and bare `$node`. This is the safety property that prevents broad references like `allowFrom: HomeRouter` from accidentally including "anyone on the internet" if the node declares a WAN zone.
 
 ### Examples
 
@@ -342,10 +395,9 @@ Each IP must fall within its named network's subnet. The validator enforces this
 
 Beyond the structural rules above, the validator flags configurations that are syntactically valid but operationally meaningless. These may be reported as **warnings** or **errors** depending on the severity of the resulting silent no-op:
 
-- **Global client with neither `macs` nor `ips`.** Such a client is unreachable: no DHCP lease, and no firewall rule can resolve to anything useful. The client name still resolves to the empty set of IPs but never matches traffic.
+- **Global client with neither `meshIp` nor `ips`.** Such a client is unreachable: nothing addresses it. The client name resolves to the empty set of IPs but never matches traffic.
 - **Global client with `publicKey` but no `meshIp` and no IP on any VPN interface (`ips.<node>.<vpnInterface>`).** The public key isn't used anywhere — splot has no WireGuard interface to attach this peer to. Either remove the key or add an IP that places the client as a peer on some interface.
-- **`allowFrom` references that resolve to no IPs.** A tag with no tagged things, an explicit tag never assigned, or a reference to an addressless zone produce a service rule whose `src_ip` set is empty. The rule is generated but matches nothing.
 - **Subnet-mismatched IPs in `client.ips`.** As above — the IP doesn't fall within the named network's subnet.
-- **Service with empty or omitted `allowFrom`.** No source can reach this service; the service declaration has no effect.
+- **Service with neither `allowFrom` nor `wan`.** No source can reach this service from any direction; the service declaration has no effect.
 
 Future entries in this list will land here as the validator grows.

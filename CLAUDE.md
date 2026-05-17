@@ -38,6 +38,7 @@ Each node carries:
 - `zones` — map of downstream networks the router serves (LAN, VLANs). The map key is the OpenWRT zone name on that router. Splot does not manage these zones in OpenWRT — the operator configures them — splot only references them when generating rules.
 - `vpnInterfaces` — additional WireGuard interfaces hosted by this router for external clients. These zones *are* managed by splot (created in OpenWRT, named after the interface).
 - `services` — services exposed by the router itself
+- `wanZone` — name of the OpenWRT firewall zone that is WAN-facing (only required if any service uses this node in `wan.via`)
 - `tags` — explicit tags on the node
 
 ### Tags
@@ -90,8 +91,6 @@ Resolution always produces a set of IPs or subnets — never zone names. Zone na
 
 **Subnets vs IPs.** Bare/qualified node-name forms (`Jawo`, `Jawo.lan`) resolve to *subnets* — broad, "any device on those networks." `$node` resolves to *IPs* — narrow, "the router itself as a host." These are complementary, not interchangeable.
 
-**Addressless zones contribute nothing.** A zone declared without an `address` (e.g. a NAT-ed WAN whose IP is managed by the operator) is silently excluded from anything that aggregates subnets or IPs — including bare node names and bare `$node`.
-
 ### Zones
 
 Zones are first-class in the config (under each node's `zones` map). They represent the downstream networks the router serves; the operator configures them in OpenWRT, splot just references them.
@@ -108,11 +107,33 @@ Generated firewall rules are scoped per-zone in both `src` and `dest` — when a
 
 The only mechanism for access control. Each service declares:
 
-- `port` — port number or range (string)
+- `port` — port number or range (string). `"external:internal"` form translates ports for WAN forwards; bare `"22"` means same external/internal.
 - `proto` — `tcp`, `udp`, or array (`OneOrMany`)
-- `allowFrom` — one or more tag/name references; resolved as above
+- `allowFrom` — optional; one or more tag/name references granting LAN/mesh access
+- `wan` — optional; declares WAN exposure on listed routers (see below)
+
+A service must grant access in at least one direction — either `allowFrom` or `wan` must be set. Otherwise the service declaration is operationally meaningless (a warning).
 
 Services can be declared at multiple levels: on a node (router-hosted), on a device, on a VPN client, or on a global client.
+
+### WAN exposure
+
+Port forwarding is expressed *on the service itself*, not as a separate top-level construct. The principle: a service is the single source of truth — port, protocol, and exposure decisions live in one place.
+
+```yaml
+wan:
+  via: [HomeRouter]                       # list of routers that expose this service via their wanZone
+  sourceAddresses: ["1.2.3.4/32"]         # optional; CIDR-only allowlist. Empty/missing = publicly accessible
+```
+
+Key design points:
+
+- **WAN is binary at the splot level**: either a service is publicly exposed (with optional CIDR restriction) or it isn't. There's no middle ground using splot identifiers, because no internal identifier has a meaningful WAN-side equivalent.
+- **`sourceAddresses` is CIDR-only**, not splot identifiers. Reason: splot identifiers resolve to internal addresses; nothing in the config has meaningful WAN-side semantics. Real WAN allowlists (office IP, partner CIDRs, webhook source ranges) are always arbitrary public CIDRs.
+- **`allowFrom` and `wan.sourceAddresses` serve different planes**: `allowFrom` controls LAN/mesh accept rules using splot identifiers; `wan.sourceAddresses` restricts WAN-side sources using raw CIDRs. Distinct names so operators can't confuse the two.
+- **`wan.via` accepts only explicit node names**: no `$node` or other identifier shortcuts. The security cost of an operator misunderstanding the shortcut (and mass-exposing a service) outweighs the few characters saved.
+- **Cross-node WAN exposure works naturally**: a service on a global client (Phone) can be exposed via `wan.via: [HomeRouter]`. HomeRouter generates the redirect to Phone's mesh-reachable IP. No change to Phone's config.
+- **Splot does not manage the WAN zone in OpenWRT** — the operator owns its declaration. Splot just references it by name via `node.wanZone`.
 
 ### meshIp
 
