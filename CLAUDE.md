@@ -123,14 +123,14 @@ Port forwarding is expressed *on the service itself*, not as a separate top-leve
 ```yaml
 wan:
   via: [HomeRouter]                       # list of routers that expose this service via their wanZone
-  sourceAddresses: ["1.2.3.4/32"]         # optional; CIDR-only allowlist. Empty/missing = publicly accessible
+  sources: ["1.2.3.4/32"]         # optional; CIDR-only allowlist. Empty/missing = publicly accessible
 ```
 
 Key design points:
 
 - **WAN is binary at the splot level**: either a service is publicly exposed (with optional CIDR restriction) or it isn't. There's no middle ground using splot identifiers, because no internal identifier has a meaningful WAN-side equivalent.
-- **`sourceAddresses` is CIDR-only**, not splot identifiers. Reason: splot identifiers resolve to internal addresses; nothing in the config has meaningful WAN-side semantics. Real WAN allowlists (office IP, partner CIDRs, webhook source ranges) are always arbitrary public CIDRs.
-- **`allowFrom` and `wan.sourceAddresses` serve different planes**: `allowFrom` controls LAN/mesh accept rules using splot identifiers; `wan.sourceAddresses` restricts WAN-side sources using raw CIDRs. Distinct names so operators can't confuse the two.
+- **`sources` is CIDR-only**, not splot identifiers. Reason: splot identifiers resolve to internal addresses; nothing in the config has meaningful WAN-side semantics. Real WAN allowlists (office IP, partner CIDRs, webhook source ranges) are always arbitrary public CIDRs.
+- **`allowFrom` and `wan.sources` serve different planes**: `allowFrom` controls LAN/mesh accept rules using splot identifiers; `wan.sources` restricts WAN-side sources using raw CIDRs. Distinct names so operators can't confuse the two.
 - **`wan.via` accepts only explicit node names**: no `$node` or other identifier shortcuts. The security cost of an operator misunderstanding the shortcut (and mass-exposing a service) outweighs the few characters saved.
 - **Cross-node WAN exposure works naturally**: a service on a global client (Phone) can be exposed via `wan.via: [HomeRouter]`. HomeRouter generates the redirect to Phone's mesh-reachable IP. No change to Phone's config.
 - **Splot does not manage the WAN zone in OpenWRT** — the operator owns its declaration. Splot just references it by name via `node.wanZone`.

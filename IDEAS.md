@@ -74,7 +74,7 @@ While any node is in the "waiting for operator input" state, the master continuo
 
 ---
 
-## [MED] Dynamic device presence — local firewall
+## [MED] Dynamic device presence — local firewall and WAN forward retargeting
 
 A daemon running on each node that watches for DHCP lease events. When a known shared device's MAC address appears in the leases, the daemon dynamically applies the firewall rules for that device. When the lease expires or the device disconnects, the rules are removed.
 
@@ -82,9 +82,25 @@ This is the DHCP-based counterpart to static shared device configuration — it 
 
 **How it works:**
 
-- Watch `/tmp/dhcp.leases` (or dnsmasq lease script hooks) for MAC addresses matching any `sharedDevice`
+- Watch `/tmp/dhcp.leases` (or dnsmasq lease script hooks) for MAC addresses matching any `sharedDevice` or global `client` with `macs` declared
 - On appearance: generate and apply firewall rules for that device using its current leased IP
 - On expiry/removal: tear down those rules
+
+**WAN forward retargeting (extension):**
+
+The daemon also resolves two WAN-forward limitations the static rule can't handle:
+
+1. **Latency optimization.** When a global client with `meshIp` appears on a router's LAN, the daemon rewrites that router's WAN-forward `dest_ip` from `meshIp` to the current LAN IP. Traffic skips the mesh hop and reaches the client directly. On disappearance, the daemon restores `dest_ip` to `meshIp`. Operator-invisible — the forward just keeps working, optimally routed.
+
+2. **Static-rejection cases.** The static rule rejects exposure of a `meshIp`-less global client via a router the client has no local presence on (see CONFIG.md → Destination IP selection). With the daemon running, the operator could opt into dynamic-only exposure: the daemon would watch where the client actually appears on the mesh and retarget all forwards to wherever it currently is. This isn't possible statically because the target depends on runtime presence; the daemon is the right layer for it. Likely requires a future config knob to mark a `wan.via` entry as "dynamic-only" so the validator knows to defer the resolvability check to the daemon.
+
+Flow (for the latency-optimization case):
+
+- Client appears on this router's LAN → daemon rewrites this router's WAN redirect `dest_ip` to `leased_ip`
+- Client disappears (lease expiry or DHCP release) → daemon restores `dest_ip` to the static value
+- Operator never sees this — the redirect just keeps working, optimally routed
+
+The daemon turns "stable static target vs. latency-optimized local target" from a tradeoff into a layered design: static gives you a target that works whenever the mesh is up; dynamic improves it whenever the client is locally present; combined with the future dynamic-only knob, it also unlocks exposure scenarios the static rule has to reject for safety.
 
 **Dependency:** Requires shared devices to be defined in the config (Roadmap item 2) so the daemon knows which MACs to watch for and what tags/services apply to them.
 

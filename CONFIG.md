@@ -187,7 +187,7 @@ ssh:
   allowFrom: [admin, HomeRouter.Printer]
   wan:
     via: [HomeRouter]
-    sourceAddresses: ["1.2.3.4/32"]
+    sources: ["1.2.3.4/32"]
 ```
 
 | Field       | Type                      | Required | Description                                                                                                                         |
@@ -215,23 +215,76 @@ A service can be exposed on the public internet via one or more routers' WAN zon
 ```yaml
 wan:
   via: [HomeRouter, BackupRouter]
-  sourceAddresses: ["1.2.3.4/32", "203.0.113.0/24"]
+  sources: ["1.2.3.4/32", "203.0.113.0/24"]
 ```
 
-| Field             | Type                                    | Required | Description                                                                                        |
-| ----------------- | --------------------------------------- | -------- | -------------------------------------------------------------------------------------------------- |
-| `via`             | string or list of node names            | yes      | Nodes whose `wanZone` should forward to this service. Each listed node must declare `wanZone`. Must be explicit node names — special identifiers like `$node` are *not* allowed here. |
-| `sourceAddresses` | CIDR string or list (e.g. `1.2.3.4/32`) | no       | Allowlist of public source CIDRs that may hit the forward. Missing or empty = publicly accessible.    |
+| Field             | Type                                    | Required | Description                                                                                                                                                                           |
+| ----------------- | --------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `via`             | string or list of WAN targets           | yes      | Nodes whose `wanZone` should forward to this service. Each entry is either a bare node name (`HomeRouter`) or — for global client services only — a qualified `{Node}.{Network}` form (`HomeRouter.wg_admin`). Each listed node must declare `wanZone`. Special identifiers like `$node` are _not_ allowed. See [Destination IP selection](#destination-ip-selection). |
+| `sources` | CIDR string or list (e.g. `1.2.3.4/32`) | no       | Allowlist of public source CIDRs that may hit the forward. Missing or empty = publicly accessible.                                                                                    |
 
 ### Semantics
 
 - **`via` lists which routers expose this service.** The forward is rendered on each listed router's `wanZone`. Multi-router exposure is just adding to the list.
 - **`via` accepts only explicit node names.** Special identifiers like `$node` are deliberately not allowed — WAN exposure is security-sensitive, and shortcuts here invite mass-exposure accidents. List the routers you actually mean.
-- **The forward destination is the service's hosting IP**, automatically resolved — splot picks an IP reachable from the WAN-providing router (e.g., a global client's mesh IP when the service is on a global client).
-- **`sourceAddresses` is CIDR-only** — splot identifiers are not accepted because they all resolve to internal addresses with no meaningful WAN-side semantics. Real WAN allowlists (office IP, partner CIDRs, webhook source ranges) are always arbitrary public CIDRs.
-- **Empty/missing `sourceAddresses` means public** — anyone on the internet can reach the forwarded port. Use `sourceAddresses` to restrict.
-- **`wan.sourceAddresses` does not overlap with service-level `allowFrom`**: `allowFrom` controls LAN/mesh accept rules using splot identifiers; `sourceAddresses` restricts WAN-side sources using raw CIDRs. They're independent.
-- **Splot does not gate WAN exposure beyond `sourceAddresses`** — if you need richer logic, configure the OpenWRT firewall directly.
+- **For global client services, `via` entries can be qualified** as `{Node}.{Network}` to explicitly target one of the client's networks on that node (bypassing the automatic resolution chain). See [Destination IP selection](#destination-ip-selection).
+- **The forward destination is the service's hosting IP**, automatically resolved per WAN-providing router. See [Destination IP selection](#destination-ip-selection) below for the rule.
+- **`sources` is CIDR-only** — splot identifiers are not accepted because they all resolve to internal addresses with no meaningful WAN-side semantics. Real WAN allowlists (office IP, partner CIDRs, webhook source ranges) are always arbitrary public CIDRs.
+- **Empty/missing `sources` means public** — anyone on the internet can reach the forwarded port. Use `sources` to restrict.
+- **`wan.sources` does not overlap with service-level `allowFrom`**: `allowFrom` controls LAN/mesh accept rules using splot identifiers; `sources` restricts WAN-side sources using raw CIDRs. They're independent.
+- **Splot does not gate WAN exposure beyond `sources`** — if you need richer logic, configure the OpenWRT firewall directly.
+
+### Destination IP selection
+
+A port forward needs a single DNAT destination IP. Splot picks the target per WAN-providing router based on the service's host. Three of the four host types have unambiguous targets; only global clients require a priority rule.
+
+**Per host type:**
+
+| Service host | DNAT target | Exposable from |
+| --- | --- | --- |
+| **Node service** (`node.services`) | The hosting node's `meshIp` | Any node with `wanZone` |
+| **Zone device service** (`zone.devices.*.services`) | The device's `ip` | Any node with `wanZone` |
+| **VPN-interface client service** (`vpnInterface.clients.*.services`) | The client's `ip` on its interface | Any node with `wanZone` |
+| **Global client service** (`config.clients.*.services`) | See priority rule below | Restricted — see below |
+
+For the first three host types, the host has exactly one canonical address. The mesh routing reaches that address from every router, so any node with `wanZone` can expose them via cross-node DNAT. No restrictions.
+
+**Global client priority rule, per WAN-providing router R (bare `via` entry):**
+
+1. If the client has `meshIp` → use it.
+2. Else if the client has a zone IP on R → use it.
+3. Else if the client has **exactly one** VPN-interface IP on R → use it.
+4. Else if the client has **multiple** VPN-interface IPs on R → **validation error**: ambiguous. Use the qualified form (e.g. `R.wg_admin`) in `via` to pick one explicitly.
+5. Else → **validation error**: the client has no reachable address from R.
+
+This produces strict restrictions for global clients without `meshIp`:
+
+- **With `meshIp`**: client can be exposed via any node with `wanZone`. DNAT targets `meshIp` (or the local IP if priority 2/3 applies).
+- **Without `meshIp`**: client can only be exposed via nodes it has a local IP on (zone or VPN interface). Attempts to expose via any other node fail validation.
+
+### Qualified `via` form for global clients
+
+For global client services, a `via` entry may use the qualified form `{Node}.{Network}` where `{Network}` is the name of a **zone** or **VPN interface** on `{Node}`. The qualified form is **client-only** — using it on a service hosted by a node, zone device, or VPN-interface client is a validation error (those have unambiguous single-IP targets; no choice to make).
+
+**Semantics:**
+
+- `via: [HomeRouter.wg_admin]` — target the client's IP at `ips.HomeRouter.wg_admin`. The bare-form resolution chain is **not** consulted at all.
+- The qualified form **overrides** even `meshIp`. If the operator writes `HomeRouter.lan`, the DNAT target is the client's lan IP on HomeRouter, regardless of whether `meshIp` is set.
+- The client **must** have an IP entry at `ips.{Node}.{Network}`. If not declared, validation fails (`WanClientNotOnQualifiedNetwork`).
+- `{Network}` must be a zone or VPN interface on `{Node}`. References to other per-node entities (devices, VPN-interface clients) are rejected — they're not "networks the global client is reachable on."
+
+**When to use which form:**
+
+- **Bare `{Node}`** (preferred default) — let splot pick the most stable address via the priority rule.
+- **Qualified `{Node}.{Network}`** — use when bare resolution is ambiguous (multiple VPN-interface IPs on that node), or when you need to force a specific routing leg for operational reasons (e.g., route through a VPN interface even though `meshIp` exists).
+
+**Why `meshIp` takes precedence.** A client's `meshIp` is reachable from every node whenever the client's mesh tunnel is up — _regardless of where the client is physically located_. Even when a client is connected to a router's LAN as a wired device, an active mesh WireGuard tunnel still terminates on its `meshIp` (the WG-encapsulated traffic just travels over the LAN instead of the internet). So `meshIp` is the most stable static target.
+
+**Why local IPs are restricted to same-node exposure.** A client's zone or VPN-interface IP only addresses the client when the client is physically present on that network. Using a client's IP on node A to expose it via node B's WAN would produce a forward that only works when the client happens to be at A — a silently-broken state whenever the client is elsewhere. Splot doesn't generate such forwards statically; the operator must either declare `meshIp` (stable cross-node address) or add the client to B's networks too.
+
+**Stationary clients can also be zone devices.** A device with a single IP on one zone and no need to roam (a wired printer, an IoT sensor) can be modeled as a `zone.devices` entry instead of a `client`. Zone devices have one IP by structure and can be WAN-exposed from any node with no restrictions. Use the global client model when a device legitimately has presence on multiple nodes or needs to be reachable across the mesh by a stable name.
+
+**Dynamic retargeting (future).** A planned daemon (see IDEAS.md → Dynamic device presence) will watch DHCP leases on each router and dynamically retarget WAN forwards based on where the client actually is at runtime. This enables exposure scenarios the static rule rejects — e.g., exposing a no-`meshIp` client via a router it doesn't statically have an IP on, because the daemon retargets at runtime to wherever the client currently appears. Static config behavior is unchanged.
 
 ### Cross-node WAN exposure
 
