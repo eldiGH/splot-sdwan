@@ -7,7 +7,11 @@ use crate::{
     consts,
     managers::{UciManager, UciSectionBuilder},
     naming,
-    types::ip::{Ipv4Interface, Ipv4Network},
+    types::{
+        identifier::Identifier,
+        ip::{Ipv4Interface, Ipv4Network},
+        port::Port,
+    },
     uci::UciBatchCommand,
 };
 
@@ -16,7 +20,7 @@ const FILE_NAME: &str = "network";
 struct WgInterface {
     name: String,
     private_key: String,
-    listen_port: u16,
+    listen_port: Port,
     addresses: Vec<Ipv4Interface>,
 
     clients: Vec<WgClient>,
@@ -50,7 +54,7 @@ struct WgClient {
     allowed_ips: Vec<Ipv4Network>,
     route_allowed_ips: bool,
     endpoint_host: Option<Ipv4Addr>,
-    endpoint_port: Option<u16>,
+    endpoint_port: Option<Port>,
 }
 
 impl WgClient {
@@ -81,16 +85,16 @@ impl WgClient {
 }
 
 fn build_vpn_interface(
-    name: &str,
+    name: &Identifier,
     node: &NodeVpnInterface,
-    own_name: &str,
+    own_name: &Identifier,
     config: &Config,
 ) -> WgInterface {
     let mut clients = Vec::new();
 
     for (client_name, client) in &node.clients {
         clients.push(WgClient {
-            description: client_name.clone(),
+            description: client_name.to_string(),
             allowed_ips: vec![Ipv4Network::host(client.ip)],
             public_key: client.public_key.clone(),
             route_allowed_ips: false,
@@ -106,7 +110,7 @@ fn build_vpn_interface(
 
         Some(WgClient {
             allowed_ips: vec![Ipv4Network::host(*ip)],
-            description: client_name.to_owned(),
+            description: client_name.to_string(),
             endpoint_host: None,
             endpoint_port: None,
             public_key: public_key.to_owned(),
@@ -115,7 +119,7 @@ fn build_vpn_interface(
     }));
 
     WgInterface {
-        name: name.to_owned(),
+        name: name.to_string(),
         addresses: vec![node.address],
         listen_port: node.listen_port,
         private_key: "TODO".to_owned(),
@@ -132,7 +136,7 @@ fn build_mesh_clients(config: &Config) -> Vec<WgClient> {
             let mesh_ip = client.mesh_ip.as_ref()?;
 
             Some(WgClient {
-                description: client_name.to_owned(),
+                description: client_name.to_string(),
                 public_key: public_key.to_owned(),
                 allowed_ips: vec![Ipv4Network::host(*mesh_ip)],
                 route_allowed_ips: false,
@@ -143,7 +147,7 @@ fn build_mesh_clients(config: &Config) -> Vec<WgClient> {
         .collect()
 }
 
-fn build_node_interfaces(own_name: &str, config: &Config) -> Vec<WgInterface> {
+fn build_node_interfaces(own_name: &Identifier, config: &Config) -> Vec<WgInterface> {
     info!("Generating network config for node '{own_name}'");
 
     let own_node = config
@@ -159,11 +163,7 @@ fn build_node_interfaces(own_name: &str, config: &Config) -> Vec<WgInterface> {
         }
 
         let allowed_ips: Vec<Ipv4Network> = iter::once(Ipv4Network::host(node.mesh_ip))
-            .chain(
-                node.zones
-                    .values()
-                    .filter_map(|zone| zone.address.map(|a| a.network())),
-            )
+            .chain(node.zones.values().map(|zone| zone.address.network()))
             .chain(node.vpn_interfaces.values().map(|i| i.address.network()))
             .collect();
 
@@ -176,7 +176,7 @@ fn build_node_interfaces(own_name: &str, config: &Config) -> Vec<WgInterface> {
         );
 
         clients.push(WgClient {
-            description: node_name.clone(),
+            description: node_name.to_string(),
             public_key: node.public_key.clone(),
             allowed_ips,
             route_allowed_ips: true,
@@ -221,7 +221,7 @@ fn build_node_interfaces(own_name: &str, config: &Config) -> Vec<WgInterface> {
 pub struct NetworkManager;
 
 impl UciManager for NetworkManager {
-    fn generate_commands(&self, config: &Config, own_name: &str) -> Vec<UciBatchCommand> {
+    fn generate_commands(&self, config: &Config, own_name: &Identifier) -> Vec<UciBatchCommand> {
         let interfaces = build_node_interfaces(own_name, config);
 
         let commands = interfaces.iter().flat_map(|i| i.to_uci_commands());

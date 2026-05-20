@@ -2,38 +2,38 @@ use std::{collections::HashMap, iter};
 
 use crate::{
     config::{Client, Config, Node},
-    consts,
     managers::firewall::types::TagResolution,
-    types::ip::Ipv4Network,
+    types::{
+        allow_from_ref::AllowFromRef, identifier::Identifier, ip::Ipv4Network, zone_ref::ZoneRef,
+    },
 };
 
 fn add_tags(
-    tags_map: &mut HashMap<String, TagResolution>,
+    tags_map: &mut HashMap<AllowFromRef, TagResolution>,
     network: Ipv4Network,
-    tags: impl IntoIterator<Item = String>,
-    zone_name: &str,
+    tags: impl IntoIterator<Item = AllowFromRef>,
+    zone_name: &ZoneRef,
 ) {
     for tag in tags {
         tags_map
             .entry(tag)
             .or_default()
-            .entry(zone_name.to_owned())
+            .entry(zone_name.clone())
             .or_default()
             .insert(network);
     }
 }
 
-fn add_current_node_identifier_tag(node: &Node, tags_map: &mut HashMap<String, TagResolution>) {
+fn add_current_node_identifier_tag(
+    node: &Node,
+    tags_map: &mut HashMap<AllowFromRef, TagResolution>,
+) {
     for (zone_name, zone) in &node.zones {
-        let Some(address) = zone.address else {
-            continue;
-        };
-
         add_tags(
             tags_map,
-            Ipv4Network::host(address.ip()),
-            [consts::CURRENT_NODE_IDENTIFIER.to_owned()],
-            zone_name,
+            Ipv4Network::host(zone.address.ip()),
+            [AllowFromRef::SelfNode],
+            &ZoneRef::Named(zone_name.clone()),
         );
     }
 
@@ -41,20 +41,28 @@ fn add_current_node_identifier_tag(node: &Node, tags_map: &mut HashMap<String, T
         add_tags(
             tags_map,
             Ipv4Network::host(vpn_interface.address.ip()),
-            [consts::CURRENT_NODE_IDENTIFIER.to_owned()],
-            vpn_interface_name,
+            [AllowFromRef::SelfNode],
+            &ZoneRef::Named(vpn_interface_name.clone()),
         );
     }
 }
 
-fn add_node_tag(node_name: &str, node: &Node, tags_map: &mut HashMap<String, TagResolution>) {
-    let node_tags = iter::once(node_name.to_owned()).chain(node.tags.iter().cloned());
-    for (zone_name, zone) in &node.zones {
-        let Some(address) = zone.address else {
-            continue;
-        };
+fn add_node_tag(
+    node_name: &Identifier,
+    node: &Node,
+    tags_map: &mut HashMap<AllowFromRef, TagResolution>,
+) {
+    let node_tags = iter::once(node_name.to_owned())
+        .chain(node.tags.iter().cloned())
+        .map(AllowFromRef::Bare);
 
-        add_tags(tags_map, address.network(), node_tags.clone(), zone_name);
+    for (zone_name, zone) in &node.zones {
+        add_tags(
+            tags_map,
+            zone.address.network(),
+            node_tags.clone(),
+            &ZoneRef::Named(zone_name.clone()),
+        );
     }
 
     for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
@@ -62,19 +70,20 @@ fn add_node_tag(node_name: &str, node: &Node, tags_map: &mut HashMap<String, Tag
             tags_map,
             vpn_interface.address.network(),
             node_tags.clone(),
-            vpn_interface_name,
+            &ZoneRef::Named(vpn_interface_name.clone()),
         )
     }
 }
 
 fn add_client_tag(
-    client_name: &str,
+    client_name: &Identifier,
     client: &Client,
-    own_name: &str,
-    tags_map: &mut HashMap<String, TagResolution>,
+    own_name: &Identifier,
+    tags_map: &mut HashMap<AllowFromRef, TagResolution>,
 ) {
-    let tags: Vec<String> = iter::once(client_name.to_owned())
+    let tags: Vec<AllowFromRef> = iter::once(client_name.clone())
         .chain(client.tags.iter().cloned())
+        .map(AllowFromRef::Bare)
         .collect();
 
     if let Some(mesh_ip) = client.mesh_ip {
@@ -82,80 +91,92 @@ fn add_client_tag(
             tags_map,
             Ipv4Network::host(mesh_ip),
             tags.iter().cloned(),
-            consts::MESH_INTERFACE_NAME,
+            &ZoneRef::Mesh,
         );
     }
 
     for (node_name, networks) in &client.ips {
         for (local_name, ip) in networks {
-            let zone_name = if node_name == own_name {
-                local_name
+            let zone_ref = if node_name == own_name {
+                ZoneRef::Named(local_name.clone())
             } else {
-                consts::MESH_INTERFACE_NAME
+                ZoneRef::Mesh
             };
 
             add_tags(
                 tags_map,
                 Ipv4Network::host(*ip),
                 tags.iter().cloned(),
-                zone_name,
+                &zone_ref,
             );
         }
     }
 }
 
-fn node_scoped_identifier(node_name: &str, identifier: &str) -> String {
-    format!("{node_name}.{identifier}")
-}
-
-fn add_zones_tags(node_name: &str, node: &Node, tags_map: &mut HashMap<String, TagResolution>) {
+fn add_zones_tags(
+    node_name: &Identifier,
+    node: &Node,
+    tags_map: &mut HashMap<AllowFromRef, TagResolution>,
+) {
     for (zone_name, zone) in &node.zones {
-        let Some(address) = zone.address else {
-            continue;
-        };
+        let zone_ref = ZoneRef::Named(zone_name.clone());
+        let zone_tags = iter::once(AllowFromRef::nested(node_name.clone(), zone_name.clone()))
+            .chain(zone.tags.iter().cloned().map(AllowFromRef::Bare));
 
-        let zone_tags = iter::once(node_scoped_identifier(node_name, zone_name))
-            .chain(zone.tags.iter().cloned());
-        add_tags(tags_map, address.network(), zone_tags, zone_name);
+        add_tags(tags_map, zone.address.network(), zone_tags, &zone_ref);
 
         for (device_name, device) in &zone.devices {
-            let device_tags = iter::once(node_scoped_identifier(node_name, device_name))
-                .chain(device.tags.iter().cloned());
+            let device_tags =
+                iter::once(AllowFromRef::nested(node_name.clone(), device_name.clone()))
+                    .chain(device.tags.iter().cloned().map(AllowFromRef::Bare));
             add_tags(
                 tags_map,
                 Ipv4Network::host(device.ip),
                 device_tags,
-                zone_name,
+                &zone_ref,
             );
         }
     }
 }
 
 fn add_vpn_interfaces_tags(
-    node_name: &str,
+    node_name: &Identifier,
     node: &Node,
-    tags_map: &mut HashMap<String, TagResolution>,
+    tags_map: &mut HashMap<AllowFromRef, TagResolution>,
 ) {
     for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-        let vpn_interface_tags = iter::once(node_scoped_identifier(node_name, vpn_interface_name))
-            .chain(vpn_interface.tags.iter().cloned());
+        let zone_ref = ZoneRef::Named(vpn_interface_name.clone());
+        let vpn_interface_tags = iter::once(AllowFromRef::nested(
+            node_name.clone(),
+            vpn_interface_name.clone(),
+        ))
+        .chain(vpn_interface.tags.iter().cloned().map(AllowFromRef::Bare));
+
         add_tags(
             tags_map,
             vpn_interface.address.network(),
             vpn_interface_tags,
-            vpn_interface_name,
+            &zone_ref,
         );
 
         for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
-            let vpn_interface_client_tags =
-                iter::once(node_scoped_identifier(node_name, vpn_interface_client_name))
-                    .chain(vpn_interface_client.tags.iter().cloned());
+            let vpn_interface_client_tags = iter::once(AllowFromRef::nested(
+                node_name.clone(),
+                vpn_interface_client_name.clone(),
+            ))
+            .chain(
+                vpn_interface_client
+                    .tags
+                    .iter()
+                    .cloned()
+                    .map(AllowFromRef::Bare),
+            );
 
             add_tags(
                 tags_map,
                 Ipv4Network::host(vpn_interface_client.ip),
                 vpn_interface_client_tags,
-                vpn_interface_name,
+                &zone_ref,
             );
         }
     }
@@ -163,9 +184,9 @@ fn add_vpn_interfaces_tags(
 
 pub fn build_tags_resolution_map(
     config: &Config,
-    own_name: &str,
-) -> HashMap<String, TagResolution> {
-    let mut tags_map: HashMap<String, TagResolution> = HashMap::new();
+    own_name: &Identifier,
+) -> HashMap<AllowFromRef, TagResolution> {
+    let mut tags_map: HashMap<AllowFromRef, TagResolution> = HashMap::new();
 
     for (node_name, node) in &config.nodes {
         if node_name == own_name {

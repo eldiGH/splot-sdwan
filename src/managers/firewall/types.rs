@@ -3,7 +3,7 @@ use std::{
     fmt,
 };
 
-use crate::types::ip::Ipv4Network;
+use crate::types::{ip::Ipv4Network, zone_ref::ZoneRef};
 
 pub enum FirewallAction {
     Accept,
@@ -19,4 +19,4 @@ impl fmt::Display for FirewallAction {
     }
 }
 
-pub type TagResolution = HashMap<String, HashSet<Ipv4Network>>;
+pub type TagResolution = HashMap<ZoneRef, HashSet<Ipv4Network>>;

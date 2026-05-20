@@ -1,11 +1,11 @@
-use crate::{config::Config, consts, uci::UciBatchCommand};
+use crate::{config::Config, consts, types::identifier::Identifier, uci::UciBatchCommand};
 
 pub mod dhcp;
 pub mod firewall;
 pub mod network;
 
 pub trait UciManager {
-    fn generate_commands(&self, config: &Config, own_name: &str) -> Vec<UciBatchCommand>;
+    fn generate_commands(&self, config: &Config, own_name: &Identifier) -> Vec<UciBatchCommand>;
 
     fn config_file(&self) -> &'static str;
 }

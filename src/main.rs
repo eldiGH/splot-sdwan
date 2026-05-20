@@ -1,3 +1,5 @@
+use std::process;
+
 use crate::{
     config::Config,
     managers::{dhcp::DhcpManager, firewall::FirewallManager, network::NetworkManager},
@@ -31,6 +33,26 @@ fn main() {
             eprintln!("Add this node to the config and try again.");
             std::process::exit(1);
         });
+
+    let report = validator::validate_config(&config);
+
+    for error in &report.errors {
+        eprintln!("error: {error}");
+    }
+
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
+    }
+
+    if !report.errors.is_empty() {
+        eprintln!();
+        eprintln!(
+            "validation failed: {} error(s), {} warning(s)",
+            report.errors.len(),
+            report.warnings.len()
+        );
+        process::exit(1);
+    }
 
     UciPipeline::new()
         .register(NetworkManager)

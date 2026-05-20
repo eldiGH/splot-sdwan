@@ -1,8 +1,11 @@
-use std::{collections::HashMap, net::Ipv4Addr};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    net::Ipv4Addr,
+};
 
 use crate::{
     config::{Config, ZoneOrVpnInterface},
-    types::ip::Ipv4Network,
+    types::{identifier::Identifier, ip::Ipv4Network},
     validator::types::{ConfigPath, ValidationError, ValidationReport},
 };
 
@@ -42,7 +45,7 @@ fn check_mesh_ips(config: &Config, report: &mut ValidationReport, networks: &mut
             report.errors.push(ValidationError::IpOutsideSubnet {
                 ip: mesh_ip,
                 network: config.mesh_network,
-                at: ConfigPath::new(["clients", client_name, "meshIp"]),
+                at: ConfigPath::new(["clients", client_name.as_ref(), "meshIp"]),
             })
         }
     }
@@ -52,7 +55,7 @@ fn check_mesh_ips(config: &Config, report: &mut ValidationReport, networks: &mut
             report.errors.push(ValidationError::IpOutsideSubnet {
                 ip: node.mesh_ip,
                 network: config.mesh_network,
-                at: ConfigPath::new(["nodes", node_name, "meshIp"]),
+                at: ConfigPath::new(["nodes", node_name.as_ref(), "meshIp"]),
             })
         }
     }
@@ -65,13 +68,16 @@ fn check_zones_ips(
 ) {
     for (node_name, node) in &config.nodes {
         for (zone_name, zone) in &node.zones {
-            let Some(zone_address) = zone.address else {
-                continue;
-            };
-            let zone_network = zone_address.network();
+            let zone_network = zone.address.network();
 
             if !add_network(zone_network, networks, report, || {
-                ConfigPath::new(["nodes", node_name, "zones", zone_name, "address"])
+                ConfigPath::new([
+                    "nodes",
+                    node_name.as_ref(),
+                    "zones",
+                    zone_name.as_ref(),
+                    "address",
+                ])
             }) {
                 continue;
             }
@@ -83,11 +89,11 @@ fn check_zones_ips(
                         network: zone_network,
                         at: ConfigPath::new([
                             "nodes",
-                            node_name,
+                            node_name.as_ref(),
                             "zones",
-                            zone_name,
+                            zone_name.as_ref(),
                             "devices",
-                            device_name,
+                            device_name.as_ref(),
                             "ip",
                         ]),
                     })
@@ -109,9 +115,9 @@ fn check_vpn_interfaces_ips(
             if !add_network(vpn_interface_network, networks, report, || {
                 ConfigPath::new([
                     "nodes",
-                    node_name,
+                    node_name.as_ref(),
                     "vpnInterfaces",
-                    vpn_interface_name,
+                    vpn_interface_name.as_ref(),
                     "address",
                 ])
             }) {
@@ -125,11 +131,11 @@ fn check_vpn_interfaces_ips(
                         network: vpn_interface_network,
                         at: ConfigPath::new([
                             "nodes",
-                            node_name,
+                            node_name.as_ref(),
                             "vpnInterfaces",
-                            vpn_interface_name,
+                            vpn_interface_name.as_ref(),
                             "clients",
-                            vpn_interface_client_name,
+                            vpn_interface_client_name.as_ref(),
                             "ip",
                         ]),
                     })
@@ -149,8 +155,7 @@ fn check_clients_ips(config: &Config, report: &mut ValidationReport) {
             for (node_network_name, ip) in node_networks {
                 let Some(node_network) = node
                     .network_by_name(node_network_name)
-                    .and_then(|interface| interface.address())
-                    .map(|address| address.network())
+                    .map(|interface| interface.address().network())
                 else {
                     continue;
                 };
@@ -161,10 +166,10 @@ fn check_clients_ips(config: &Config, report: &mut ValidationReport) {
                         network: node_network,
                         at: ConfigPath::new([
                             "clients",
-                            client_name,
+                            client_name.as_ref(),
                             "ips",
-                            node_name,
-                            node_network_name,
+                            node_name.as_ref(),
+                            node_network_name.as_ref(),
                         ]),
                     });
                 }
@@ -173,11 +178,32 @@ fn check_clients_ips(config: &Config, report: &mut ValidationReport) {
     }
 }
 
+fn try_insert_ip(
+    ips: &mut HashMap<Ipv4Addr, ConfigPath>,
+    ip: Ipv4Addr,
+    report: &mut ValidationReport,
+    make_path: impl Fn() -> ConfigPath,
+) {
+    match ips.entry(ip) {
+        Entry::Occupied(occ) => {
+            report.errors.push(ValidationError::IpCollision {
+                ip,
+                at: make_path(),
+                with: occ.get().clone(),
+            });
+        }
+
+        Entry::Vacant(vac) => {
+            vac.insert(make_path());
+        }
+    }
+}
+
 fn check_client_in_node_network_uniqueness(
     config: &Config,
     report: &mut ValidationReport,
-    node_name: &str,
-    network_name: &str,
+    node_name: &Identifier,
+    network_name: &Identifier,
     network_ips: &mut HashMap<Ipv4Addr, ConfigPath>,
 ) {
     for (client_name, client) in &config.clients {
@@ -185,18 +211,17 @@ fn check_client_in_node_network_uniqueness(
             continue;
         };
 
-        let make_path =
-            || ConfigPath::new(["clients", client_name, "ips", node_name, network_name]);
+        let make_path = || {
+            ConfigPath::new([
+                "clients",
+                client_name.as_ref(),
+                "ips",
+                node_name.as_ref(),
+                network_name.as_ref(),
+            ])
+        };
 
-        if let Some(other_path) = network_ips.get(&ip) {
-            report.errors.push(ValidationError::IpCollision {
-                ip,
-                at: make_path(),
-                with: other_path.clone(),
-            })
-        } else {
-            network_ips.insert(ip, make_path());
-        }
+        try_insert_ip(network_ips, ip, report, make_path);
     }
 }
 
@@ -208,58 +233,33 @@ fn check_mesh_ip_uniqueness(config: &Config, report: &mut ValidationReport) {
             continue;
         };
 
-        let make_path = || ConfigPath::new(["clients", client_name, "meshIp"]);
+        let make_path = || ConfigPath::new(["clients", client_name.as_ref(), "meshIp"]);
 
-        if let Some(other_path) = mesh_ips.get(&mesh_ip) {
-            report.errors.push(ValidationError::IpCollision {
-                ip: mesh_ip,
-                at: make_path(),
-                with: other_path.clone(),
-            });
-        } else {
-            mesh_ips.insert(mesh_ip, make_path());
-        }
+        try_insert_ip(&mut mesh_ips, mesh_ip, report, make_path);
     }
 
     for (node_name, node) in &config.nodes {
-        let make_path = || ConfigPath::new(["nodes", node_name]);
+        let make_path = || ConfigPath::new(["nodes", node_name.as_ref(), "meshIp"]);
 
-        if let Some(other_path) = mesh_ips.get(&node.mesh_ip) {
-            report.errors.push(ValidationError::IpCollision {
-                ip: node.mesh_ip,
-                at: make_path().extend(["meshIp"]),
-                with: other_path.clone(),
-            });
-        } else {
-            mesh_ips.insert(node.mesh_ip, make_path().extend(["meshIp"]));
-        }
+        try_insert_ip(&mut mesh_ips, node.mesh_ip, report, make_path);
     }
 }
 
 fn check_zone_ip_uniqueness(config: &Config, report: &mut ValidationReport) {
     for (node_name, node) in &config.nodes {
         for (zone_name, zone) in &node.zones {
-            let Some(zone_ip) = zone.address.map(|address| address.ip()) else {
-                continue;
-            };
+            let zone_ip = zone.address.ip();
 
-            let make_path = || ConfigPath::new(["nodes", node_name, "zones", zone_name]);
+            let make_path =
+                || ConfigPath::new(["nodes", node_name.as_ref(), "zones", zone_name.as_ref()]);
 
             let mut zone_ips: HashMap<Ipv4Addr, ConfigPath> = HashMap::new();
             zone_ips.insert(zone_ip, make_path().extend(["address"]));
 
             for (device_name, device) in &zone.devices {
-                let make_path = || make_path().extend(["devices", device_name, "ip"]);
+                let make_path = || make_path().extend(["devices", device_name.as_ref(), "ip"]);
 
-                if let Some(other_path) = zone_ips.get(&device.ip) {
-                    report.errors.push(ValidationError::IpCollision {
-                        ip: device.ip,
-                        at: make_path(),
-                        with: other_path.clone(),
-                    });
-                } else {
-                    zone_ips.insert(device.ip, make_path());
-                };
+                try_insert_ip(&mut zone_ips, device.ip, report, make_path);
             }
 
             check_client_in_node_network_uniqueness(
@@ -277,24 +277,28 @@ fn check_vpn_interface_ip_uniqueness(config: &Config, report: &mut ValidationRep
     for (node_name, node) in &config.nodes {
         for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
             let vpn_interface_ip = vpn_interface.address.ip();
-            let make_path =
-                || ConfigPath::new(["nodes", node_name, "vpnInterfaces", vpn_interface_name]);
+            let make_path = || {
+                ConfigPath::new([
+                    "nodes",
+                    node_name.as_ref(),
+                    "vpnInterfaces",
+                    vpn_interface_name.as_ref(),
+                ])
+            };
 
             let mut vpn_interface_ips: HashMap<Ipv4Addr, ConfigPath> = HashMap::new();
             vpn_interface_ips.insert(vpn_interface_ip, make_path().extend(["address"]));
 
             for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
-                let make_path = || make_path().extend(["clients", vpn_interface_client_name, "ip"]);
+                let make_path =
+                    || make_path().extend(["clients", vpn_interface_client_name.as_ref(), "ip"]);
 
-                if let Some(other_path) = vpn_interface_ips.get(&vpn_interface_client.ip) {
-                    report.errors.push(ValidationError::IpCollision {
-                        ip: vpn_interface_client.ip,
-                        at: make_path(),
-                        with: other_path.clone(),
-                    });
-                } else {
-                    vpn_interface_ips.insert(vpn_interface_client.ip, make_path());
-                };
+                try_insert_ip(
+                    &mut vpn_interface_ips,
+                    vpn_interface_client.ip,
+                    report,
+                    make_path,
+                );
             }
 
             check_client_in_node_network_uniqueness(
@@ -318,12 +322,17 @@ fn check_client_zones(config: &Config, report: &mut ValidationReport) {
             let mut existing_zone: Option<ConfigPath> = None;
 
             for network_name in networks.keys() {
-                let make_path =
-                    || ConfigPath::new(["clients", client_name, "ips", node_name, network_name]);
+                let make_path = || {
+                    ConfigPath::new([
+                        "clients",
+                        client_name.as_ref(),
+                        "ips",
+                        node_name.as_ref(),
+                        network_name.as_ref(),
+                    ])
+                };
 
-                if let Some(network) = node.network_by_name(network_name)
-                    && matches!(network, ZoneOrVpnInterface::Zone(_))
-                {
+                if let Some(ZoneOrVpnInterface::Zone(_)) = node.network_by_name(network_name) {
                     if let Some(existing_zone) = &existing_zone {
                         report.errors.push(ValidationError::NodeClientManyZones {
                             zone_name: network_name.clone(),

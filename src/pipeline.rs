@@ -4,6 +4,7 @@ use crate::{
     config::Config,
     consts,
     managers::UciManager,
+    types::identifier::Identifier,
     uci::{UciBatchCommand, UciExecutor},
 };
 
@@ -27,7 +28,7 @@ impl UciPipeline {
         self
     }
 
-    pub fn run(&self, config: &Config, own_name: &str) {
+    pub fn run(&self, config: &Config, own_name: &Identifier) {
         let config_files_used: Vec<&'static str> = self.get_files_used().collect();
 
         let mut commands = generate_delete_commands(&config_files_used);

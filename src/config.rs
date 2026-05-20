@@ -13,8 +13,12 @@ use serde::Deserialize;
 use crate::{
     protocol::Protocol,
     types::{
+        allow_from_ref::AllowFromRef,
+        identifier::Identifier,
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
+        port::{Port, ServicePort},
+        wan_via_target::WanViaTarget,
     },
 };
 
@@ -70,10 +74,23 @@ impl<'de, T: Deserialize<'de> + Hash + Eq> Deserialize<'de> for OneOrManyUnique<
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct ServiceWan {
+    pub via: OneOrManyUnique<WanViaTarget>,
+
+    #[serde(default)]
+    pub sources: OneOrManyUnique<Ipv4Network>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct Service {
-    pub port: String,
+    pub port: ServicePort,
     pub proto: OneOrManyUnique<Protocol>,
-    pub allow_from: OneOrManyUnique<String>,
+
+    #[serde(default)]
+    pub allow_from: OneOrManyUnique<AllowFromRef>,
+
+    pub wan: Option<ServiceWan>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -83,9 +100,9 @@ pub struct NodeZoneDevice {
     pub macs: OneOrManyUnique<MacAddress>,
 
     #[serde(default)]
-    pub tags: OneOrManyUnique<String>,
+    pub tags: OneOrManyUnique<Identifier>,
     #[serde(default)]
-    pub services: HashMap<String, Service>,
+    pub services: HashMap<Identifier, Service>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -95,31 +112,31 @@ pub struct NodeVpnInterfaceClient {
     pub ip: Ipv4Addr,
 
     #[serde(default)]
-    pub tags: OneOrManyUnique<String>,
+    pub tags: OneOrManyUnique<Identifier>,
     #[serde(default)]
-    pub services: HashMap<String, Service>,
+    pub services: HashMap<Identifier, Service>,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeVpnInterface {
-    pub listen_port: u16,
+    pub listen_port: Port,
     pub address: Ipv4Interface,
-    pub clients: HashMap<String, NodeVpnInterfaceClient>,
+    pub clients: HashMap<Identifier, NodeVpnInterfaceClient>,
 
     #[serde(default)]
-    pub tags: OneOrManyUnique<String>,
+    pub tags: OneOrManyUnique<Identifier>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeZone {
-    pub address: Option<Ipv4Interface>,
+    pub address: Ipv4Interface,
 
     #[serde(default)]
-    pub devices: HashMap<String, NodeZoneDevice>,
+    pub devices: HashMap<Identifier, NodeZoneDevice>,
     #[serde(default)]
-    pub tags: OneOrManyUnique<String>,
+    pub tags: OneOrManyUnique<Identifier>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -127,17 +144,19 @@ pub struct NodeZone {
 pub struct Node {
     pub public_key: String,
     pub endpoint: Ipv4Addr,
-    pub listen_port: u16,
+    pub listen_port: Port,
     pub mesh_ip: Ipv4Addr,
 
     #[serde(default)]
-    pub vpn_interfaces: HashMap<String, NodeVpnInterface>,
+    pub vpn_interfaces: HashMap<Identifier, NodeVpnInterface>,
     #[serde(default)]
-    pub tags: OneOrManyUnique<String>,
+    pub tags: OneOrManyUnique<Identifier>,
     #[serde(default)]
-    pub services: HashMap<String, Service>,
+    pub services: HashMap<Identifier, Service>,
     #[serde(default)]
-    pub zones: HashMap<String, NodeZone>,
+    pub zones: HashMap<Identifier, NodeZone>,
+
+    pub wan_zone: Option<Identifier>,
 }
 
 pub enum ZoneOrVpnInterface<'a> {
@@ -146,32 +165,30 @@ pub enum ZoneOrVpnInterface<'a> {
 }
 
 impl ZoneOrVpnInterface<'_> {
-    pub fn address(&self) -> Option<Ipv4Interface> {
+    pub fn address(&self) -> Ipv4Interface {
         match self {
-            Self::VpnInterface(vpn_interface) => Some(vpn_interface.address),
+            Self::VpnInterface(vpn_interface) => vpn_interface.address,
             Self::Zone(zone) => zone.address,
         }
     }
 }
 
 impl Node {
-    pub fn network_for_ip(&self, ip: Ipv4Addr) -> Option<(&str, Ipv4Interface)> {
+    pub fn network_for_ip(&self, ip: Ipv4Addr) -> Option<(&Identifier, Ipv4Interface)> {
         self.zones
             .iter()
-            .filter_map(|(zone_name, zone)| {
-                zone.address.map(|address| (zone_name.as_str(), address))
-            })
+            .map(|(zone_name, zone)| (zone_name, zone.address))
             .chain(
                 self.vpn_interfaces
                     .iter()
                     .map(|(vpn_interface_name, vpn_interface)| {
-                        (vpn_interface_name.as_str(), vpn_interface.address)
+                        (vpn_interface_name, vpn_interface.address)
                     }),
             )
             .find(|(_, address)| address.is_in_same_network(ip))
     }
 
-    pub fn network_by_name(&self, name: &str) -> Option<ZoneOrVpnInterface<'_>> {
+    pub fn network_by_name(&self, name: &Identifier) -> Option<ZoneOrVpnInterface<'_>> {
         self.zones
             .get(name)
             .map(ZoneOrVpnInterface::Zone)
@@ -183,7 +200,7 @@ impl Node {
     }
 
     pub fn addresses(&self) -> impl Iterator<Item = Ipv4Interface> {
-        let zone_networks = self.zones.values().filter_map(|zone| zone.address);
+        let zone_networks = self.zones.values().map(|zone| zone.address);
 
         let vpn_interfaces_networks = self
             .vpn_interfaces
@@ -212,15 +229,19 @@ pub struct Client {
     #[serde(default)]
     pub macs: OneOrManyUnique<MacAddress>,
     #[serde(default)]
-    pub ips: HashMap<String, HashMap<String, Ipv4Addr>>,
+    pub ips: HashMap<Identifier, HashMap<Identifier, Ipv4Addr>>,
     #[serde(default)]
-    pub services: HashMap<String, Service>,
+    pub services: HashMap<Identifier, Service>,
     #[serde(default)]
-    pub tags: OneOrManyUnique<String>,
+    pub tags: OneOrManyUnique<Identifier>,
 }
 
 impl Client {
-    pub fn network_by_name(&self, node_name: &str, network_name: &str) -> Option<Ipv4Addr> {
+    pub fn network_by_name(
+        &self,
+        node_name: &Identifier,
+        network_name: &Identifier,
+    ) -> Option<Ipv4Addr> {
         self.ips.get(node_name)?.get(network_name).copied()
     }
 }
@@ -229,10 +250,10 @@ impl Client {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
     pub mesh_network: Ipv4Network,
-    pub nodes: HashMap<String, Node>,
+    pub nodes: HashMap<Identifier, Node>,
 
     #[serde(default)]
-    pub clients: HashMap<String, Client>,
+    pub clients: HashMap<Identifier, Client>,
 }
 
 #[derive(Debug)]
@@ -279,9 +300,9 @@ impl Config {
         Ok(config)
     }
 
-    pub fn find_node_name_by_public_key(&self, pubkey: &str) -> Option<&str> {
+    pub fn find_node_name_by_public_key(&self, pubkey: &str) -> Option<&Identifier> {
         self.nodes
             .iter()
-            .find_map(|(name, node)| (node.public_key == pubkey).then_some(name.as_str()))
+            .find_map(|(name, node)| (node.public_key == pubkey).then_some(name))
     }
 }

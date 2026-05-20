@@ -6,7 +6,7 @@ use crate::{
     config::{Config, NodeZoneDevice, ZoneOrVpnInterface},
     managers::{UciManager, UciSectionBuilder},
     naming,
-    types::mac::MacAddress,
+    types::{identifier::Identifier, mac::MacAddress},
     uci::UciBatchCommand,
 };
 
@@ -30,15 +30,15 @@ impl DhcpStaticLease {
     }
 }
 
-fn zone_device_to_lease(device_name: &str, device: &NodeZoneDevice) -> DhcpStaticLease {
+fn zone_device_to_lease(device_name: &Identifier, device: &NodeZoneDevice) -> DhcpStaticLease {
     DhcpStaticLease {
         ip: device.ip,
         macs: device.macs.clone().into(),
-        name: device_name.to_owned(),
+        name: device_name.to_string(),
     }
 }
 
-fn get_static_leases(config: &Config, own_name: &str) -> Vec<DhcpStaticLease> {
+fn get_static_leases(config: &Config, own_name: &Identifier) -> Vec<DhcpStaticLease> {
     let mut static_leases = Vec::new();
 
     let node = config
@@ -56,7 +56,7 @@ fn get_static_leases(config: &Config, own_name: &str) -> Vec<DhcpStaticLease> {
     static_leases
 }
 
-fn get_client_static_leases(config: &Config, own_name: &str) -> Vec<DhcpStaticLease> {
+fn get_client_static_leases(config: &Config, own_name: &Identifier) -> Vec<DhcpStaticLease> {
     let node = config
         .nodes
         .get(own_name)
@@ -75,9 +75,9 @@ fn get_client_static_leases(config: &Config, own_name: &str) -> Vec<DhcpStaticLe
                 match node.network_by_name(network_name)? {
                     ZoneOrVpnInterface::VpnInterface(_) => None,
                     ZoneOrVpnInterface::Zone(_) => Some(DhcpStaticLease {
-                        macs: client.macs.to_owned().into(),
+                        macs: client.macs.clone().into(),
                         ip: *ip,
-                        name: client_name.to_owned(),
+                        name: client_name.to_string(),
                     }),
                 }
             });
@@ -96,7 +96,7 @@ impl UciManager for DhcpManager {
     fn generate_commands(
         &self,
         config: &crate::config::Config,
-        own_name: &str,
+        own_name: &Identifier,
     ) -> Vec<UciBatchCommand> {
         info!("Generating DHCP config for node '{own_name}'");
 

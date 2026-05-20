@@ -1,7 +1,7 @@
 use crate::consts;
 
-pub fn interface(name: &str) -> String {
-    format!("{}{name}", consts::SPLOT_SECTION_PREFIX)
+pub fn interface(name: impl AsRef<str>) -> String {
+    format!("{}{}", consts::SPLOT_SECTION_PREFIX, name.as_ref())
 }
 
 pub fn mesh_interface() -> String {
