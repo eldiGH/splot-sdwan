@@ -49,10 +49,6 @@ pub enum ValidationError {
     },
 
     // tags
-    InvalidTagName {
-        tag: Identifier,
-        at: ConfigPath,
-    },
     TagWithNameCollision {
         tag: Identifier,
         at: ConfigPath,
@@ -121,8 +117,35 @@ pub enum ValidationError {
         at: ConfigPath,
     },
 
-    NodeDoesNotExposeWan {
+    WanViaNodeNoWanZone {
         node_name: Identifier,
+        at: ConfigPath,
+    },
+
+    WanViaQualifiedOnNonClient {
+        at: ConfigPath,
+    },
+
+    WanViaNetworkMissing {
+        node: Identifier,
+        network: Identifier,
+        at: ConfigPath,
+    },
+
+    WanViaClientNotOnNetwork {
+        node: Identifier,
+        network: Identifier,
+        at: ConfigPath,
+    },
+
+    WanViaAmbiguous {
+        node: Identifier,
+        candidates: Vec<Identifier>,
+        at: ConfigPath,
+    },
+
+    WanViaUnreachable {
+        node: Identifier,
         at: ConfigPath,
     },
 }
@@ -145,12 +168,6 @@ impl fmt::Display for ValidationError {
             }
             Self::InvalidPrefix { name, prefix, at } => {
                 write!(f, "{at}: name '{name}' uses reserved prefix '{prefix}'")
-            }
-            Self::InvalidTagName { tag, at } => {
-                write!(
-                    f,
-                    "{at}: invalid tag '{tag}' — tags follow the same rules as names"
-                )
             }
             Self::TagWithNameCollision { tag, at } => {
                 write!(
@@ -226,12 +243,44 @@ impl fmt::Display for ValidationError {
             Self::InvalidWanVia { node_name, at } => {
                 write!(f, "{at}: unknown node '{node_name}'")
             }
-            Self::NodeDoesNotExposeWan { node_name, at } => {
+            Self::WanViaNodeNoWanZone { node_name, at } => {
+                write!(f, "{at}: node '{node_name}' does not have wanZone defined")
+            }
+            Self::WanViaQualifiedOnNonClient { at } => write!(
+                f,
+                "{at}: qualified wan target form ({{Node}}.{{Network}}) is only allowed on services hosted by a global client — node/device/vpn-client services have a single unambiguous target and don't need disambiguation"
+            ),
+            Self::WanViaAmbiguous {
+                node,
+                candidates,
+                at,
+            } => {
+                let candidates_joined = candidates
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                let first_candidate = candidates
+                    .first()
+                    .expect("there should always be at least 2 candidates");
+
                 write!(
                     f,
-                    "{at}: node '{node_name}' has no 'wanZone' declared — cannot expose services on its WAN"
+                    "{at}: client is reachable via multiple VPN interfaces on node '{node}' ({candidates_joined}). Use the qualified form (e.g. '{node}.{first_candidate}') to disambiguate"
                 )
             }
+            Self::WanViaClientNotOnNetwork { node, network, at } => write!(
+                f,
+                "{at}: qualified wan target '{node}.{network}' requires this client to have an IP at ips.{node}.{network} — none declared"
+            ),
+            Self::WanViaNetworkMissing { node, network, at } => write!(
+                f,
+                "{at}: qualified wan target references network '{network}' on node '{node}', but no such zone or VPN interface exists on that node"
+            ),
+            Self::WanViaUnreachable { node, at } => write!(
+                f,
+                "{at}: client has no reachable address on node '{node}' (no meshIp, no zone IP, no VPN IP on this node). Either declare an IP for this client on the node, or use a different wan.via target"
+            ),
         }
     }
 }
@@ -241,7 +290,6 @@ impl ValidationError {
         match self {
             Self::GlobalNameCollision { at, .. } => at,
             Self::InvalidPrefix { at, .. } => at,
-            Self::InvalidTagName { at, .. } => at,
             Self::InvalidWanVia { at, .. } => at,
             Self::IpCollision { at, .. } => at,
             Self::IpOutsideSubnet { at, .. } => at,
@@ -249,7 +297,6 @@ impl ValidationError {
             Self::MacMissing { at } => at,
             Self::NetworkCollision { at, .. } => at,
             Self::NodeClientManyZones { at, .. } => at,
-            Self::NodeDoesNotExposeWan { at, .. } => at,
             Self::NodeMissing { at, .. } => at,
             Self::NodeNetworkMissing { at, .. } => at,
             Self::PortCollision { at, .. } => at,
@@ -257,6 +304,12 @@ impl ValidationError {
             Self::TagWithNameCollision { at, .. } => at,
             Self::UnknownRef { at, .. } => at,
             Self::LocalShadowsGlobal { at, .. } => at,
+            Self::WanViaNodeNoWanZone { at, .. } => at,
+            Self::WanViaQualifiedOnNonClient { at, .. } => at,
+            Self::WanViaAmbiguous { at, .. } => at,
+            Self::WanViaClientNotOnNetwork { at, .. } => at,
+            Self::WanViaNetworkMissing { at, .. } => at,
+            Self::WanViaUnreachable { at, .. } => at,
         }
     }
 }

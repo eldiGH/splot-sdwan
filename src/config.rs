@@ -14,11 +14,12 @@ use crate::{
     protocol::Protocol,
     types::{
         allow_from_ref::AllowFromRef,
-        identifier::Identifier,
+        identifier::{Identifier, NestedIdentifier},
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
         port::{Port, ServicePort},
         wan_via_target::WanViaTarget,
+        zone_ref::ZoneRef,
     },
 };
 
@@ -236,6 +237,18 @@ pub struct Client {
     pub tags: OneOrManyUnique<Identifier>,
 }
 
+pub enum WanResolveError {
+    AmbiguousVpn { candidates: Vec<Identifier> },
+    Unreachable,
+    QualifiedNetworkMissing { network: Identifier },
+    QualifiedClientNotOnNetwork { network: Identifier },
+}
+
+pub struct WanResolution {
+    pub dest_ip: Ipv4Addr,
+    pub dest_zone: ZoneRef,
+}
+
 impl Client {
     pub fn network_by_name(
         &self,
@@ -243,6 +256,98 @@ impl Client {
         network_name: &Identifier,
     ) -> Option<Ipv4Addr> {
         self.ips.get(node_name)?.get(network_name).copied()
+    }
+
+    fn resolve_wan(
+        &self,
+        node_name: &Identifier,
+        node: &Node,
+    ) -> Result<WanResolution, WanResolveError> {
+        if let Some(mesh_ip) = self.mesh_ip {
+            return Ok(WanResolution {
+                dest_ip: mesh_ip,
+                dest_zone: ZoneRef::Mesh,
+            });
+        }
+
+        let Some(node_networks) = self.ips.get(node_name) else {
+            return Err(WanResolveError::Unreachable);
+        };
+
+        let mut zone_ip: Option<(&Identifier, Ipv4Addr)> = None;
+        let mut vpn_interface_candidates: Vec<(&Identifier, Ipv4Addr)> = Vec::new();
+
+        for (network_name, ip) in node_networks {
+            match node.network_by_name(network_name) {
+                Some(ZoneOrVpnInterface::Zone(_)) => zone_ip = Some((network_name, *ip)),
+                Some(ZoneOrVpnInterface::VpnInterface(_)) => {
+                    vpn_interface_candidates.push((network_name, *ip))
+                }
+
+                None => {}
+            }
+        }
+
+        if let Some((zone_name, zone_ip)) = zone_ip {
+            return Ok(WanResolution {
+                dest_ip: zone_ip,
+                dest_zone: ZoneRef::Named(zone_name.clone()),
+            });
+        }
+
+        match vpn_interface_candidates.as_slice() {
+            [] => Err(WanResolveError::Unreachable),
+            [(vpn_interface_name, ip)] => Ok(WanResolution {
+                dest_zone: ZoneRef::Named((*vpn_interface_name).clone()),
+                dest_ip: *ip,
+            }),
+            _ => Err(WanResolveError::AmbiguousVpn {
+                candidates: vpn_interface_candidates
+                    .iter()
+                    .map(|(vpn_interface_name, _)| (*vpn_interface_name).clone())
+                    .collect(),
+            }),
+        }
+    }
+
+    fn resolve_wan_qualified(
+        &self,
+        node_name: &Identifier,
+        local_name: &Identifier,
+        node: &Node,
+    ) -> Result<WanResolution, WanResolveError> {
+        if node.network_by_name(local_name).is_none() {
+            return Err(WanResolveError::QualifiedNetworkMissing {
+                network: local_name.clone(),
+            });
+        }
+
+        let ip = self
+            .ips
+            .get(node_name)
+            .and_then(|networks| networks.get(local_name))
+            .ok_or(WanResolveError::QualifiedClientNotOnNetwork {
+                network: local_name.clone(),
+            })?;
+
+        Ok(WanResolution {
+            dest_ip: *ip,
+            dest_zone: ZoneRef::Named(local_name.clone()),
+        })
+    }
+
+    pub fn resolve_wan_target(
+        &self,
+        via: &WanViaTarget,
+        node: &Node,
+    ) -> Result<WanResolution, WanResolveError> {
+        match via {
+            WanViaTarget::Bare(node_name) => self.resolve_wan(node_name, node),
+            WanViaTarget::Qualified(NestedIdentifier {
+                node: node_name,
+                local,
+            }) => self.resolve_wan_qualified(node_name, local, node),
+        }
     }
 }
 
