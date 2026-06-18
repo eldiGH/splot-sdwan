@@ -1,9 +1,14 @@
-use std::{fmt, str::FromStr};
+use std::{
+    collections::{HashSet, hash_set},
+    fmt,
+    str::FromStr,
+};
 
 use serde::Deserialize;
 
-use crate::types::identifier::{
-    Identifier, NestedIdentifier, ParseIdentifierError, ParseNestedIdentifierError,
+use crate::types::{
+    identifier::{Identifier, NestedIdentifier, ParseIdentifierError, ParseNestedIdentifierError},
+    schema_helpers::OneOrManyUnique,
 };
 
 #[derive(Debug)]
@@ -68,5 +73,61 @@ impl WanViaTarget {
             Self::Bare(node) => node,
             Self::Qualified(nested_identifier) => &nested_identifier.node,
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(try_from = "OneOrManyUnique<WanViaTarget>")]
+pub struct WanViaTargets(OneOrManyUnique<WanViaTarget>);
+
+#[derive(Debug)]
+pub enum ParseWanViaTargetsError {
+    DuplicateNode { node: Identifier },
+}
+
+impl fmt::Display for ParseWanViaTargetsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateNode { node } => write!(
+                f,
+                "node '{node}' appears more than once — each node should appear at most once in wan.via"
+            ),
+        }
+    }
+}
+
+impl TryFrom<OneOrManyUnique<WanViaTarget>> for WanViaTargets {
+    type Error = ParseWanViaTargetsError;
+
+    fn try_from(value: OneOrManyUnique<WanViaTarget>) -> Result<Self, Self::Error> {
+        let mut seen: HashSet<&Identifier> = HashSet::new();
+
+        for via in &value {
+            let node = via.node();
+            if !seen.insert(node) {
+                return Err(ParseWanViaTargetsError::DuplicateNode { node: node.clone() });
+            }
+        }
+
+        Ok(Self(value))
+    }
+}
+
+impl<'a> IntoIterator for &'a WanViaTargets {
+    type Item = &'a WanViaTarget;
+    type IntoIter = hash_set::Iter<'a, WanViaTarget>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl WanViaTargets {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> hash_set::Iter<'_, WanViaTarget> {
+        self.0.iter()
     }
 }

@@ -2,7 +2,7 @@ use std::{collections::HashSet, fmt, ops::Deref};
 
 use serde::Deserialize;
 
-use crate::config::OneOrManyUnique;
+use crate::types::schema_helpers::OneOrManyUnique;
 
 #[derive(Deserialize, Hash, PartialEq, Eq, Debug, Clone, Copy)]
 #[serde(rename_all = "lowercase")]

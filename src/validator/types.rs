@@ -148,6 +148,12 @@ pub enum ValidationError {
         node: Identifier,
         at: ConfigPath,
     },
+
+    WanZoneNameCollision {
+        wan_zone: Identifier,
+        with: ConfigPath,
+        at: ConfigPath,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -281,6 +287,10 @@ impl fmt::Display for ValidationError {
                 f,
                 "{at}: client has no reachable address on node '{node}' (no meshIp, no zone IP, no VPN IP on this node). Either declare an IP for this client on the node, or use a different wan.via target"
             ),
+            Self::WanZoneNameCollision { wan_zone, at, with } => write!(
+                f,
+                "{at}: wanZone '{wan_zone}' collides with another zone at {with} — wanZone must not match any zone, VPN interface, or the splot-managed mesh interface on the same node"
+            ),
         }
     }
 }
@@ -310,6 +320,7 @@ impl ValidationError {
             Self::WanViaClientNotOnNetwork { at, .. } => at,
             Self::WanViaNetworkMissing { at, .. } => at,
             Self::WanViaUnreachable { at, .. } => at,
+            Self::WanZoneNameCollision { at, .. } => at,
         }
     }
 }
@@ -324,6 +335,9 @@ pub enum ValidationWarning {
 
     // references
     UnreachableService { at: ConfigPath },
+
+    // wan
+    UnusedWanZone { at: ConfigPath },
 }
 
 impl fmt::Display for ValidationWarning {
@@ -344,6 +358,10 @@ impl fmt::Display for ValidationWarning {
                 f,
                 "{at}: service has neither 'allowFrom' nor 'wan' — no source can reach it"
             ),
+            Self::UnusedWanZone { at } => write!(
+                f,
+                "{at}: wanZone is declared but no service exposes this node in 'wan.via' — either reference this node from a service's wan.via, or remove wanZone"
+            ),
         }
     }
 }
@@ -355,6 +373,7 @@ impl ValidationWarning {
             Self::UnreachableService { at } => at,
             Self::UnusedMac { at } => at,
             Self::UnusedPublicKey { at } => at,
+            Self::UnusedWanZone { at } => at,
         }
     }
 }

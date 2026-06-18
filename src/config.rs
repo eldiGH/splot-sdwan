@@ -1,12 +1,4 @@
-use std::{
-    collections::{self, HashMap, HashSet},
-    fmt::Display,
-    fs::File,
-    hash::Hash,
-    iter,
-    net::Ipv4Addr,
-    ops::Deref,
-};
+use std::{collections::HashMap, fmt::Display, fs::File, iter, net::Ipv4Addr};
 
 use serde::Deserialize;
 
@@ -18,65 +10,16 @@ use crate::{
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
         port::{Port, ServicePort},
-        wan_via_target::WanViaTarget,
+        schema_helpers::OneOrManyUnique,
+        wan_via_target::{WanViaTarget, WanViaTargets},
         zone_ref::ZoneRef,
     },
 };
 
-#[derive(Debug, Clone)]
-pub struct OneOrManyUnique<T>(pub HashSet<T>);
-
-impl<T> Default for OneOrManyUnique<T> {
-    fn default() -> Self {
-        Self(HashSet::new())
-    }
-}
-
-impl<T> From<OneOrManyUnique<T>> for HashSet<T> {
-    fn from(value: OneOrManyUnique<T>) -> Self {
-        value.0
-    }
-}
-
-impl<T> Deref for OneOrManyUnique<T> {
-    type Target = HashSet<T>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<'a, T> IntoIterator for &'a OneOrManyUnique<T> {
-    type Item = &'a T;
-    type IntoIter = collections::hash_set::Iter<'a, T>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
-    }
-}
-
-impl<'de, T: Deserialize<'de> + Hash + Eq> Deserialize<'de> for OneOrManyUnique<T> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        #[serde(bound = "T: Deserialize<'de> + Hash + Eq")]
-        enum Helper<T> {
-            One(T),
-            Many(HashSet<T>),
-        }
-
-        Helper::deserialize(deserializer).map(|h| match h {
-            Helper::One(x) => OneOrManyUnique(HashSet::from([x])),
-            Helper::Many(xs) => OneOrManyUnique(xs),
-        })
-    }
-}
-
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceWan {
-    pub via: OneOrManyUnique<WanViaTarget>,
+    pub via: WanViaTargets,
 
     #[serde(default)]
     pub sources: OneOrManyUnique<Ipv4Network>,

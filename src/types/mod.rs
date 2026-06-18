@@ -3,5 +3,6 @@ pub mod identifier;
 pub mod ip;
 pub mod mac;
 pub mod port;
+pub mod schema_helpers;
 pub mod wan_via_target;
 pub mod zone_ref;
