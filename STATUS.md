@@ -22,23 +22,24 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 
 ### Config validator (`src/validator/`)
 
-Multi-pass validator that checks `splot.yml` before any UCI commands are generated. Five passes, each producing data the next consumes:
+Multi-pass validator that checks `splot.yml` before any UCI commands are generated. Several passes, the first few producing data the next consumes:
 
 1. **`names`** — collects global + per-node names; checks identifier syntax, namespace uniqueness, cross-namespace collisions, reserved prefixes (`spl_` and `{NodeName}_`).
 2. **`tags`** — collects valid tags; checks tag syntax and tag/name collisions.
 3. **`identifiers`** — checks every `allowFrom` reference resolves to a known identifier; warns on empty `allowFrom`.
-4. **`entities`** — semantic checks: client IPs reference valid node/network, mac/publicKey required-iff-used, unreachable clients, devices in addressless zones (will be dropped with WAN work).
+4. **`entities`** — semantic checks: client IPs reference valid node/network, mac/publicKey required-iff-used, unreachable clients.
 5. **`networks`** — subnet uniqueness across mesh + zones + VPN interfaces; IP-in-subnet containment; IP uniqueness per mesh/zone/VPN-interface; `client.ips` ≤ 1 zone per `(client, node)`.
 
-Plus a `ports` pass: per-node listen-port uniqueness (`node.listen_port` vs each `vpn_interface.listen_port`).
+Plus a `ports` pass (per-node listen-port uniqueness — `node.listen_port` vs each `vpn_interface.listen_port`) and a `wan` pass: each `wan.via` target resolves to a reachable destination; the qualified `{Node}.{Network}` form is rejected on non-client services; `wanZone` is declared where needed and doesn't collide with a zone / VPN-interface / mesh name; declared-but-unused `wanZone` is a warning.
 
-The validator is module-complete but not yet wired into `main.rs` — that lands with the CLI work.
+The validator runs in `main.rs` before any UCI generation — validation errors abort the run.
 
 ### Firewall config generation (`src/managers/firewall/`)
 
 - **Zones (`zones.rs`)**: splot-managed zones rendered as `config zone` UCI sections — the mesh zone (`spl_mesh`) and one per `vpnInterface` on the current node. Default policy `input DROP`; access granted only via explicit service rules.
-- **Rules (`rules.rs`)**: per-service `config rule` UCI sections generated from `services` declared anywhere in the config (node, device, VPN client, global client). Each `allowFrom` reference is resolved through the tag-resolution map to a set of source IPs, then split into one rule per source zone.
-- **Tag resolution (`tag_resolution.rs`)**: builds the IP/subnet → zone map used by rule generation. Handles explicit tags, bare node names, qualified `{Node}.{LocalName}` forms, and `$node`. Currently the only mechanism for access control.
+- **Rules (`rules.rs`)**: per-service `config rule` UCI sections generated from `services` declared anywhere in the config (node, device, VPN client, global client). Each `allowFrom` reference is resolved through the tag-resolution map to a set of source IPs (same-LAN sources are filtered out, since they don't traverse this router). Rules currently match on `src_ip` / `dest_ip` with `src` / `dest` left as `*` — per-zone scoping is still pending (see [ROADMAP.md](ROADMAP.md)).
+- **Redirects (`redirect.rs`)**: `config redirect` (DNAT port-forward) UCI sections for services that declare `wan`. `wan.via` selects which routers expose the service via their `wanZone`; the destination IP and zone are resolved per host type (node → `meshIp`, device → `ip`, VPN client → `ip`, global client → priority chain). Cross-node exposure works — one node can forward to a service hosted on another over the mesh. `wan.sources` (the CIDR allowlist) is applied as the redirect's `src_ip`: empty/missing means publicly reachable, a non-empty list restricts the forward to those CIDRs.
+- **Tag resolution (`tag_resolution.rs`)**: builds the IP/subnet → zone map used by rule generation. Handles explicit tags, bare node names, qualified `{Node}.{LocalName}` forms, and `$node`. Currently the only mechanism for LAN/mesh access control.
 
 ### Network interface generation (`src/managers/network.rs`)
 
@@ -79,8 +80,7 @@ The validator is module-complete but not yet wired into `main.rs` — that lands
 
 See [ROADMAP.md](ROADMAP.md). At a glance, in priority order:
 
-1. **WAN exposure** — port forwards as a first-class service feature; drops addressless-zone support along the way.
-2. **CLI** — `validate` / `dry-run` / `apply` entry points; wires the validator into the pipeline and adds structured logging.
-3. **Per-zone src/dest scoping** — replace `src=*` / `dest=*` in generated rules with explicit zone names.
+1. **CLI** — `validate` / `dry-run` / `apply` subcommands plus structured logging. (The validator already runs in `main.rs`; this is about user-facing entry points.)
+2. **Per-zone src/dest scoping** — replace `src=*` / `dest=*` in generated accept rules with explicit zone names (redirects are already zone-scoped).
 
 See [IDEAS.md](IDEAS.md) for longer-horizon ideas (mesh-wide DNS, distributed reload, dynamic device presence, etc.).

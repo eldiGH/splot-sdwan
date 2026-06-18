@@ -6,7 +6,8 @@ use crate::{
     naming,
     protocol::Protocols,
     types::{
-        identifier::Identifier, port::PortOrRange, wan_via_target::WanViaTarget, zone_ref::ZoneRef,
+        identifier::Identifier, ip::Ipv4Network, port::PortOrRange, wan_via_target::WanViaTarget,
+        zone_ref::ZoneRef,
     },
     uci::UciBatchCommand,
 };
@@ -16,6 +17,7 @@ pub struct FirewallRedirect {
     pub proto: Protocols,
     pub src: ZoneRef,
     pub src_dport: PortOrRange,
+    pub src_ip: Vec<Ipv4Network>,
     pub dest_ip: Ipv4Addr,
     pub dest_port: PortOrRange,
     pub dest: ZoneRef,
@@ -28,6 +30,7 @@ impl FirewallRedirect {
             .set("target", "DNAT")
             .set("src", self.src.to_string())
             .set("src_dport", self.src_dport.to_string())
+            .extend_list("src_ip", &self.src_ip)
             .set("dest", self.dest.to_string())
             .set("dest_ip", self.dest_ip.to_string())
             .set("dest_port", self.dest_port.to_string())
@@ -76,6 +79,7 @@ impl RedirectBuilder<'_> {
             proto: service.proto.clone().into(),
             src: self.wan_zone.clone(),
             src_dport: service.port.external(),
+            src_ip: wan.sources.iter().cloned().collect(),
         })
     }
 
@@ -149,6 +153,7 @@ impl RedirectBuilder<'_> {
                         proto: service.proto.clone().into(),
                         src: self.wan_zone.clone(),
                         src_dport: service.port.external(),
+                        src_ip: wan.sources.iter().cloned().collect(),
                         dest: resolution.dest_zone,
                         dest_ip: resolution.dest_ip,
                         dest_port: service.port.internal(),

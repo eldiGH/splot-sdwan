@@ -6,6 +6,8 @@ Confirmed next implementation steps, in priority order.
 
 ## 1. WAN exposure (port forwards)
 
+> **Status: implemented.** Config shape, validation, destination-IP resolution, `config redirect` generation, and `wan.sources` enforcement (applied as the redirect's `src_ip`) are all in place; the addressless-zone cleanup is done too. The rest of this section is the spec it was built to.
+
 Make services declared in splot config externally reachable through a router's WAN zone. This is the next big config feature — it ties together a lot of existing work and unlocks practical deployments where some services need to be public.
 
 See [CONFIG.md → WAN exposure](CONFIG.md#wan-exposure) for the final design.
@@ -20,7 +22,7 @@ See [CONFIG.md → WAN exposure](CONFIG.md#wan-exposure) for the final design.
 
 - New `wan` field: object with `via: [<nodeName>...]` and optional `sources: [<CIDR>...]`.
 - `allowFrom` becomes optional — a service with only `wan` is valid (WAN-only exposure).
-- At least one of `allowFrom` or `wan` must be set; both empty is a warning (`ServiceUnreachable`).
+- At least one of `allowFrom` or `wan` must be set; both empty is a warning (`UnreachableService`).
 
 **Zone-level cleanup (drops addressless zones entirely):**
 
@@ -50,7 +52,7 @@ Add:
 
 Update:
 
-- `ServiceAllowFromEmpty` warning becomes `ServiceUnreachable` — fires when both `allowFrom` and `wan` are empty (no access from any direction).
+- `ServiceAllowFromEmpty` warning becomes `UnreachableService` — fires when both `allowFrom` and `wan` are empty (no access from any direction).
 
 ### Generation changes
 

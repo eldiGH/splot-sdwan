@@ -10,7 +10,7 @@ Declarative WireGuard mesh networking for OpenWRT routers. You describe your net
 - **Zero-trust by default**: splot-managed firewall zones drop all input; access is granted only through explicit per-service rules. There is no broad zone-to-zone forwarding.
 - **Tag-based access control**: every service declares `allowFrom` using tags or names (nodes, zones, devices, clients). Splot resolves these to IPs/subnets and emits scoped firewall rules.
 - **Static DHCP leases** for devices and roaming clients with declared MACs.
-- **WAN exposure** declared on the service itself — port forwards with optional CIDR allowlists, including cross-node forwarding over the mesh (in progress).
+- **WAN exposure** declared on the service itself — port forwards with optional CIDR allowlists, including cross-node forwarding over the mesh.
 - One config file, synced across routers. Each router identifies itself by its WireGuard public key and applies only its own slice.
 
 ## Example config
