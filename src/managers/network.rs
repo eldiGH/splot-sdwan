@@ -32,10 +32,7 @@ impl WgInterface {
             .set("proto", "wireguard")
             .set("private_key", &self.private_key)
             .set("listen_port", self.listen_port.to_string())
-            .extend_list(
-                "address",
-                self.addresses.iter().map(|address| address.to_string()),
-            )
+            .extend_list("address", &self.addresses)
             .build();
 
         commands.extend(
@@ -76,10 +73,7 @@ impl WgClient {
             self.endpoint_host.map(|host| host.to_string()),
         )
         .set_if_some("endpoint_port", self.endpoint_port.map(|p| p.to_string()))
-        .extend_list(
-            "allowed_ips",
-            self.allowed_ips.iter().map(|ip| ip.to_string()),
-        )
+        .extend_list("allowed_ips", &self.allowed_ips)
         .build()
     }
 }

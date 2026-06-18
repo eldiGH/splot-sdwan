@@ -25,7 +25,7 @@ impl DhcpStaticLease {
         UciSectionBuilder::new(FILE_NAME, &self.name, "host")
             .set("name", naming::name_prefixed(&self.name))
             .set("ip", self.ip.to_string())
-            .extend_list("mac", self.macs.iter().map(|mac| mac.to_string()))
+            .extend_list("mac", &self.macs)
             .build()
     }
 }

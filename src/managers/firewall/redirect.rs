@@ -31,7 +31,7 @@ impl FirewallRedirect {
             .set("dest", self.dest.to_string())
             .set("dest_ip", self.dest_ip.to_string())
             .set("dest_port", self.dest_port.to_string())
-            .extend_list("proto", self.proto.iter().map(|proto| proto.to_string()))
+            .extend_list("proto", &self.proto)
             .build()
     }
 }

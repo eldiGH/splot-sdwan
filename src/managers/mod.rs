@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::{config::Config, consts, types::identifier::Identifier, uci::UciBatchCommand};
 
 pub mod dhcp;
@@ -44,15 +46,23 @@ impl UciSectionBuilder {
     fn extend_list(
         mut self,
         prop_name: &str,
-        values: impl IntoIterator<Item = impl Into<String>>,
+        values: impl IntoIterator<Item = impl Display>,
     ) -> Self {
         let prop = self.prop(prop_name);
 
-        self.commands.extend(
+        let sorted_values = {
+            let mut values = values
+                .into_iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>();
+            values.sort();
+
             values
                 .into_iter()
-                .map(|value| UciBatchCommand::add_list(prop.clone(), value)),
-        );
+                .map(|value| UciBatchCommand::add_list(prop.clone(), value))
+        };
+
+        self.commands.extend(sorted_values);
 
         self
     }

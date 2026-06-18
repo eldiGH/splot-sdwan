@@ -37,9 +37,9 @@ impl FirewallRule {
             .set("dest", "*")
             .set("dest_port", self.dest_port.to_string())
             .set("target", self.target.to_string())
-            .extend_list("dest_ip", self.dest_ip.iter().map(|ip| ip.to_string()))
-            .extend_list("src_ip", self.src_ip.iter().map(|ip| ip.to_string()))
-            .extend_list("proto", self.proto.iter().map(|proto| proto.to_string()))
+            .extend_list("dest_ip", self.dest_ip.iter())
+            .extend_list("src_ip", self.src_ip.iter())
+            .extend_list("proto", self.proto.iter())
             .build()
     }
 }
