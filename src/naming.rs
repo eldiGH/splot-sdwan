@@ -23,8 +23,8 @@ mod tests {
     }
 
     #[test]
-    fn mesh_interface_is_spl_splot_mesh() {
-        assert_eq!(mesh_interface(), "spl_splot_mesh");
+    fn mesh_interface_is_spl_mesh() {
+        assert_eq!(mesh_interface(), "spl_mesh");
     }
 
     #[test]

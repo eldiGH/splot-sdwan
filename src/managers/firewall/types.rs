@@ -7,14 +7,14 @@ use crate::types::{ip::Ipv4Network, zone_ref::ZoneRef};
 
 pub enum FirewallAction {
     Accept,
-    Reject,
+    Drop,
 }
 
 impl fmt::Display for FirewallAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Accept => write!(f, "ACCEPT"),
-            Self::Reject => write!(f, "REJECT"),
+            Self::Drop => write!(f, "DROP"),
         }
     }
 }

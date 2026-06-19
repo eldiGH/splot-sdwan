@@ -21,8 +21,8 @@ pub struct FirewallZone {
 impl Default for FirewallZone {
     fn default() -> Self {
         Self {
-            forward: FirewallAction::Reject,
-            input: FirewallAction::Reject,
+            forward: FirewallAction::Drop,
+            input: FirewallAction::Drop,
             output: FirewallAction::Accept,
             name: String::new(),
             network: Vec::new(),
@@ -98,14 +98,14 @@ nodes:
 
     #[test]
     fn mesh_zone_always_present() {
-        assert!(zones().iter().any(|z| z.name == "splot_mesh"));
+        assert!(zones().iter().any(|z| z.name == "mesh"));
     }
 
     #[test]
-    fn mesh_zone_network_is_spl_splot_mesh() {
+    fn mesh_zone_network_is_spl_mesh() {
         let z = zones();
-        let mesh = z.iter().find(|z| z.name == "splot_mesh").unwrap();
-        assert_eq!(mesh.network, vec!["spl_splot_mesh"]);
+        let mesh = z.iter().find(|z| z.name == "mesh").unwrap();
+        assert_eq!(mesh.network, vec!["spl_mesh"]);
     }
 
     #[test]
@@ -121,10 +121,12 @@ nodes:
     }
 
     #[test]
-    fn default_policy_reject_in_reject_fwd_accept_out() {
+    fn default_policy_drop_in_drop_fwd_accept_out() {
+        // Zero-trust default: drop unsolicited input and transit, allow the router's
+        // own egress. Access is granted only via explicit service rules.
         for zone in zones() {
-            assert!(matches!(zone.input, FirewallAction::Reject));
-            assert!(matches!(zone.forward, FirewallAction::Reject));
+            assert!(matches!(zone.input, FirewallAction::Drop));
+            assert!(matches!(zone.forward, FirewallAction::Drop));
             assert!(matches!(zone.output, FirewallAction::Accept));
         }
     }

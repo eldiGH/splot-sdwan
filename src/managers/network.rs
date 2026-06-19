@@ -267,21 +267,18 @@ nodes:
 
     #[test]
     fn mesh_interface_section_present() {
-        assert!(has_cmd(&cmds(), "network.spl_splot_mesh='interface'"));
+        assert!(has_cmd(&cmds(), "network.spl_mesh='interface'"));
     }
 
     #[test]
     fn mesh_interface_has_wireguard_proto() {
-        assert!(has_cmd(&cmds(), "spl_splot_mesh.proto='wireguard'"));
+        assert!(has_cmd(&cmds(), "spl_mesh.proto='wireguard'"));
     }
 
     #[test]
     fn remote_node_peer_section_present() {
-        // Cabin is a remote mesh peer → section with wireguard_spl_splot_mesh type.
-        assert!(has_cmd(
-            &cmds(),
-            "network.spl_Cabin='wireguard_spl_splot_mesh'"
-        ));
+        // Cabin is a remote mesh peer → section with wireguard_spl_mesh type.
+        assert!(has_cmd(&cmds(), "network.spl_Cabin='wireguard_spl_mesh'"));
     }
 
     #[test]

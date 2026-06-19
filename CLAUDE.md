@@ -95,7 +95,7 @@ Resolution always produces a set of IPs or subnets — never zone names. Zone na
 
 Zones are first-class in the config (under each node's `zones` map). They represent the downstream networks the router serves; the operator configures them in OpenWRT, splot just references them.
 
-Beyond user-declared zones, splot also creates and manages OpenWRT zones for the things it owns: the mesh interface (`spl_mesh`) and each `vpnInterface` (named after the interface). Splot-managed zones default to `input DROP`; access is granted only via explicit service rules.
+Beyond user-declared zones, splot also creates and manages OpenWRT zones for the things it owns: the mesh interface (`spl_mesh`) and each `vpnInterface` (named after the interface). Splot-managed zones default to `input` and `forward` `DROP` (and `output ACCEPT`); access is granted only via explicit service rules.
 
 Generated firewall rules are scoped per-zone in both `src` and `dest` — when an `allowFrom` set resolves to source IPs across multiple zones, splot emits one rule per source zone with that zone in `src` and only that zone's IPs in `src_ip`.
 
