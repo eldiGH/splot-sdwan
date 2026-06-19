@@ -125,6 +125,42 @@ The same broadcast/notification channel used here would also be needed by the Di
 
 ---
 
+## [MED] Connectivity between two NAT'd nodes
+
+**Prerequisite:** Roadmap item "Nodes behind NAT (optional `endpoint`)".
+
+Once `endpoint` is optional, a NAT'd node reaches any **publicly reachable** node by initiating outward. But splot's mesh is a **full mesh of direct tunnels**, and two nodes that are *both* behind NAT have no address for each other — neither can initiate, so no direct tunnel can form. Carrying A↔B traffic needs one of the approaches below. They compose, so the answer is likely "both, layered."
+
+### Who initiates?
+
+In every case the NAT'd node is the initiator — a node behind NAT can only ever dial *out*. For the relay approach below, both NAT'd nodes initiate to the relay (not to each other). The keepalive splot already sets holds each mapping open.
+
+### Option A — Relay through a reachable node (hub)
+
+Require at least one publicly reachable node and route NAT↔NAT traffic through it. A and B each hold an (outbound-initiated, keepalive-held) tunnel to relay R; A↔B traffic is forwarded by R.
+
+- **Routing:** A's peer entry for R carries B's mesh IP + downstream subnets in `AllowedIPs` (and symmetrically for B). R needs kernel IP forwarding and `AllowedIPs` covering both sides (`route_allowed_ips` is already set on mesh peers).
+- **Firewall interaction (important):** the relay forwards transit traffic through its mesh zone, whose default policy is now `forward DROP` (zero-trust, as of the DROP change). So splot must emit **explicit forward-accept rules** on the relay for exactly the relayed subnets — relaying stays off by default and is opened only for the specific NAT↔NAT pairs that need it.
+- **Relay selection:** choose deterministically (e.g. the reachable node with the lowest `meshIp`) so the choice is stable across config edits, matching the `meshIp` stability rationale. With multiple reachable nodes, per-pair selection could later spread load.
+- **Pros:** always works, for any NAT type; fits splot's static "generate UCI and exit" model with no new infrastructure or runtime agent. **Cons:** extra latency and bandwidth on the hub; the hub is a chokepoint and a single point of failure for inter-NAT traffic.
+
+This is achievable within the current model — it is purely an `AllowedIPs` + forward-rule computation. It is the natural near-term answer to "require at least one accessible node and route through it."
+
+### Option B — Direct connection via UDP hole punching
+
+Establish a direct A↔B tunnel by traversing both NATs. With help from a rendezvous/signaling service reachable by both, A and B discover their NAT-mapped public `ip:port`, send simultaneously to punch matching mappings open, then set each other's `endpoint` dynamically while keepalive holds it.
+
+- WireGuard has **no native signaling** — this is the layer Tailscale (DISCO + DERP relays), Headscale, and `wireguard-p2p` add on top of WG.
+- **Symmetric NAT breaks it:** a symmetric NAT assigns a different external port per destination, so the punched port won't match what the peer was told. Symmetric-NAT pairs always need a relay fallback (Option A).
+- **Needs a runtime agent:** splot today generates static UCI and exits. Hole punching requires a long-running daemon that discovers endpoints, updates peer `endpoint`s dynamically, and re-punches as mappings expire — plus the coordination channel. This rides naturally on the inter-node messaging layer the Distributed Reload System and dynamic-presence daemons already envision (above).
+- **Pros:** direct, low-latency path; no hub bandwidth; scales. **Cons:** substantial new architecture (daemon + signaling + relay fallback) — a real step beyond static config generation.
+
+### Recommendation
+
+Layer them, the way Tailscale does: **prefer a direct hole-punched path, fall back to relay.** Near-term, ship **Option A** — deterministic, static, and aligned with the current model; it makes NAT↔NAT work for everyone at the cost of one hub hop, and the "≥1 reachable node" requirement it implies is the same constraint the basic NAT feature already needs. Treat **Option B** as the longer-horizon upgrade once a runtime agent exists, keeping relay as the universal fallback for symmetric NAT and for when no direct path can be punched.
+
+---
+
 ## [LOW] allowedIps / Client as Gateway
 
 Currently each VPN client has a single IP. Adding an optional `allowedIps` field would let a client act as a gateway to another network (e.g., a second router or a non-mesh subnet behind a VPN client).

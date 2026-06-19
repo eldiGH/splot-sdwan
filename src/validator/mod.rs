@@ -45,6 +45,26 @@ mod tests {
         validator::types::{ValidationError, ValidationWarning},
     };
 
+    #[test]
+    fn shipped_example_config_is_clean() {
+        // The example users copy to splot.yml must always validate with no
+        // diagnostics, so it can't silently rot as the schema evolves.
+        let r = report(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/splot.example.yml"
+        )));
+        assert!(
+            r.errors.is_empty(),
+            "splot.example.yml has errors: {:?}",
+            r.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+        );
+        assert!(
+            r.warnings.is_empty(),
+            "splot.example.yml has warnings: {:?}",
+            r.warnings.iter().map(|w| w.to_string()).collect::<Vec<_>>()
+        );
+    }
+
     // A minimal config that passes every validator pass with no diagnostics.
     const CLEAN: &str = "
 meshNetwork: 10.100.0.0/24

@@ -25,10 +25,3 @@ pub(crate) fn has_warning(
 ) -> bool {
     report.warnings.iter().any(f)
 }
-
-pub(crate) fn error_at(report: &ValidationReport, path_substr: &str) -> bool {
-    report
-        .errors
-        .iter()
-        .any(|e| e.path().to_string().contains(path_substr))
-}

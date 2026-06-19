@@ -157,3 +157,28 @@ impl Config {
 Validators consume the iterator; `ServiceLocation::to_config_path()` (or `ConfigLocation` per item 4) lives in the validator. Generators (rules.rs, redirect.rs) use the same iterator with their own per-host logic via match.
 
 Cleans up ~150 lines of nested-loop duplication across validators and generators. Defer until WAN feature lands and the duplication is fully visible.
+
+---
+
+## 6. Nodes behind NAT (optional `endpoint`)
+
+> **Status: planned.** Today `Node.endpoint` is a required `Ipv4Addr`, so every node must be publicly reachable. Nodes behind NAT (home routers behind ISP NAT or CGNAT, with no port forward) are a common case and aren't supported yet. Priority is a judgment call — this is a user-facing capability and arguably outranks the internal refactors above (items 4–5).
+
+Make `endpoint` optional. A node with no `endpoint` has no address peers can dial, so it is responsible for **initiating** the WireGuard handshake outward to the reachable nodes. WireGuard learns the initiator's source `ip:port` from the incoming handshake, so a reachable peer can then send back; `persistent_keepalive` (splot already sets `25` on every peer) keeps the NAT mapping open so return traffic keeps flowing.
+
+### Config change
+
+- `endpoint: Ipv4Addr` → `Option<Ipv4Addr>` with `#[serde(default)]`. Omitted = the node is behind NAT.
+
+### Generation change
+
+- `network.rs` already models this downstream — `WgClient.endpoint_host` / `endpoint_port` are `Option` and rendered with `set_if_some`. The only change is to stop forcing `Some`: a peer entry for a node with no `endpoint` omits both `endpoint_host` and `endpoint_port`.
+- The NAT'd node still binds its own `listen_port` locally (harmless); making `listen_port` optional too can come later if a real need appears.
+
+### Validation change
+
+- **At least one node must have an `endpoint`** (when there are ≥2 nodes). If every node is behind NAT, no node can ever initiate and the mesh can never form — catch this as an error rather than emitting a silently-dead config.
+
+### Scope boundary
+
+This makes **NAT'd ↔ reachable** work fully — the common hub-and-spoke shape: one public gateway, the rest behind NAT. It does **not** solve **NAT'd ↔ NAT'd** direct connectivity: two endpoint-less nodes have no address for each other and neither can initiate, so no direct tunnel forms. That is a separate, harder problem analysed in [IDEAS.md → "Connectivity between two NAT'd nodes"](IDEAS.md). Until that lands, two NAT'd nodes can each reach the public node(s) but not each other directly.
