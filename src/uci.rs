@@ -117,3 +117,67 @@ impl UciExecutor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn render(cmd: &UciBatchCommand) -> String {
+        cmd.to_string()
+    }
+
+    #[test]
+    fn set_command() {
+        assert_eq!(
+            render(&UciBatchCommand::set("firewall.spl_rule", "rule")),
+            "set firewall.spl_rule='rule'"
+        );
+    }
+
+    #[test]
+    fn del_command() {
+        assert_eq!(
+            render(&UciBatchCommand::del("firewall.spl_old")),
+            "delete firewall.spl_old"
+        );
+    }
+
+    #[test]
+    fn add_command() {
+        assert_eq!(
+            render(&UciBatchCommand::add("firewall", "rule")),
+            "add firewall rule"
+        );
+    }
+
+    #[test]
+    fn add_list_command() {
+        assert_eq!(
+            render(&UciBatchCommand::add_list(
+                "firewall.spl_r.src_ip",
+                "10.0.0.0/8"
+            )),
+            "add_list firewall.spl_r.src_ip='10.0.0.0/8'"
+        );
+    }
+
+    #[test]
+    fn commit_with_file() {
+        assert_eq!(
+            render(&UciBatchCommand::commit("firewall")),
+            "commit firewall"
+        );
+    }
+
+    #[test]
+    fn commit_bare() {
+        assert_eq!(render(&UciBatchCommand::Commit(None)), "commit");
+    }
+
+    #[test]
+    fn value_with_spaces_is_quoted() {
+        // The value is placed inside single-quotes; spaces inside are fine.
+        let cmd = UciBatchCommand::set("network.spl_x.name", "hello world");
+        assert_eq!(render(&cmd), "set network.spl_x.name='hello world'");
+    }
+}

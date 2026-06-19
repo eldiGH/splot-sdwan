@@ -185,3 +185,118 @@ impl fmt::Display for NestedIdentifier {
         write!(f, "{}.{}", self.node, self.local)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(s: &str) -> Result<Identifier, ParseIdentifierError> {
+        s.parse::<Identifier>()
+    }
+
+    fn parse_nested(s: &str) -> Result<NestedIdentifier, ParseNestedIdentifierError> {
+        s.parse::<NestedIdentifier>()
+    }
+
+    #[test]
+    fn valid_identifiers() {
+        for s in ["abc", "a-b_c", "Node1", "1abc", "A", "9"] {
+            assert_eq!(parse(s).unwrap().as_ref(), s);
+        }
+    }
+
+    #[test]
+    fn empty_is_rejected() {
+        assert!(matches!(parse(""), Err(ParseIdentifierError::Empty)));
+    }
+
+    #[test]
+    fn invalid_first_character() {
+        // leading non-alphanumeric is rejected at position 0
+        for s in ["-abc", "_abc", ".abc"] {
+            assert!(matches!(
+                parse(s),
+                Err(ParseIdentifierError::InvalidCharacter { position: 0, .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn invalid_middle_character_reports_position() {
+        assert!(matches!(
+            parse("ab c"),
+            Err(ParseIdentifierError::InvalidCharacter {
+                found: ' ',
+                position: 2
+            })
+        ));
+        assert!(matches!(
+            parse("ab.c"),
+            Err(ParseIdentifierError::InvalidCharacter {
+                found: '.',
+                position: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn reserved_prefix_is_rejected() {
+        assert!(matches!(
+            parse("spl_foo"),
+            Err(ParseIdentifierError::ReservedPrefix {
+                prefix: consts::SPLOT_SECTION_PREFIX
+            })
+        ));
+        // "spl" without the underscore is a normal identifier
+        assert!(parse("spl").is_ok());
+    }
+
+    #[test]
+    fn display_and_into_string_roundtrip() {
+        let id = parse("Home").unwrap();
+        assert_eq!(id.to_string(), "Home");
+        assert_eq!(String::from(id), "Home");
+    }
+
+    #[test]
+    fn nested_valid() {
+        let nested = parse_nested("Home.lan").unwrap();
+        assert_eq!(nested.node.as_ref(), "Home");
+        assert_eq!(nested.local.as_ref(), "lan");
+        assert_eq!(nested.to_string(), "Home.lan");
+    }
+
+    #[test]
+    fn nested_missing_dot() {
+        assert!(matches!(
+            parse_nested("Homelan"),
+            Err(ParseNestedIdentifierError::MissingDot)
+        ));
+    }
+
+    #[test]
+    fn nested_too_many_dots() {
+        assert!(matches!(
+            parse_nested("a.b.c"),
+            Err(ParseNestedIdentifierError::TooManyDots)
+        ));
+    }
+
+    #[test]
+    fn nested_invalid_segments() {
+        assert!(matches!(
+            parse_nested("-bad.lan"),
+            Err(ParseNestedIdentifierError::InvalidNode(_))
+        ));
+        // empty local segment surfaces as an invalid local
+        assert!(matches!(
+            parse_nested("Home."),
+            Err(ParseNestedIdentifierError::InvalidLocal(_))
+        ));
+        // reserved prefix on the node segment
+        assert!(matches!(
+            parse_nested("spl_x.lan"),
+            Err(ParseNestedIdentifierError::InvalidNode(_))
+        ));
+    }
+}

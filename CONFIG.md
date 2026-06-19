@@ -413,9 +413,9 @@ Names must contain only alphanumeric characters, `-`, and `_`. Spaces, dots, and
 
 ### Reserved prefixes for per-node-scoped names
 
-A per-node-scoped name (zone, zone device, VPN interface, VPN interface client) must not start with `{NodeName}_` where `{NodeName}` is the name of any node in the config. For example, if there is a node named `Jawo`, no per-node-scoped name anywhere may be `Jawo_printer`, `Jawo_lan`, etc.
+A per-node-scoped name (zone, zone device, VPN interface, VPN interface client) must not start with `{NodeName}_` where `{NodeName}` is the name of any node in the config. For example, if there is a node named `Home`, no per-node-scoped name anywhere may be `Home_printer`, `Home_lan`, etc.
 
-The reason is generated UCI rule names. Splot qualifies a rule for a remote node's object by prefixing the node name with `_` (e.g. `Jawo_printer_ssh` for an `ssh` service on Jawo's `printer`). A literal name like `Jawo_printer` on another node would collide with that qualified form. `_` itself stays a valid character — only the specific `{NodeName}_` prefix is reserved.
+The reason is generated UCI rule names. Splot qualifies a rule for a remote node's object by prefixing the node name with `_` (e.g. `Home_printer_ssh` for an `ssh` service on Home's `printer`). A literal name like `Home_printer` on another node would collide with that qualified form. `_` itself stays a valid character — only the specific `{NodeName}_` prefix is reserved.
 
 ---
 

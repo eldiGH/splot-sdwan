@@ -64,7 +64,7 @@ These three share one global namespace. Names must be unique across the entire c
 - VPN interface names
 - VPN client names
 
-All four share one flat per-node namespace — within a single node, names across all four kinds must be unique. They can recur freely across nodes (`Jawo` and `Karcze` can both have a `printer` and a `lan`).
+All four share one flat per-node namespace — within a single node, names across all four kinds must be unique. They can recur freely across nodes (`Home` and `Cabin` can both have a `printer` and a `lan`).
 
 A bare name in `allowFrom` resolves only against the global namespace. To reference anything inside a node, qualify it with the node name.
 
@@ -81,15 +81,15 @@ Resolution always produces a set of IPs or subnets — never zone names. Zone na
 | Reference                                | Resolves to                                                              |
 | ---------------------------------------- | ------------------------------------------------------------------------ |
 | Explicit tag (e.g. `admin`)              | All IPs/subnets of things tagged with it (across the whole config)       |
-| Node name (e.g. `Jawo`)                  | Union of all of Jawo's `zones` subnets and `vpnInterfaces` subnets       |
+| Node name (e.g. `Home`)                  | Union of all of Home's `zones` subnets and `vpnInterfaces` subnets       |
 | Global client name (e.g. `Pixel8`)       | All of the client's known IPs                                            |
-| `{Node}.{Zone}` (e.g. `Jawo.lan`)        | That zone's subnet                                                       |
-| `{Node}.{Device}` (e.g. `Jawo.printer`)  | The device's IP                                                          |
+| `{Node}.{Zone}` (e.g. `Home.lan`)        | That zone's subnet                                                       |
+| `{Node}.{Device}` (e.g. `Home.printer`)  | The device's IP                                                          |
 | `{Node}.{VpnInterface}`                  | The interface's subnet                                                   |
 | `{Node}.{VpnClient}`                     | The client's IP                                                          |
 | `$node`                                  | Union of router's own IPs across all its `zones` and `vpnInterfaces`     |
 
-**Subnets vs IPs.** Bare/qualified node-name forms (`Jawo`, `Jawo.lan`) resolve to *subnets* — broad, "any device on those networks." `$node` resolves to *IPs* — narrow, "the router itself as a host." These are complementary, not interchangeable.
+**Subnets vs IPs.** Bare/qualified node-name forms (`Home`, `Home.lan`) resolve to *subnets* — broad, "any device on those networks." `$node` resolves to *IPs* — narrow, "the router itself as a host." These are complementary, not interchangeable.
 
 ### Zones
 
@@ -142,3 +142,30 @@ Each node declares its mesh IP explicitly. This is intentional:
 - Inserting a new node must not silently change existing nodes' IPs
 - Mesh IPs are the addressing substrate the future distributed apply mechanism will run on — they must be stable across config updates
 - Auto-assignment from node order in the file was considered and rejected for these reasons
+
+---
+
+## Testing
+
+### Scope
+
+Tests cover the **deterministic core**: type parsers (`src/types/`), WAN/config resolution (`src/config.rs`), all validator passes (`src/validator/`), the tag-resolution map, the UCI generators (firewall redirects/rules/zones, network, dhcp), and UCI command/builder rendering. The process/IO layer (`uci` executor, `wg`, `splot_config`, `env`, `pipeline`, `main`) is **out of scope** for now — it shells out and touches the filesystem; revisit as integration tests later.
+
+### Placement
+
+Tests are inline `#[cfg(test)] mod tests { use super::*; ... }` modules, always the **last item in the file**. Inline (not a separate `tests/` dir) because this is a binary crate and tests need access to private / `pub(super)` items (validator passes, generator helpers, the `UciSectionBuilder`). Follow `src/types/mac.rs` as the style reference.
+
+### Fixtures
+
+- **Pure type parsers** are driven directly through `FromStr` with a small local `parse()` helper.
+- **Config-level tests** build a `Config` from a YAML string via `serde_yml::from_str` — this mirrors real loading and exercises the serde layer too. Shared helpers live in `src/test_support.rs` (`#[cfg(test)]`-only, `pub(crate)`): `config()`, `report()`, and `has_error` / `has_warning` / `error_at` matchers. The matchers take closures because `ValidationError` / `ValidationWarning` don't derive `PartialEq` — match on the variant with `matches!(..)`.
+
+### Conventions
+
+- **`HashMap` iteration is nondeterministic** — never assert on positional order. Assert "contains an item matching a predicate", collect into sets, or rely on the builder's *sorted* output (e.g. `extend_list` sorts; an empty list emits no line, which is how "no `wan.sources` ⇒ public" is pinned down).
+- **A test must be able to fail.** Avoid fixtures where the asserted name/value can't occur — a check against something absent from the fixture passes vacuously and proves nothing. When a test guards a filter, assert both the positive (expected thing appears) and the negative (the wrong thing is absent), ideally in both generation directions.
+- **Use generic placeholder names** in fixtures — `Home`, `Cabin`, `Phone`, and obviously-fake keys/endpoints (`AAAA`, `1.2.3.4`). Never real deployment names, keys, or endpoints; real config lives only in the git-ignored `splot.yml`.
+
+### Verify
+
+`cargo test`, `cargo fmt --check`, and `cargo clippy -- -D warnings` all stay clean. Sanity-check a new test by temporarily inverting the condition it guards — if it still passes, it isn't testing what it claims.

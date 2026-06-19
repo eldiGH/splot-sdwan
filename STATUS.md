@@ -72,7 +72,11 @@ The validator runs in `main.rs` before any UCI generation — validation errors 
 ### UCI section naming (`src/naming.rs`)
 
 - Canonical names for splot-generated UCI sections — uses the `spl_` prefix (declared in `consts.rs`) to keep splot-managed sections distinct from operator-managed ones.
-- Qualified naming scheme for cross-node rules: a remote device's service is namespaced by node name (e.g., `Jawo_printer_ssh`), preventing collisions with same-name objects on different nodes.
+- Qualified naming scheme for cross-node rules: a remote device's service is namespaced by node name (e.g., `Home_printer_ssh`), preventing collisions with same-name objects on different nodes.
+
+### Tests (`cargo test`)
+
+Unit-test suite over the deterministic core (~194 tests). Covers: type parsers (`src/types/`), WAN/config resolution (`src/config.rs`), all validator passes (`src/validator/`), the tag-resolution map, the UCI generators (firewall redirects/rules/zones, network, dhcp), and UCI command/builder rendering. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_yml` with shared helpers in `src/test_support.rs`. The process/IO layer (uci executor, wg, splot_config, env, pipeline) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
 
 ---
 

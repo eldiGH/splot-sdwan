@@ -180,6 +180,7 @@ pub struct Client {
     pub tags: OneOrManyUnique<Identifier>,
 }
 
+#[derive(Debug)]
 pub enum WanResolveError {
     AmbiguousVpn { candidates: Vec<Identifier> },
     Unreachable,
@@ -187,6 +188,7 @@ pub enum WanResolveError {
     QualifiedClientNotOnNetwork { network: Identifier },
 }
 
+#[derive(Debug)]
 pub struct WanResolution {
     pub dest_ip: Ipv4Addr,
     pub dest_zone: ZoneRef,
@@ -352,5 +354,245 @@ impl Config {
         self.nodes
             .iter()
             .find_map(|(name, node)| (node.public_key == pubkey).then_some(name))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::config;
+
+    // One node with a zone and two VPN interfaces.
+    // Five clients cover every branch of resolve_wan + qualified variants.
+    const FIXTURE: &str = "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+    vpnInterfaces:
+      vpn_a:
+        listenPort: 51821
+        address: 10.8.1.1/24
+        clients: {}
+      vpn_b:
+        listenPort: 51822
+        address: 10.8.2.1/24
+        clients: {}
+clients:
+  # has meshIp AND a zone IP; mesh must win
+  PhoneWithMesh:
+    meshIp: 10.100.0.100
+    ips:
+      Home:
+        lan: 192.168.1.50
+  # no meshIp, zone IP only
+  ZoneOnly:
+    ips:
+      Home:
+        lan: 192.168.1.60
+  # no meshIp, single VPN interface IP
+  VpnSingle:
+    ips:
+      Home:
+        vpn_a: 10.8.1.10
+  # no meshIp, IPs on two VPN interfaces — ambiguous
+  VpnAmbig:
+    ips:
+      Home:
+        vpn_a: 10.8.1.20
+        vpn_b: 10.8.2.20
+  # no meshIp, no IPs on Home at all
+  Nowhere: {}
+";
+
+    fn id(s: &str) -> Identifier {
+        s.parse().unwrap()
+    }
+
+    fn bare(s: &str) -> WanViaTarget {
+        s.parse().unwrap()
+    }
+
+    fn qualified(node: &str, local: &str) -> WanViaTarget {
+        format!("{node}.{local}").parse().unwrap()
+    }
+
+    struct Fixture {
+        home: Node,
+        phone: Client,
+        zone_only: Client,
+        vpn_single: Client,
+        vpn_ambig: Client,
+        nowhere: Client,
+    }
+
+    impl Fixture {
+        fn load() -> Self {
+            let cfg = config(FIXTURE);
+            let mut nodes = cfg.nodes;
+            let mut clients = cfg.clients;
+            Self {
+                home: nodes.remove(&id("Home")).unwrap(),
+                phone: clients.remove(&id("PhoneWithMesh")).unwrap(),
+                zone_only: clients.remove(&id("ZoneOnly")).unwrap(),
+                vpn_single: clients.remove(&id("VpnSingle")).unwrap(),
+                vpn_ambig: clients.remove(&id("VpnAmbig")).unwrap(),
+                nowhere: clients.remove(&id("Nowhere")).unwrap(),
+            }
+        }
+    }
+
+    // --- Bare via: priority chain ---
+
+    #[test]
+    fn bare_meship_wins_over_zone_ip() {
+        let f = Fixture::load();
+        let res = f.phone.resolve_wan_target(&bare("Home"), &f.home).unwrap();
+        assert_eq!(res.dest_ip.to_string(), "10.100.0.100");
+        assert_eq!(res.dest_zone, ZoneRef::Mesh);
+    }
+
+    #[test]
+    fn bare_zone_ip_when_no_mesh() {
+        let f = Fixture::load();
+        let res = f
+            .zone_only
+            .resolve_wan_target(&bare("Home"), &f.home)
+            .unwrap();
+        assert_eq!(res.dest_ip.to_string(), "192.168.1.60");
+        assert_eq!(res.dest_zone, ZoneRef::Named(id("lan")));
+    }
+
+    #[test]
+    fn bare_single_vpn_ip_when_no_mesh_no_zone() {
+        let f = Fixture::load();
+        let res = f
+            .vpn_single
+            .resolve_wan_target(&bare("Home"), &f.home)
+            .unwrap();
+        assert_eq!(res.dest_ip.to_string(), "10.8.1.10");
+        assert_eq!(res.dest_zone, ZoneRef::Named(id("vpn_a")));
+    }
+
+    #[test]
+    fn bare_ambiguous_vpn_returns_error() {
+        let f = Fixture::load();
+        let err = f
+            .vpn_ambig
+            .resolve_wan_target(&bare("Home"), &f.home)
+            .unwrap_err();
+        assert!(
+            matches!(err, WanResolveError::AmbiguousVpn { candidates } if candidates.len() == 2)
+        );
+    }
+
+    #[test]
+    fn bare_unreachable_when_no_ips_on_node() {
+        let f = Fixture::load();
+        let err = f
+            .nowhere
+            .resolve_wan_target(&bare("Home"), &f.home)
+            .unwrap_err();
+        assert!(matches!(err, WanResolveError::Unreachable));
+    }
+
+    // --- Qualified via ---
+
+    #[test]
+    fn qualified_zone_network_resolves() {
+        let f = Fixture::load();
+        let res = f
+            .zone_only
+            .resolve_wan_target(&qualified("Home", "lan"), &f.home)
+            .unwrap();
+        assert_eq!(res.dest_ip.to_string(), "192.168.1.60");
+        assert_eq!(res.dest_zone, ZoneRef::Named(id("lan")));
+    }
+
+    #[test]
+    fn qualified_vpn_network_resolves() {
+        let f = Fixture::load();
+        let via = qualified("Home", "vpn_a");
+        let res = f.vpn_ambig.resolve_wan_target(&via, &f.home).unwrap();
+        assert_eq!(res.dest_ip.to_string(), "10.8.1.20");
+        assert_eq!(res.dest_zone, ZoneRef::Named(id("vpn_a")));
+    }
+
+    #[test]
+    fn qualified_missing_network_on_node() {
+        let f = Fixture::load();
+        let err = f
+            .zone_only
+            .resolve_wan_target(&qualified("Home", "missing_net"), &f.home)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            WanResolveError::QualifiedNetworkMissing { network } if network == id("missing_net")
+        ));
+    }
+
+    #[test]
+    fn qualified_client_not_on_network() {
+        let f = Fixture::load();
+        // ZoneOnly has no vpn_a IP, but vpn_a exists on Home
+        let err = f
+            .zone_only
+            .resolve_wan_target(&qualified("Home", "vpn_a"), &f.home)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            WanResolveError::QualifiedClientNotOnNetwork { network } if network == id("vpn_a")
+        ));
+    }
+
+    // --- Node helpers ---
+
+    #[test]
+    fn node_network_by_name_zone() {
+        let f = Fixture::load();
+        assert!(matches!(
+            f.home.network_by_name(&id("lan")),
+            Some(ZoneOrVpnInterface::Zone(_))
+        ));
+    }
+
+    #[test]
+    fn node_network_by_name_vpn() {
+        let f = Fixture::load();
+        assert!(matches!(
+            f.home.network_by_name(&id("vpn_a")),
+            Some(ZoneOrVpnInterface::VpnInterface(_))
+        ));
+    }
+
+    #[test]
+    fn node_network_by_name_missing() {
+        let f = Fixture::load();
+        assert!(f.home.network_by_name(&id("nonexistent")).is_none());
+    }
+
+    // --- Client helper ---
+
+    #[test]
+    fn client_network_by_name_hit() {
+        let f = Fixture::load();
+        let ip = f
+            .zone_only
+            .network_by_name(&id("Home"), &id("lan"))
+            .unwrap();
+        assert_eq!(ip.to_string(), "192.168.1.60");
+    }
+
+    #[test]
+    fn client_network_by_name_miss() {
+        let f = Fixture::load();
+        // Nowhere has no ips entry at all
+        assert!(f.nowhere.network_by_name(&id("Home"), &id("lan")).is_none());
     }
 }

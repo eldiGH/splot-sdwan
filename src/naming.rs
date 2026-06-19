@@ -11,3 +11,24 @@ pub fn mesh_interface() -> String {
 pub fn name_prefixed(name: &str) -> String {
     format!("{}{name}", consts::SPLOT_NAME_PREFIX)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interface_prepends_spl_prefix() {
+        assert_eq!(interface("x"), "spl_x");
+        assert_eq!(interface("my_rule"), "spl_my_rule");
+    }
+
+    #[test]
+    fn mesh_interface_is_spl_splot_mesh() {
+        assert_eq!(mesh_interface(), "spl_splot_mesh");
+    }
+
+    #[test]
+    fn name_prefixed_prepends_bracket_label() {
+        assert_eq!(name_prefixed("foo"), "[SPLOT] foo");
+    }
+}

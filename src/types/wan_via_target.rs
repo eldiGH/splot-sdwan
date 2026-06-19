@@ -131,3 +131,62 @@ impl WanViaTargets {
         self.0.iter()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn target(s: &str) -> WanViaTarget {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn target_bare_and_qualified() {
+        let bare = target("Home");
+        assert!(matches!(bare, WanViaTarget::Bare(_)));
+        assert_eq!(bare.node().as_ref(), "Home");
+
+        let qualified = target("Home.lan");
+        assert!(matches!(qualified, WanViaTarget::Qualified(_)));
+        // node() reaches through the qualified form to the node segment
+        assert_eq!(qualified.node().as_ref(), "Home");
+    }
+
+    #[test]
+    fn target_parse_errors() {
+        assert!(matches!(
+            "".parse::<WanViaTarget>(),
+            Err(ParseWanViaTargetError::InvalidIdentifier(_))
+        ));
+        assert!(matches!(
+            "a.b.c".parse::<WanViaTarget>(),
+            Err(ParseWanViaTargetError::InvalidNested(_))
+        ));
+    }
+
+    #[test]
+    fn targets_distinct_nodes_ok() {
+        let set = OneOrManyUnique(HashSet::from([target("Home"), target("Cabin")]));
+        let targets = WanViaTargets::try_from(set).unwrap();
+        assert_eq!(targets.iter().count(), 2);
+        assert!(!targets.is_empty());
+    }
+
+    #[test]
+    fn targets_duplicate_node_rejected() {
+        // bare and qualified forms that name the same node are a duplicate
+        let set = OneOrManyUnique(HashSet::from([target("Home"), target("Home.lan")]));
+        let err = WanViaTargets::try_from(set).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseWanViaTargetsError::DuplicateNode { node } if node.as_ref() == "Home"
+        ));
+    }
+
+    #[test]
+    fn targets_single() {
+        let set = OneOrManyUnique(HashSet::from([target("Home")]));
+        let targets = WanViaTargets::try_from(set).unwrap();
+        assert_eq!(targets.iter().count(), 1);
+    }
+}

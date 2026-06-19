@@ -227,3 +227,65 @@ impl UciManager for NetworkManager {
         FILE_NAME
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{test_support::config, uci::UciBatchCommand};
+
+    const FIXTURE: &str = "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    vpnInterfaces:
+      vpn_a:
+        listenPort: 51821
+        address: 10.8.1.1/24
+        clients: {}
+  Cabin:
+    publicKey: CCCC
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    zones:
+      lan:
+        address: 192.168.2.1/24
+";
+
+    fn has_cmd(cmds: &[UciBatchCommand], s: &str) -> bool {
+        cmds.iter().any(|c| c.to_string().contains(s))
+    }
+
+    fn cmds() -> Vec<UciBatchCommand> {
+        let cfg = config(FIXTURE);
+        NetworkManager.generate_commands(&cfg, &"Home".parse().unwrap())
+    }
+
+    #[test]
+    fn mesh_interface_section_present() {
+        assert!(has_cmd(&cmds(), "network.spl_splot_mesh='interface'"));
+    }
+
+    #[test]
+    fn mesh_interface_has_wireguard_proto() {
+        assert!(has_cmd(&cmds(), "spl_splot_mesh.proto='wireguard'"));
+    }
+
+    #[test]
+    fn remote_node_peer_section_present() {
+        // Cabin is a remote mesh peer → section with wireguard_spl_splot_mesh type.
+        assert!(has_cmd(
+            &cmds(),
+            "network.spl_Cabin='wireguard_spl_splot_mesh'"
+        ));
+    }
+
+    #[test]
+    fn vpn_interface_section_present() {
+        assert!(has_cmd(&cmds(), "network.spl_vpn_a='interface'"));
+    }
+}

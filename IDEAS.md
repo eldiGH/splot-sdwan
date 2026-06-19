@@ -8,9 +8,9 @@ Local DNS resolution on every router so that human-readable names are reachable 
 
 The DNS hierarchy mirrors the per-node namespace used for `allowFrom` references — `{LocalName}.{NodeName}` is the qualified-reference syntax read right-to-left.
 
-- `{deviceName}.{nodeName}` — for LAN devices (e.g., `printer.Jawo`)
-- `{nodeName}` — for the router itself (e.g., `Jawo`)
-- `{vpnClientName}.{nodeName}` — for VPN clients hosted by that node (e.g., `Pixel8.Jawo`); flat 2-level matches the per-node namespace where VPN client names are unique within a node across all VPN interfaces
+- `{deviceName}.{nodeName}` — for LAN devices (e.g., `printer.Home`)
+- `{nodeName}` — for the router itself (e.g., `Home`)
+- `{vpnClientName}.{nodeName}` — for VPN clients hosted by that node (e.g., `Pixel8.Home`); flat 2-level matches the per-node namespace where VPN client names are unique within a node across all VPN interfaces
 - `{globalClientName}` — for global clients in `config.clients` (no node prefix; they roam between nodes)
 
 **Two approaches to consider — both could coexist:**

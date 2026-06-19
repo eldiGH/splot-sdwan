@@ -268,3 +268,106 @@ impl Ipv4Network {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ip(s: &str) -> Ipv4Addr {
+        s.parse().unwrap()
+    }
+    fn net(s: &str) -> Ipv4Network {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn network_valid() {
+        let n = net("10.0.0.0/24");
+        assert_eq!(n.ip(), ip("10.0.0.0"));
+        assert_eq!(n.prefix(), 24);
+        assert_eq!(n.to_string(), "10.0.0.0/24");
+        // /32 and /0 are valid network addresses
+        assert!("1.2.3.4/32".parse::<Ipv4Network>().is_ok());
+        assert!("0.0.0.0/0".parse::<Ipv4Network>().is_ok());
+    }
+
+    #[test]
+    fn network_rejects_host_bits_set() {
+        assert!(matches!(
+            "10.0.0.5/24".parse::<Ipv4Network>(),
+            Err(Ipv4NetworkError::NotANetworkAddress(..))
+        ));
+    }
+
+    #[test]
+    fn network_parse_errors() {
+        assert!(matches!(
+            "10.0.0.0".parse::<Ipv4Network>(),
+            Err(Ipv4NetworkError::ParseCidrError(ParseCidrError::NoPrefix(
+                _
+            )))
+        ));
+        assert!(matches!(
+            "10.0.0.0/33".parse::<Ipv4Network>(),
+            Err(Ipv4NetworkError::ParseCidrError(
+                ParseCidrError::InvalidPrefix(_)
+            ))
+        ));
+    }
+
+    #[test]
+    fn network_contains() {
+        let n = net("10.0.0.0/24");
+        assert!(n.contains(ip("10.0.0.0")));
+        assert!(n.contains(ip("10.0.0.255")));
+        assert!(!n.contains(ip("10.0.1.0")));
+    }
+
+    #[test]
+    fn network_overlap() {
+        assert!(net("10.0.0.0/24").overlap(net("10.0.0.0/24"))); // equal
+        assert!(!net("10.0.0.0/24").overlap(net("10.0.1.0/24"))); // disjoint/adjacent
+        // nested overlaps both directions
+        assert!(net("10.0.0.0/16").overlap(net("10.0.5.0/24")));
+        assert!(net("10.0.5.0/24").overlap(net("10.0.0.0/16")));
+    }
+
+    #[test]
+    fn network_host_is_slash_32() {
+        let h = Ipv4Network::host(ip("10.0.0.5"));
+        assert_eq!(h.prefix(), 32);
+        assert_eq!(h.ip(), ip("10.0.0.5"));
+    }
+
+    #[test]
+    fn interface_valid_host() {
+        let i: Ipv4Interface = "192.168.1.1/24".parse().unwrap();
+        assert_eq!(i.ip(), ip("192.168.1.1"));
+        assert_eq!(i.prefix(), 24);
+        assert_eq!(i.to_string(), "192.168.1.1/24");
+    }
+
+    #[test]
+    fn interface_rejects_network_address() {
+        // a host that is the network address (host bits zero) is rejected when prefix < 32
+        assert!(matches!(
+            "192.168.1.0/24".parse::<Ipv4Interface>(),
+            Err(Ipv4InterfaceError::IsNetworkAddress(..))
+        ));
+        // but /32 is always a valid host
+        assert!("192.168.1.0/32".parse::<Ipv4Interface>().is_ok());
+    }
+
+    #[test]
+    fn interface_network_masks_host_bits() {
+        let i: Ipv4Interface = "192.168.1.5/24".parse().unwrap();
+        assert_eq!(i.network(), net("192.168.1.0/24"));
+    }
+
+    #[test]
+    fn interface_is_in_same_network() {
+        let i: Ipv4Interface = "192.168.1.1/24".parse().unwrap();
+        assert!(i.is_in_same_network(ip("192.168.1.50")));
+        assert!(!i.is_in_same_network(ip("192.168.2.1")));
+    }
+}

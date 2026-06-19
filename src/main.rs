@@ -14,6 +14,8 @@ pub mod naming;
 pub mod pipeline;
 pub mod protocol;
 pub mod splot_config;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod types;
 pub mod uci;
 pub mod validator;

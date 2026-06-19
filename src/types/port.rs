@@ -401,3 +401,153 @@ impl ServicePort {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_valid_bounds() {
+        assert_eq!("1".parse::<Port>().unwrap().value(), 1);
+        assert_eq!("65535".parse::<Port>().unwrap().value(), 65535);
+    }
+
+    #[test]
+    fn port_zero_rejected() {
+        assert!(matches!(
+            "0".parse::<Port>(),
+            Err(ParsePortError::CannotBeZero)
+        ));
+    }
+
+    #[test]
+    fn port_non_numeric_and_overflow() {
+        assert!(matches!(
+            "abc".parse::<Port>(),
+            Err(ParsePortError::InvalidFormat(_))
+        ));
+        assert!(matches!(
+            "65536".parse::<Port>(),
+            Err(ParsePortError::InvalidFormat(_))
+        ));
+    }
+
+    #[test]
+    fn range_valid() {
+        let r: PortRange = "22-80".parse().unwrap();
+        assert_eq!(r.from().value(), 22);
+        assert_eq!(r.to().value(), 80);
+        assert_eq!(r.width(), 58);
+        assert_eq!(r.to_string(), "22-80");
+    }
+
+    #[test]
+    fn range_inverted_or_equal_rejected() {
+        assert!(matches!(
+            "80-22".parse::<PortRange>(),
+            Err(ParsePortRangeError::InvalidRange)
+        ));
+        assert!(matches!(
+            "22-22".parse::<PortRange>(),
+            Err(ParsePortRangeError::InvalidRange)
+        ));
+    }
+
+    #[test]
+    fn range_delimiter_and_endpoint_errors() {
+        assert!(matches!(
+            "2280".parse::<PortRange>(),
+            Err(ParsePortRangeError::NoDelimiter)
+        ));
+        assert!(matches!(
+            "a-80".parse::<PortRange>(),
+            Err(ParsePortRangeError::InvalidPort(_))
+        ));
+    }
+
+    #[test]
+    fn range_contains_and_overlaps() {
+        let r: PortRange = "22-80".parse().unwrap();
+        let p = |n: &str| n.parse::<Port>().unwrap();
+        assert!(r.contains(p("22")) && r.contains(p("80")) && r.contains(p("50")));
+        assert!(!r.contains(p("21")) && !r.contains(p("81")));
+
+        let pr = |s: &str| s.parse::<PortRange>().unwrap();
+        assert!(r.overlaps(pr("80-100"))); // touching at 80
+        assert!(r.overlaps(pr("30-40"))); // nested
+        assert!(!r.overlaps(pr("81-100"))); // disjoint
+    }
+
+    #[test]
+    fn port_or_range_parse_variants() {
+        assert!(matches!(
+            "22".parse::<PortOrRange>(),
+            Ok(PortOrRange::Single(_))
+        ));
+        assert!(matches!(
+            "22-80".parse::<PortOrRange>(),
+            Ok(PortOrRange::Range(_))
+        ));
+    }
+
+    #[test]
+    fn conflicts_matrix() {
+        let por = |s: &str| s.parse::<PortOrRange>().unwrap();
+        // single vs single
+        assert!(por("22").conflicts(por("22")));
+        assert!(!por("22").conflicts(por("23")));
+        // single vs range and range vs single
+        assert!(por("50").conflicts(por("22-80")));
+        assert!(por("22-80").conflicts(por("50")));
+        assert!(!por("90").conflicts(por("22-80")));
+        // range vs range
+        assert!(por("22-80").conflicts(por("70-100")));
+        assert!(!por("22-80").conflicts(por("90-100")));
+    }
+
+    #[test]
+    fn service_port_same() {
+        let sp: ServicePort = "22".parse().unwrap();
+        assert!(matches!(sp, ServicePort::Same(_)));
+        assert_eq!(sp.internal().to_string(), "22");
+        assert_eq!(sp.external().to_string(), "22");
+        assert_eq!(sp.to_string(), "22");
+    }
+
+    #[test]
+    fn service_port_translation() {
+        let sp: ServicePort = "8080:80".parse().unwrap();
+        assert!(matches!(sp, ServicePort::Translation { .. }));
+        assert_eq!(sp.external().to_string(), "8080");
+        assert_eq!(sp.internal().to_string(), "80");
+        assert_eq!(sp.to_string(), "8080:80");
+    }
+
+    #[test]
+    fn service_port_range_collapse() {
+        let sp: ServicePort = "1000-2000:80".parse().unwrap();
+        assert!(matches!(sp, ServicePort::RangeCollapse { .. }));
+        assert_eq!(sp.external().to_string(), "1000-2000");
+        assert_eq!(sp.internal().to_string(), "80");
+    }
+
+    #[test]
+    fn service_port_range_map() {
+        let sp: ServicePort = "1000-2000:3000-4000".parse().unwrap();
+        assert!(matches!(sp, ServicePort::RangeMap { .. }));
+        assert_eq!(sp.external().to_string(), "1000-2000");
+        assert_eq!(sp.internal().to_string(), "3000-4000");
+    }
+
+    #[test]
+    fn service_port_errors() {
+        assert!(matches!(
+            "1000-2000:3000-4500".parse::<ServicePort>(),
+            Err(ParseServicePortError::MismatchedRangeWidths { .. })
+        ));
+        assert!(matches!(
+            "80:1000-2000".parse::<ServicePort>(),
+            Err(ParseServicePortError::SingleToRangeTranslation { .. })
+        ));
+    }
+}

@@ -75,3 +75,72 @@ impl AllowFromRef {
         Self::Nested(NestedIdentifier { node, local })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(s: &str) -> Result<AllowFromRef, ParseAllowFromRefError> {
+        s.parse()
+    }
+
+    #[test]
+    fn self_node_sentinel() {
+        let r = parse("$node").unwrap();
+        assert_eq!(r, AllowFromRef::SelfNode);
+        assert_eq!(r.to_string(), "$node");
+    }
+
+    #[test]
+    fn bare_identifier() {
+        let r = parse("Home").unwrap();
+        assert!(matches!(r, AllowFromRef::Bare(_)));
+        assert_eq!(r.to_string(), "Home");
+    }
+
+    #[test]
+    fn nested_identifier() {
+        let r = parse("Home.lan").unwrap();
+        assert!(matches!(r, AllowFromRef::Nested(_)));
+        assert_eq!(r.to_string(), "Home.lan");
+    }
+
+    #[test]
+    fn nested_constructor() {
+        let node: Identifier = "Home".parse().unwrap();
+        let local: Identifier = "lan".parse().unwrap();
+        let r = AllowFromRef::nested(node, local);
+        assert_eq!(r.to_string(), "Home.lan");
+    }
+
+    #[test]
+    fn invalid_bare() {
+        assert!(matches!(
+            parse(""),
+            Err(ParseAllowFromRefError::InvalidIdentifier(_))
+        ));
+        assert!(matches!(
+            parse("-bad"),
+            Err(ParseAllowFromRefError::InvalidIdentifier(_))
+        ));
+    }
+
+    #[test]
+    fn invalid_nested() {
+        assert!(matches!(
+            parse("a.b.c"),
+            Err(ParseAllowFromRefError::InvalidNested(_))
+        ));
+        assert!(matches!(
+            parse(".lan"),
+            Err(ParseAllowFromRefError::InvalidNested(_))
+        ));
+    }
+
+    #[test]
+    fn display_roundtrip() {
+        for s in ["$node", "Home", "Home.lan"] {
+            assert_eq!(parse(s).unwrap().to_string(), s);
+        }
+    }
+}

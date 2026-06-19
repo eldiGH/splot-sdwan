@@ -297,3 +297,273 @@ pub fn get_firewall_egress_rules(
 
     rules
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        managers::firewall::tag_resolution::build_tags_resolution_map, test_support::config,
+    };
+
+    fn id(s: &str) -> Identifier {
+        s.parse().unwrap()
+    }
+
+    fn ingress(yaml: &str, own: &str) -> Vec<FirewallRule> {
+        let cfg = config(yaml);
+        let tags = build_tags_resolution_map(&cfg, &id(own));
+        get_firewall_ingress_rules(&cfg, &id(own), &tags)
+    }
+
+    #[test]
+    fn allowfrom_produces_ingress_rule() {
+        // Home node service ssh with allowFrom: Phone → rule with Phone's meshIp in src_ip.
+        let rules = ingress(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    services:
+      ssh:
+        port: 22
+        proto: tcp
+        allowFrom: Phone
+clients:
+  Phone:
+    publicKey: BBBB
+    meshIp: 10.100.0.100
+",
+            "Home",
+        );
+        let rule = rules
+            .iter()
+            .find(|r| r.name.contains("ssh"))
+            .expect("ssh rule missing");
+        assert!(
+            rule.src_ip
+                .iter()
+                .any(|n| n.to_string() == "10.100.0.100/32"),
+            "Phone mesh IP missing from src_ip"
+        );
+    }
+
+    #[test]
+    fn same_lan_source_filtered_out() {
+        // LanClient is in the same /24 as printer → source filtered → no rule produced.
+        let rules = ingress(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+        devices:
+          printer:
+            ip: 192.168.1.50
+            macs: AA:BB:CC:DD:EE:FF
+            services:
+              print:
+                port: 9100
+                proto: tcp
+                allowFrom: LanClient
+clients:
+  LanClient:
+    ips:
+      Home:
+        lan: 192.168.1.60
+",
+            "Home",
+        );
+        assert!(
+            !rules.iter().any(|r| r.name.contains("print")),
+            "same-LAN source should not produce a rule"
+        );
+    }
+
+    #[test]
+    fn no_allowfrom_no_ingress_rule() {
+        // wan-only service — no allowFrom means no ingress firewall rule needed.
+        let rules = ingress(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+    services:
+      http:
+        port: 80
+        proto: tcp
+        wan:
+          via: Home
+",
+            "Home",
+        );
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn cross_node_client_resolved_via_mesh_ip() {
+        // Phone lives on Cabin's lan but is reachable from Home via its meshIp.
+        let rules = ingress(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    services:
+      ssh:
+        port: 22
+        proto: tcp
+        allowFrom: Phone
+  Cabin:
+    publicKey: CCCC
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    zones:
+      lan:
+        address: 192.168.2.1/24
+clients:
+  Phone:
+    publicKey: BBBB
+    meshIp: 10.100.0.100
+",
+            "Home",
+        );
+        let rule = rules.iter().find(|r| r.name.contains("ssh")).unwrap();
+        assert!(
+            rule.src_ip
+                .iter()
+                .any(|n| n.to_string() == "10.100.0.100/32")
+        );
+    }
+
+    fn egress(yaml: &str, own: &str) -> Vec<FirewallRule> {
+        let cfg = config(yaml);
+        let tags = build_tags_resolution_map(&cfg, &id(own));
+        get_firewall_egress_rules(&cfg, &id(own), &tags)
+    }
+
+    // Home-local workstation (tag `staff`) wants to reach Cabin's `web` service.
+    // From Home's perspective this is egress: Home must ACCEPT the local source
+    // toward the remote (mesh-reachable) destination.
+    const EGRESS_FIXTURE: &str = "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+        devices:
+          workstation:
+            ip: 192.168.1.10
+            macs: AA:BB:CC:DD:EE:01
+            tags: staff
+  Cabin:
+    publicKey: CCCC
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    zones:
+      lan:
+        address: 192.168.2.1/24
+    services:
+      web:
+        port: 80
+        proto: tcp
+        allowFrom: staff
+";
+
+    #[test]
+    fn egress_rule_for_remote_service_from_local_source() {
+        let rules = egress(EGRESS_FIXTURE, "Home");
+        let rule = rules
+            .iter()
+            .find(|r| r.name.contains("web"))
+            .expect("egress rule for Cabin web missing");
+        // src is the Home-local workstation; dest includes Cabin's mesh host IP.
+        assert!(
+            rule.src_ip
+                .iter()
+                .any(|n| n.to_string() == "192.168.1.10/32"),
+            "local source workstation missing from src_ip"
+        );
+        assert!(
+            rule.dest_ip
+                .iter()
+                .any(|n| n.to_string() == "10.100.0.2/32"),
+            "Cabin mesh host IP missing from dest_ip"
+        );
+    }
+
+    #[test]
+    fn egress_filters_non_local_sources() {
+        // Cabin's `web` is allowed from a Cabin-local device. From Home's perspective
+        // that source is not local, so Home emits no egress rule for it.
+        let rules = egress(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+  Cabin:
+    publicKey: CCCC
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    zones:
+      lan:
+        address: 192.168.2.1/24
+        devices:
+          cabinpc:
+            ip: 192.168.2.10
+            macs: AA:BB:CC:DD:EE:02
+            tags: locals
+    services:
+      web:
+        port: 80
+        proto: tcp
+        allowFrom: locals
+",
+            "Home",
+        );
+        assert!(
+            !rules.iter().any(|r| r.name.contains("web")),
+            "non-local source should not produce an egress rule on Home"
+        );
+    }
+
+    #[test]
+    fn own_node_services_not_in_egress() {
+        // Egress only concerns *remote* nodes; the own node's own services are ingress.
+        let rules = egress(EGRESS_FIXTURE, "Cabin");
+        // From Cabin, `web` is local (ingress), so it must not appear in egress.
+        assert!(!rules.iter().any(|r| r.name.contains("web")));
+    }
+}

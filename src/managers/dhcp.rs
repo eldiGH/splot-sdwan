@@ -121,3 +121,88 @@ impl UciManager for DhcpManager {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{managers::UciManager, test_support::config, uci::UciBatchCommand};
+
+    const FIXTURE: &str = "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+        devices:
+          printer:
+            ip: 192.168.1.50
+            macs: AA:BB:CC:DD:EE:FF
+          macless:
+            ip: 192.168.1.51
+            macs: []
+    vpnInterfaces:
+      vpn_a:
+        listenPort: 51821
+        address: 10.8.1.1/24
+        clients: {}
+clients:
+  Phone:
+    macs: BB:CC:DD:EE:FF:00
+    ips:
+      Home:
+        lan: 192.168.1.60
+  VpnOnly:
+    macs: CC:DD:EE:FF:00:11
+    ips:
+      Home:
+        vpn_a: 10.8.1.10
+  MeshOnly:
+    publicKey: DDDD
+    meshIp: 10.100.0.100
+";
+
+    fn has_cmd(cmds: &[UciBatchCommand], s: &str) -> bool {
+        cmds.iter().any(|c| c.to_string().contains(s))
+    }
+
+    fn cmds() -> Vec<UciBatchCommand> {
+        let cfg = config(FIXTURE);
+        DhcpManager.generate_commands(&cfg, &"Home".parse().unwrap())
+    }
+
+    #[test]
+    fn zone_device_with_macs_gets_lease() {
+        let c = cmds();
+        assert!(has_cmd(&c, "dhcp.spl_printer"), "printer section missing");
+        assert!(has_cmd(&c, "ip='192.168.1.50'"), "printer IP missing");
+        assert!(has_cmd(&c, "aa:bb:cc:dd:ee:ff"), "printer MAC missing");
+    }
+
+    #[test]
+    fn zone_device_without_macs_no_lease() {
+        assert!(!has_cmd(&cmds(), "spl_macless"));
+    }
+
+    #[test]
+    fn global_client_with_macs_and_zone_ip_gets_lease() {
+        let c = cmds();
+        assert!(has_cmd(&c, "dhcp.spl_Phone"), "Phone section missing");
+        assert!(has_cmd(&c, "ip='192.168.1.60'"), "Phone IP missing");
+    }
+
+    #[test]
+    fn global_client_vpn_only_no_dhcp_lease() {
+        // VPN clients don't get DHCP leases — only zone clients do.
+        assert!(!has_cmd(&cmds(), "spl_VpnOnly"));
+    }
+
+    #[test]
+    fn global_client_no_zone_ip_no_lease() {
+        assert!(!has_cmd(&cmds(), "spl_MeshOnly"));
+    }
+}

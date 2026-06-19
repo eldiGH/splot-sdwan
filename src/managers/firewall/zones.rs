@@ -63,3 +63,75 @@ pub fn get_firewall_zones(config: &Config, own_name: &Identifier) -> Vec<Firewal
 
     zones
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::config;
+
+    const FIXTURE: &str = "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+    vpnInterfaces:
+      vpn_a:
+        listenPort: 51821
+        address: 10.8.1.1/24
+        clients: {}
+";
+
+    fn id(s: &str) -> Identifier {
+        s.parse().unwrap()
+    }
+
+    fn zones() -> Vec<FirewallZone> {
+        let cfg = config(FIXTURE);
+        get_firewall_zones(&cfg, &id("Home"))
+    }
+
+    #[test]
+    fn mesh_zone_always_present() {
+        assert!(zones().iter().any(|z| z.name == "splot_mesh"));
+    }
+
+    #[test]
+    fn mesh_zone_network_is_spl_splot_mesh() {
+        let z = zones();
+        let mesh = z.iter().find(|z| z.name == "splot_mesh").unwrap();
+        assert_eq!(mesh.network, vec!["spl_splot_mesh"]);
+    }
+
+    #[test]
+    fn vpn_interface_produces_zone() {
+        assert!(zones().iter().any(|z| z.name == "vpn_a"));
+    }
+
+    #[test]
+    fn vpn_zone_network_is_spl_interface_name() {
+        let z = zones();
+        let vpn = z.iter().find(|z| z.name == "vpn_a").unwrap();
+        assert_eq!(vpn.network, vec!["spl_vpn_a"]);
+    }
+
+    #[test]
+    fn default_policy_reject_in_reject_fwd_accept_out() {
+        for zone in zones() {
+            assert!(matches!(zone.input, FirewallAction::Reject));
+            assert!(matches!(zone.forward, FirewallAction::Reject));
+            assert!(matches!(zone.output, FirewallAction::Accept));
+        }
+    }
+
+    #[test]
+    fn operator_managed_zones_not_included() {
+        // "lan" is operator-managed; splot must not create a firewall zone for it.
+        assert!(!zones().iter().any(|z| z.name == "lan"));
+    }
+}

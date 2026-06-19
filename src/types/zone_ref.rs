@@ -28,3 +28,41 @@ impl fmt::Display for ZoneRef {
         f.write_str(self.as_str())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id(s: &str) -> Identifier {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn mesh_renders_constant() {
+        let z = ZoneRef::Mesh;
+        assert_eq!(z.to_string(), consts::MESH_INTERFACE_NAME);
+        assert_eq!(z.as_ref(), consts::MESH_INTERFACE_NAME);
+    }
+
+    #[test]
+    fn named_renders_its_name() {
+        let z = ZoneRef::Named(id("lan"));
+        assert_eq!(z.to_string(), "lan");
+        assert_eq!(z.as_ref(), "lan");
+    }
+
+    #[test]
+    fn display_eq_as_ref() {
+        for z in [ZoneRef::Mesh, ZoneRef::Named(id("guest"))] {
+            assert_eq!(z.to_string(), z.as_ref());
+        }
+    }
+
+    #[test]
+    fn equality() {
+        assert_eq!(ZoneRef::Mesh, ZoneRef::Mesh);
+        assert_eq!(ZoneRef::Named(id("lan")), ZoneRef::Named(id("lan")));
+        assert_ne!(ZoneRef::Mesh, ZoneRef::Named(id("lan")));
+        assert_ne!(ZoneRef::Named(id("lan")), ZoneRef::Named(id("guest")));
+    }
+}
