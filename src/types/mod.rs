@@ -1,4 +1,5 @@
 pub mod allow_from_ref;
+pub mod config_location;
 pub mod identifier;
 pub mod ip;
 pub mod mac;

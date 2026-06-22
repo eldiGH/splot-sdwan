@@ -355,6 +355,8 @@ impl Config {
             .iter()
             .find_map(|(name, node)| (node.public_key == pubkey).then_some(name))
     }
+
+    pub fn services(&self) -> Iterator<&Service>
 }
 
 #[cfg(test)]
