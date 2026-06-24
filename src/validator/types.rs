@@ -1,158 +1,143 @@
 use std::{fmt, net::Ipv4Addr};
 
-use crate::types::{
-    allow_from_ref::AllowFromRef, identifier::Identifier, ip::Ipv4Network, port::PortOrRange,
+use crate::{
+    consts,
+    types::{
+        allow_from_ref::AllowFromRef, config_location::ConfigLocation, identifier::Identifier,
+        ip::Ipv4Network, port::PortOrRange,
+    },
 };
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ConfigPath(Vec<String>);
-
-impl ConfigPath {
-    pub fn new(segments: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self(segments.into_iter().map(|item| item.into()).collect())
-    }
-
-    pub fn extend(mut self, segments: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.0.extend(segments.into_iter().map(|item| item.into()));
-        self
-    }
-}
-
-impl fmt::Display for ConfigPath {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.is_empty() {
-            return write!(f, "<root>");
-        }
-
-        write!(f, "{}", self.0.join("."))
-    }
-}
 
 pub enum ValidationError {
     // names
     GlobalNameCollision {
         name: Identifier,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
     LocalShadowsGlobal {
         name: Identifier,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
     LocalNameCollision {
         name: Identifier,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
     InvalidPrefix {
         name: Identifier,
         prefix: String,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     // tags
     TagWithNameCollision {
         tag: Identifier,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     // references
     UnknownRef {
         reference: AllowFromRef,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     // networks
     IpOutsideSubnet {
         ip: Ipv4Addr,
         network: Ipv4Network,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
     NetworkCollision {
         network: Ipv4Network,
         conflicting_with: Ipv4Network,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
     IpCollision {
         ip: Ipv4Addr,
-        at: ConfigPath,
-        with: ConfigPath,
+        at: ConfigLocation,
+        with: ConfigLocation,
     },
     NodeClientManyZones {
         zone_name: Identifier,
-        existing_zone: ConfigPath,
-        at: ConfigPath,
+        existing_zone: ConfigLocation,
+        at: ConfigLocation,
     },
 
     // entities
     MacMissing {
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     PublicKeyMissing {
         required_for_mesh: bool,
         required_for_vpn_interface: bool,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     NodeMissing {
         node_name: Identifier,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     NodeNetworkMissing {
         node_name: Identifier,
         network_name: Identifier,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     // ports
     PortCollision {
         port: PortOrRange,
-        at: ConfigPath,
-        with: ConfigPath,
+        at: ConfigLocation,
+        with: ConfigLocation,
     },
 
     // wan
     InvalidWanVia {
         node_name: Identifier,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     WanViaNodeNoWanZone {
         node_name: Identifier,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     WanViaQualifiedOnNonClient {
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     WanViaNetworkMissing {
         node: Identifier,
         network: Identifier,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     WanViaClientNotOnNetwork {
         node: Identifier,
         network: Identifier,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     WanViaAmbiguous {
         node: Identifier,
         candidates: Vec<Identifier>,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     WanViaUnreachable {
         node: Identifier,
-        at: ConfigPath,
+        at: ConfigLocation,
     },
 
     WanZoneNameCollision {
         wan_zone: Identifier,
-        with: ConfigPath,
-        at: ConfigPath,
+        with: ConfigLocation,
+        at: ConfigLocation,
+    },
+
+    WanZoneReservedName {
+        wan_zone: Identifier,
+        at: ConfigLocation,
     },
 }
 
@@ -291,12 +276,17 @@ impl fmt::Display for ValidationError {
                 f,
                 "{at}: wanZone '{wan_zone}' collides with another zone at {with} — wanZone must not match any zone, VPN interface, or the splot-managed mesh interface on the same node"
             ),
+            Self::WanZoneReservedName { wan_zone, at } => write!(
+                f,
+                "{at}: wanZone '{wan_zone}' uses the name reserved for the splot-managed mesh interface ('{}')",
+                consts::MESH_INTERFACE_NAME
+            ),
         }
     }
 }
 
 impl ValidationError {
-    pub fn path(&self) -> &ConfigPath {
+    pub fn path(&self) -> &ConfigLocation {
         match self {
             Self::GlobalNameCollision { at, .. } => at,
             Self::InvalidPrefix { at, .. } => at,
@@ -321,23 +311,24 @@ impl ValidationError {
             Self::WanViaNetworkMissing { at, .. } => at,
             Self::WanViaUnreachable { at, .. } => at,
             Self::WanZoneNameCollision { at, .. } => at,
+            Self::WanZoneReservedName { at, .. } => at,
         }
     }
 }
 
 pub enum ValidationWarning {
     // entities
-    UnusedMac { at: ConfigPath },
+    UnusedMac { at: ConfigLocation },
 
-    UnusedPublicKey { at: ConfigPath },
+    UnusedPublicKey { at: ConfigLocation },
 
-    UnreachableClient { at: ConfigPath },
+    UnreachableClient { at: ConfigLocation },
 
     // references
-    UnreachableService { at: ConfigPath },
+    UnreachableService { at: ConfigLocation },
 
     // wan
-    UnusedWanZone { at: ConfigPath },
+    UnusedWanZone { at: ConfigLocation },
 }
 
 impl fmt::Display for ValidationWarning {
@@ -367,7 +358,7 @@ impl fmt::Display for ValidationWarning {
 }
 
 impl ValidationWarning {
-    pub fn path(&self) -> &ConfigPath {
+    pub fn path(&self) -> &ConfigLocation {
         match self {
             Self::UnreachableClient { at } => at,
             Self::UnreachableService { at } => at,

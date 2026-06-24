@@ -59,7 +59,7 @@ fn validate_identifier(identifier: &str) -> Result<(), ParseIdentifierError> {
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, PartialOrd, Ord)]
 #[serde(try_from = "String")]
 pub struct Identifier(String);
 

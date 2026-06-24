@@ -3,13 +3,20 @@ use std::collections::HashMap;
 use crate::{
     config::{Config, Service},
     protocol::Protocol,
-    types::{identifier::Identifier, port::PortOrRange},
-    validator::types::{ConfigPath, ValidationError, ValidationReport},
+    types::{
+        config_location::{
+            ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ServiceLoc, VpnClientLoc, VpnLoc,
+            ZoneLoc,
+        },
+        identifier::Identifier,
+        port::PortOrRange,
+    },
+    validator::types::{ValidationError, ValidationReport},
 };
 
 #[derive(Default)]
 struct PortRegistry {
-    by_protocol: HashMap<Protocol, Vec<(PortOrRange, ConfigPath)>>,
+    by_protocol: HashMap<Protocol, Vec<(PortOrRange, ConfigLocation)>>,
 }
 
 const WG_PROTOCOLS: [Protocol; 1] = [Protocol::Udp];
@@ -20,7 +27,7 @@ impl PortRegistry {
         protocols: impl IntoIterator<Item = &'a Protocol>,
         port: PortOrRange,
         report: &mut ValidationReport,
-        make_path: impl Fn() -> ConfigPath,
+        locate: impl Fn() -> ConfigLocation,
     ) {
         for protocol in protocols {
             let ports = self.by_protocol.entry(*protocol).or_default();
@@ -31,7 +38,7 @@ impl PortRegistry {
                 if port.conflicts(*existing_port) {
                     report.errors.push(ValidationError::PortCollision {
                         port,
-                        at: make_path(),
+                        at: locate(),
                         with: path.clone(),
                     });
                     any_collision = true;
@@ -39,7 +46,7 @@ impl PortRegistry {
             }
 
             if !any_collision {
-                ports.push((port, make_path()));
+                ports.push((port, locate()));
             }
         }
     }
@@ -48,12 +55,12 @@ impl PortRegistry {
         &mut self,
         protocols: impl IntoIterator<Item = &'a Protocol>,
         port: PortOrRange,
-        make_path: impl Fn() -> ConfigPath,
+        locate: impl Fn() -> ConfigLocation,
     ) {
         for protocol in protocols {
             let ports = self.by_protocol.entry(*protocol).or_default();
 
-            ports.push((port, make_path()))
+            ports.push((port, locate()))
         }
     }
 }
@@ -62,7 +69,7 @@ fn add_external_service(
     service: &Service,
     port_registers: &mut HashMap<Identifier, PortRegistry>,
     report: &mut ValidationReport,
-    make_path: impl Fn() -> ConfigPath,
+    locate: impl Fn() -> ConfigLocation,
 ) {
     let Some(wan) = &service.wan else { return };
 
@@ -71,7 +78,7 @@ fn add_external_service(
             continue;
         };
 
-        ports.try_insert(&service.proto, service.port.external(), report, &make_path);
+        ports.try_insert(&service.proto, service.port.external(), report, &locate);
     }
 }
 
@@ -82,17 +89,18 @@ fn check_external_port_collisions(config: &Config, report: &mut ValidationReport
         .filter_map(|(node_name, node)| {
             node.wan_zone.as_ref()?;
 
-            let make_path = || ConfigPath::new(["nodes", node_name.as_ref()]);
-
             let mut ports = PortRegistry::default();
 
             ports.insert(&WG_PROTOCOLS, node.listen_port.into(), || {
-                make_path().extend(["listenPort"])
+                ConfigLocation::Node(node_name.clone(), NodeLoc::ListenPort)
             });
 
             for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
                 ports.insert(&WG_PROTOCOLS, vpn_interface.listen_port.into(), || {
-                    make_path().extend(["vpnInterfaces", vpn_interface_name.as_ref(), "listenPort"])
+                    ConfigLocation::Node(
+                        node_name.clone(),
+                        NodeLoc::VpnInterface(vpn_interface_name.clone(), VpnLoc::ListenPort),
+                    )
                 });
             }
 
@@ -101,11 +109,12 @@ fn check_external_port_collisions(config: &Config, report: &mut ValidationReport
         .collect();
 
     for (node_name, node) in &config.nodes {
-        let make_path = || ConfigPath::new(["nodes", node_name.as_ref()]);
-
         for (service_name, service) in &node.services {
             add_external_service(service, &mut port_registers, report, || {
-                make_path().extend(["services", service_name.as_ref(), "port"])
+                ConfigLocation::Node(
+                    node_name.clone(),
+                    NodeLoc::Service(service_name.clone(), ServiceLoc::Port),
+                )
             });
         }
 
@@ -113,15 +122,16 @@ fn check_external_port_collisions(config: &Config, report: &mut ValidationReport
             for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
                 for (service_name, service) in &vpn_interface_client.services {
                     add_external_service(service, &mut port_registers, report, || {
-                        make_path().extend([
-                            "vpnInterfaces",
-                            vpn_interface_name.as_ref(),
-                            "clients",
-                            vpn_interface_client_name.as_ref(),
-                            "services",
-                            service_name.as_ref(),
-                            "port",
-                        ])
+                        ConfigLocation::Node(
+                            node_name.clone(),
+                            NodeLoc::VpnInterface(
+                                vpn_interface_name.clone(),
+                                VpnLoc::Client(
+                                    vpn_interface_client_name.clone(),
+                                    VpnClientLoc::Service(service_name.clone(), ServiceLoc::Port),
+                                ),
+                            ),
+                        )
                     });
                 }
             }
@@ -131,15 +141,16 @@ fn check_external_port_collisions(config: &Config, report: &mut ValidationReport
             for (device_name, device) in &zone.devices {
                 for (service_name, service) in &device.services {
                     add_external_service(service, &mut port_registers, report, || {
-                        make_path().extend([
-                            "zones",
-                            zone_name.as_ref(),
-                            "devices",
-                            device_name.as_ref(),
-                            "services",
-                            service_name.as_ref(),
-                            "port",
-                        ])
+                        ConfigLocation::Node(
+                            node_name.clone(),
+                            NodeLoc::Zone(
+                                zone_name.clone(),
+                                ZoneLoc::Device(
+                                    device_name.clone(),
+                                    DeviceLoc::Service(service_name.clone(), ServiceLoc::Port),
+                                ),
+                            ),
+                        )
                     });
                 }
             }
@@ -149,13 +160,10 @@ fn check_external_port_collisions(config: &Config, report: &mut ValidationReport
     for (client_name, client) in &config.clients {
         for (service_name, service) in &client.services {
             add_external_service(service, &mut port_registers, report, || {
-                ConfigPath::new([
-                    "clients",
-                    client_name.as_ref(),
-                    "services",
-                    service_name.as_ref(),
-                    "port",
-                ])
+                ConfigLocation::Client(
+                    client_name.clone(),
+                    ClientLoc::Service(service_name.clone(), ServiceLoc::Port),
+                )
             });
         }
     }
@@ -167,23 +175,18 @@ fn check_internal_port_collisions(config: &Config, report: &mut ValidationReport
 
         for (service_name, service) in &client.services {
             ports.try_insert(&service.proto, service.port.internal(), report, || {
-                ConfigPath::new([
-                    "clients",
-                    client_name.as_ref(),
-                    "services",
-                    service_name.as_ref(),
-                    "port",
-                ])
+                ConfigLocation::Client(
+                    client_name.clone(),
+                    ClientLoc::Service(service_name.clone(), ServiceLoc::Port),
+                )
             });
         }
     }
 
     for (node_name, node) in &config.nodes {
-        let make_path = || ConfigPath::new(["nodes", node_name.as_ref()]);
-
         let mut node_ports = PortRegistry::default();
         node_ports.try_insert(&WG_PROTOCOLS, node.listen_port.into(), report, || {
-            make_path().extend(["listenPort"])
+            ConfigLocation::Node(node_name.clone(), NodeLoc::ListenPort)
         });
 
         for (zone_name, zone) in &node.zones {
@@ -192,28 +195,32 @@ fn check_internal_port_collisions(config: &Config, report: &mut ValidationReport
 
                 for (service_name, service) in &device.services {
                     ports.try_insert(&service.proto, service.port.internal(), report, || {
-                        make_path().extend([
-                            "zones",
-                            zone_name.as_ref(),
-                            "devices",
-                            device_name.as_ref(),
-                            "services",
-                            service_name.as_ref(),
-                            "port",
-                        ])
+                        ConfigLocation::Node(
+                            node_name.clone(),
+                            NodeLoc::Zone(
+                                zone_name.clone(),
+                                ZoneLoc::Device(
+                                    device_name.clone(),
+                                    DeviceLoc::Service(service_name.clone(), ServiceLoc::Port),
+                                ),
+                            ),
+                        )
                     });
                 }
             }
         }
 
         for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-            let make_path = || make_path().extend(["vpnInterfaces", vpn_interface_name.as_ref()]);
-
             node_ports.try_insert(
                 &WG_PROTOCOLS,
                 vpn_interface.listen_port.into(),
                 report,
-                || make_path().extend(["listenPort"]),
+                || {
+                    ConfigLocation::Node(
+                        node_name.clone(),
+                        NodeLoc::VpnInterface(vpn_interface_name.clone(), VpnLoc::ListenPort),
+                    )
+                },
             );
 
             for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
@@ -221,13 +228,16 @@ fn check_internal_port_collisions(config: &Config, report: &mut ValidationReport
 
                 for (service_name, service) in &vpn_interface_client.services {
                     ports.try_insert(&service.proto, service.port.internal(), report, || {
-                        make_path().extend([
-                            "clients",
-                            vpn_interface_client_name.as_ref(),
-                            "services",
-                            service_name.as_ref(),
-                            "port",
-                        ])
+                        ConfigLocation::Node(
+                            node_name.clone(),
+                            NodeLoc::VpnInterface(
+                                vpn_interface_name.clone(),
+                                VpnLoc::Client(
+                                    vpn_interface_client_name.clone(),
+                                    VpnClientLoc::Service(service_name.clone(), ServiceLoc::Port),
+                                ),
+                            ),
+                        )
                     });
                 }
             }
@@ -235,7 +245,10 @@ fn check_internal_port_collisions(config: &Config, report: &mut ValidationReport
 
         for (service_name, service) in &node.services {
             node_ports.try_insert(&service.proto, service.port.internal(), report, || {
-                make_path().extend(["services", service_name.as_ref(), "port"])
+                ConfigLocation::Node(
+                    node_name.clone(),
+                    NodeLoc::Service(service_name.clone(), ServiceLoc::Port),
+                )
             });
         }
     }

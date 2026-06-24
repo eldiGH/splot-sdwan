@@ -3,8 +3,15 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     config::{Client, Config, Node, ServiceWan, WanResolveError},
     consts,
-    types::{identifier::Identifier, wan_via_target::WanViaTarget},
-    validator::types::{ConfigPath, ValidationError, ValidationReport, ValidationWarning},
+    types::{
+        config_location::{
+            ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ServiceLoc, VpnClientLoc, VpnLoc,
+            WanLoc, ZoneLoc,
+        },
+        identifier::Identifier,
+        wan_via_target::WanViaTarget,
+    },
+    validator::types::{ValidationError, ValidationReport, ValidationWarning},
 };
 
 fn validate_service_wan<'a>(
@@ -13,10 +20,10 @@ fn validate_service_wan<'a>(
     client: Option<&Client>,
     wan_nodes_used: &mut HashSet<&'a Identifier>,
     report: &mut ValidationReport,
-    make_path: impl Fn() -> ConfigPath,
+    locate: impl Fn(ServiceLoc) -> ConfigLocation,
 ) {
     let Some(wan) = service_wan else { return };
-    let make_path = || make_path().extend(["wan", "via"]);
+    let locate = || locate(ServiceLoc::Wan(WanLoc::Via));
 
     for via in &wan.via {
         let node_name = via.node();
@@ -24,7 +31,7 @@ fn validate_service_wan<'a>(
         let Some(node) = nodes.get(node_name) else {
             report.errors.push(ValidationError::InvalidWanVia {
                 node_name: node_name.clone(),
-                at: make_path(),
+                at: locate(),
             });
             continue;
         };
@@ -32,7 +39,7 @@ fn validate_service_wan<'a>(
         if node.wan_zone.is_none() {
             report.errors.push(ValidationError::WanViaNodeNoWanZone {
                 node_name: node_name.clone(),
-                at: make_path(),
+                at: locate(),
             });
         }
 
@@ -45,7 +52,7 @@ fn validate_service_wan<'a>(
                         ValidationError::WanViaAmbiguous {
                             node: node_name.clone(),
                             candidates,
-                            at: make_path(),
+                            at: locate(),
                         }
                     }
 
@@ -53,20 +60,20 @@ fn validate_service_wan<'a>(
                         ValidationError::WanViaNetworkMissing {
                             node: node_name.clone(),
                             network,
-                            at: make_path(),
+                            at: locate(),
                         }
                     }
 
                     WanResolveError::Unreachable => ValidationError::WanViaUnreachable {
                         node: node_name.clone(),
-                        at: make_path(),
+                        at: locate(),
                     },
 
                     WanResolveError::QualifiedClientNotOnNetwork { network } => {
                         ValidationError::WanViaClientNotOnNetwork {
                             node: node_name.clone(),
                             network,
-                            at: make_path(),
+                            at: locate(),
                         }
                     }
                 };
@@ -76,7 +83,7 @@ fn validate_service_wan<'a>(
         } else if matches!(via, WanViaTarget::Qualified(_)) {
             report
                 .errors
-                .push(ValidationError::WanViaQualifiedOnNonClient { at: make_path() });
+                .push(ValidationError::WanViaQualifiedOnNonClient { at: locate() });
         }
     }
 }
@@ -92,21 +99,17 @@ fn check_services_wan(config: &Config, report: &mut ValidationReport) {
                 Some(client),
                 &mut wan_nodes_used,
                 report,
-                || {
-                    ConfigPath::new([
-                        "clients",
-                        client_name.as_ref(),
-                        "services",
-                        service_name.as_ref(),
-                    ])
+                |service_loc| {
+                    ConfigLocation::Client(
+                        client_name.clone(),
+                        ClientLoc::Service(service_name.clone(), service_loc),
+                    )
                 },
             );
         }
     }
 
     for (node_name, node) in &config.nodes {
-        let make_path = || ConfigPath::new(["nodes", node_name.as_ref()]);
-
         for (service_name, service) in &node.services {
             validate_service_wan(
                 &service.wan,
@@ -114,7 +117,12 @@ fn check_services_wan(config: &Config, report: &mut ValidationReport) {
                 None,
                 &mut wan_nodes_used,
                 report,
-                || make_path().extend(["services", service_name.as_ref()]),
+                |service_loc| {
+                    ConfigLocation::Node(
+                        node_name.clone(),
+                        NodeLoc::Service(service_name.clone(), service_loc),
+                    )
+                },
             );
         }
 
@@ -127,15 +135,17 @@ fn check_services_wan(config: &Config, report: &mut ValidationReport) {
                         None,
                         &mut wan_nodes_used,
                         report,
-                        || {
-                            make_path().extend([
-                                "zones",
-                                zone_name.as_ref(),
-                                "devices",
-                                device_name.as_ref(),
-                                "services",
-                                service_name.as_ref(),
-                            ])
+                        |service_loc| {
+                            ConfigLocation::Node(
+                                node_name.clone(),
+                                NodeLoc::Zone(
+                                    zone_name.clone(),
+                                    ZoneLoc::Device(
+                                        device_name.clone(),
+                                        DeviceLoc::Service(service_name.clone(), service_loc),
+                                    ),
+                                ),
+                            )
                         },
                     )
                 }
@@ -151,15 +161,17 @@ fn check_services_wan(config: &Config, report: &mut ValidationReport) {
                         None,
                         &mut wan_nodes_used,
                         report,
-                        || {
-                            make_path().extend([
-                                "vpnInterfaces",
-                                vpn_interface_name.as_ref(),
-                                "clients",
-                                vpn_interface_client_name.as_ref(),
-                                "services",
-                                service_name.as_ref(),
-                            ])
+                        |service_loc| {
+                            ConfigLocation::Node(
+                                node_name.clone(),
+                                NodeLoc::VpnInterface(
+                                    vpn_interface_name.clone(),
+                                    VpnLoc::Client(
+                                        vpn_interface_client_name.clone(),
+                                        VpnClientLoc::Service(service_name.clone(), service_loc),
+                                    ),
+                                ),
+                            )
                         },
                     );
                 }
@@ -170,7 +182,7 @@ fn check_services_wan(config: &Config, report: &mut ValidationReport) {
     for (node_name, node) in &config.nodes {
         if node.wan_zone.is_some() && !wan_nodes_used.contains(node_name) {
             report.warnings.push(ValidationWarning::UnusedWanZone {
-                at: ConfigPath::new(["nodes", node_name.as_ref(), "wanZone"]),
+                at: ConfigLocation::Node(node_name.clone(), NodeLoc::WanZone),
             })
         }
     }
@@ -182,13 +194,11 @@ fn check_wan_zone(config: &Config, report: &mut ValidationReport) {
             continue;
         };
 
-        let make_path = || ConfigPath::new(["nodes", node_name.as_ref()]);
-        let at = || make_path().extend(["wanZone"]);
+        let at = || ConfigLocation::Node(node_name.clone(), NodeLoc::WanZone);
 
         if wan_zone == consts::MESH_INTERFACE_NAME {
-            report.errors.push(ValidationError::WanZoneNameCollision {
+            report.errors.push(ValidationError::WanZoneReservedName {
                 wan_zone: wan_zone.clone(),
-                with: ConfigPath::new(["<splot mesh interface>"]),
                 at: at(),
             });
             continue;
@@ -197,7 +207,10 @@ fn check_wan_zone(config: &Config, report: &mut ValidationReport) {
         if node.zones.contains_key(wan_zone) {
             report.errors.push(ValidationError::WanZoneNameCollision {
                 wan_zone: wan_zone.clone(),
-                with: make_path().extend(["zones", wan_zone.as_ref()]),
+                with: ConfigLocation::Node(
+                    node_name.clone(),
+                    NodeLoc::Zone(wan_zone.clone(), ZoneLoc::Root),
+                ),
                 at: at(),
             });
         }
@@ -205,7 +218,10 @@ fn check_wan_zone(config: &Config, report: &mut ValidationReport) {
         if node.vpn_interfaces.contains_key(wan_zone) {
             report.errors.push(ValidationError::WanZoneNameCollision {
                 wan_zone: wan_zone.clone(),
-                with: make_path().extend(["vpnInterfaces", wan_zone.as_ref()]),
+                with: ConfigLocation::Node(
+                    node_name.clone(),
+                    NodeLoc::VpnInterface(wan_zone.clone(), VpnLoc::Root),
+                ),
                 at: at(),
             });
         }

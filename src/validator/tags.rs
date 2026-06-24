@@ -2,8 +2,14 @@ use std::collections::HashSet;
 
 use crate::{
     config::Config,
-    types::{allow_from_ref::AllowFromRef, identifier::Identifier},
-    validator::types::{ConfigPath, ValidationError, ValidationReport},
+    types::{
+        allow_from_ref::AllowFromRef,
+        config_location::{
+            ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, VpnClientLoc, VpnLoc, ZoneLoc,
+        },
+        identifier::Identifier,
+    },
+    validator::types::{ValidationError, ValidationReport},
 };
 
 fn add_tags<'a>(
@@ -11,7 +17,7 @@ fn add_tags<'a>(
     tags_set: &mut HashSet<AllowFromRef>,
     report: &mut ValidationReport,
     global_refs: &HashSet<AllowFromRef>,
-    make_path: impl Fn() -> ConfigPath,
+    locate: impl Fn() -> ConfigLocation,
 ) {
     for tag in tags {
         let reference = AllowFromRef::Bare(tag.clone());
@@ -19,10 +25,9 @@ fn add_tags<'a>(
             let AllowFromRef::Bare(tag) = reference else {
                 unreachable!()
             };
-            report.errors.push(ValidationError::TagWithNameCollision {
-                tag,
-                at: make_path(),
-            });
+            report
+                .errors
+                .push(ValidationError::TagWithNameCollision { tag, at: locate() });
             continue;
         }
 
@@ -39,36 +44,42 @@ pub(super) fn validate_tags(
 
     for (client_name, client) in &config.clients {
         add_tags(&client.tags, &mut tags, report, global_refs, || {
-            ConfigPath::new(["clients", client_name.as_ref(), "tags"])
+            ConfigLocation::Client(client_name.clone(), ClientLoc::Tags)
         });
     }
 
     for (node_name, node) in &config.nodes {
-        let make_path = || ConfigPath::new(["nodes", node_name.as_ref()]);
-
         add_tags(&node.tags, &mut tags, report, global_refs, || {
-            make_path().extend(["tags"])
+            ConfigLocation::Node(node_name.clone(), NodeLoc::Tags)
         });
 
         for (zone_name, zone) in &node.zones {
-            let make_path = || make_path().extend(["zones", zone_name.as_ref()]);
-
             add_tags(&zone.tags, &mut tags, report, global_refs, || {
-                make_path().extend(["tags"])
+                ConfigLocation::Node(
+                    node_name.clone(),
+                    NodeLoc::Zone(zone_name.clone(), ZoneLoc::Tags),
+                )
             });
 
             for (device_name, device) in &zone.devices {
                 add_tags(&device.tags, &mut tags, report, global_refs, || {
-                    make_path().extend(["devices", device_name.as_ref(), "tags"])
+                    ConfigLocation::Node(
+                        node_name.clone(),
+                        NodeLoc::Zone(
+                            zone_name.clone(),
+                            ZoneLoc::Device(device_name.clone(), DeviceLoc::Tags),
+                        ),
+                    )
                 });
             }
         }
 
         for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-            let make_path = || make_path().extend(["vpnInterfaces", vpn_interface_name.as_ref()]);
-
             add_tags(&vpn_interface.tags, &mut tags, report, global_refs, || {
-                make_path().extend(["tags"])
+                ConfigLocation::Node(
+                    node_name.clone(),
+                    NodeLoc::VpnInterface(vpn_interface_name.clone(), VpnLoc::Tags),
+                )
             });
 
             for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
@@ -77,7 +88,18 @@ pub(super) fn validate_tags(
                     &mut tags,
                     report,
                     global_refs,
-                    || make_path().extend(["clients", vpn_interface_client_name.as_ref(), "tags"]),
+                    || {
+                        ConfigLocation::Node(
+                            node_name.clone(),
+                            NodeLoc::VpnInterface(
+                                vpn_interface_name.clone(),
+                                VpnLoc::Client(
+                                    vpn_interface_client_name.clone(),
+                                    VpnClientLoc::Tags,
+                                ),
+                            ),
+                        )
+                    },
                 );
             }
         }

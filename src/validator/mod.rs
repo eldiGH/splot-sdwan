@@ -41,7 +41,7 @@ pub fn validate_config(config: &Config) -> ValidationReport {
 #[cfg(test)]
 mod tests {
     use crate::{
-        test_support::{has_error, has_warning, report},
+        test_support::{error_at, has_error, has_warning, report, warning_at},
         validator::types::{ValidationError, ValidationWarning},
     };
 
@@ -147,9 +147,48 @@ nodes:
             macs: AA:BB:CC:DD:EE:FF
 ",
         );
-        assert!(has_error(
+        // The device "printer" (inside zone "printer") is the second use of the
+        // name, so it's the one flagged — at its own nested location.
+        assert!(error_at(
             &r,
+            "nodes.Home.zones.printer.devices.printer",
             |e| matches!(e, ValidationError::LocalNameCollision { name, .. } if name == "printer")
+        ));
+    }
+
+    #[test]
+    fn names_vpn_client_collision_location() {
+        // A zone and a VPN-interface client share the local name "shared". Zones
+        // are processed before VPN interfaces, so the VPN client is the one
+        // flagged — and its location must be the deep
+        // vpnInterfaces.*.clients.* path, not a bare top-level `clients.*`
+        // (the copy-paste trap from the global-client form).
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      shared:
+        address: 192.168.1.1/24
+    vpnInterfaces:
+      vpn:
+        listenPort: 51821
+        address: 10.8.1.1/24
+        clients:
+          shared:
+            publicKey: BBBB
+            ip: 10.8.1.10
+",
+        );
+        assert!(error_at(
+            &r,
+            "nodes.Home.vpnInterfaces.vpn.clients.shared",
+            |e| matches!(e, ValidationError::LocalNameCollision { name, .. } if name == "shared")
         ));
     }
 
@@ -669,10 +708,11 @@ nodes:
             macs: AA:BB:CC:DD:EE:FF
 ",
         );
-        assert!(has_error(&r, |e| matches!(
-            e,
-            ValidationError::IpOutsideSubnet { .. }
-        )));
+        assert!(error_at(
+            &r,
+            "nodes.Home.zones.lan.devices.printer.ip",
+            |e| matches!(e, ValidationError::IpOutsideSubnet { .. })
+        ));
     }
 
     #[test]
@@ -1111,10 +1151,73 @@ nodes:
         address: 192.168.1.1/24
 ",
         );
-        assert!(has_error(
+        // `at` points at the wanZone declaration; `with` at the conflicting zone.
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::WanZoneNameCollision { wan_zone, with, at }
+                if wan_zone == "lan"
+                    && with.to_string() == "nodes.Home.zones.lan"
+                    && at.to_string() == "nodes.Home.wanZone"
+        )));
+    }
+
+    #[test]
+    fn wan_zone_collides_with_vpn_interface() {
+        // wanZone "vpn" collides with a VPN interface named "vpn" on the same
+        // node — `with` must point at the VPN interface, not a zone.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: vpn
+    vpnInterfaces:
+      vpn:
+        listenPort: 51821
+        address: 10.8.1.1/24
+        clients: {}
+",
+        );
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::WanZoneNameCollision { wan_zone, with, at }
+                if wan_zone == "vpn"
+                    && with.to_string() == "nodes.Home.vpnInterfaces.vpn"
+                    && at.to_string() == "nodes.Home.wanZone"
+        )));
+    }
+
+    #[test]
+    fn wan_zone_reserved_mesh_name() {
+        // wanZone "mesh" collides with the splot-managed mesh interface name — a
+        // reserved-name error (no config location to point `with` at), distinct
+        // from a collision with the operator's own zone or VPN interface.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: mesh
+",
+        );
+        assert!(error_at(
             &r,
-            |e| matches!(e, ValidationError::WanZoneNameCollision { wan_zone, .. } if wan_zone == "lan")
+            "nodes.Home.wanZone",
+            |e| matches!(e, ValidationError::WanZoneReservedName { wan_zone, .. } if wan_zone == "mesh")
         ));
+        // ...and it must NOT be misreported as an ordinary name collision.
+        assert!(!has_error(&r, |e| matches!(
+            e,
+            ValidationError::WanZoneNameCollision { .. }
+        )));
     }
 
     #[test]
@@ -1132,7 +1235,7 @@ nodes:
     wanZone: wan
 ",
         );
-        assert!(has_warning(&r, |w| matches!(
+        assert!(warning_at(&r, "nodes.Home.wanZone", |w| matches!(
             w,
             ValidationWarning::UnusedWanZone { .. }
         )));
