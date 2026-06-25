@@ -1,13 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    config::{Client, Config, Node, ServiceWan, WanResolveError},
+    config::{Client, Config, Node, ServiceHost, ServiceWan, WanResolveError},
     consts,
     types::{
-        config_location::{
-            ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ServiceLoc, VpnClientLoc, VpnLoc,
-            WanLoc, ZoneLoc,
-        },
+        config_location::{ConfigLocation, NodeLoc, ServiceLoc, VpnLoc, WanLoc, ZoneLoc},
         identifier::Identifier,
         wan_via_target::WanViaTarget,
     },
@@ -91,92 +88,20 @@ fn validate_service_wan<'a>(
 fn check_services_wan(config: &Config, report: &mut ValidationReport) {
     let mut wan_nodes_used = HashSet::new();
 
-    for (client_name, client) in &config.clients {
-        for (service_name, service) in &client.services {
-            validate_service_wan(
-                &service.wan,
-                &config.nodes,
-                Some(client),
-                &mut wan_nodes_used,
-                report,
-                |service_loc| {
-                    ConfigLocation::Client(
-                        client_name.clone(),
-                        ClientLoc::Service(service_name.clone(), service_loc),
-                    )
-                },
-            );
-        }
-    }
+    for (service, host) in config.services() {
+        let client = match host {
+            ServiceHost::Client { client_name, .. } => config.clients.get(client_name),
+            _ => None,
+        };
 
-    for (node_name, node) in &config.nodes {
-        for (service_name, service) in &node.services {
-            validate_service_wan(
-                &service.wan,
-                &config.nodes,
-                None,
-                &mut wan_nodes_used,
-                report,
-                |service_loc| {
-                    ConfigLocation::Node(
-                        node_name.clone(),
-                        NodeLoc::Service(service_name.clone(), service_loc),
-                    )
-                },
-            );
-        }
-
-        for (zone_name, zone) in &node.zones {
-            for (device_name, device) in &zone.devices {
-                for (service_name, service) in &device.services {
-                    validate_service_wan(
-                        &service.wan,
-                        &config.nodes,
-                        None,
-                        &mut wan_nodes_used,
-                        report,
-                        |service_loc| {
-                            ConfigLocation::Node(
-                                node_name.clone(),
-                                NodeLoc::Zone(
-                                    zone_name.clone(),
-                                    ZoneLoc::Device(
-                                        device_name.clone(),
-                                        DeviceLoc::Service(service_name.clone(), service_loc),
-                                    ),
-                                ),
-                            )
-                        },
-                    )
-                }
-            }
-        }
-
-        for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-            for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
-                for (service_name, service) in &vpn_interface_client.services {
-                    validate_service_wan(
-                        &service.wan,
-                        &config.nodes,
-                        None,
-                        &mut wan_nodes_used,
-                        report,
-                        |service_loc| {
-                            ConfigLocation::Node(
-                                node_name.clone(),
-                                NodeLoc::VpnInterface(
-                                    vpn_interface_name.clone(),
-                                    VpnLoc::Client(
-                                        vpn_interface_client_name.clone(),
-                                        VpnClientLoc::Service(service_name.clone(), service_loc),
-                                    ),
-                                ),
-                            )
-                        },
-                    );
-                }
-            }
-        }
+        validate_service_wan(
+            &service.wan,
+            &config.nodes,
+            client,
+            &mut wan_nodes_used,
+            report,
+            |service_loc| host.to_location(service_loc),
+        );
     }
 
     for (node_name, node) in &config.nodes {

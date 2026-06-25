@@ -6,6 +6,10 @@ use crate::{
     protocol::Protocol,
     types::{
         allow_from_ref::AllowFromRef,
+        config_location::{
+            ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ServiceLoc, VpnClientLoc, VpnLoc,
+            ZoneLoc,
+        },
         identifier::{Identifier, NestedIdentifier},
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
@@ -354,6 +358,168 @@ impl Config {
         self.nodes
             .iter()
             .find_map(|(name, node)| (node.public_key == pubkey).then_some(name))
+    }
+
+    pub fn services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
+        self.nodes_own_services()
+            .chain(self.vpn_interfaces_clients_services())
+            .chain(self.devices_services())
+            .chain(self.clients_services())
+    }
+
+    fn nodes_own_services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
+        self.nodes.iter().flat_map(|(node_name, node)| {
+            node.services.iter().map(|(service_name, service)| {
+                (
+                    service,
+                    ServiceHost::Node {
+                        node_name,
+                        service_name,
+                    },
+                )
+            })
+        })
+    }
+
+    fn devices_services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
+        self.nodes.iter().flat_map(|(node_name, node)| {
+            node.zones.iter().flat_map(|(zone_name, zone)| {
+                zone.devices.iter().flat_map(|(device_name, device)| {
+                    device.services.iter().map(|(service_name, service)| {
+                        (
+                            service,
+                            ServiceHost::Device {
+                                node_name,
+                                zone_name,
+                                device_name,
+                                service_name,
+                            },
+                        )
+                    })
+                })
+            })
+        })
+    }
+
+    fn vpn_interfaces_clients_services<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
+        self.nodes.iter().flat_map(|(node_name, node)| {
+            node.vpn_interfaces
+                .iter()
+                .flat_map(|(vpn_interface_name, vpn_interface)| {
+                    vpn_interface.clients.iter().flat_map(
+                        |(vpn_interface_client_name, vpn_interface_client)| {
+                            vpn_interface_client
+                                .services
+                                .iter()
+                                .map(|(service_name, service)| {
+                                    (
+                                        service,
+                                        ServiceHost::VpnInterfaceClient {
+                                            node_name,
+                                            vpn_interface_name,
+                                            vpn_interface_client_name,
+                                            service_name,
+                                        },
+                                    )
+                                })
+                        },
+                    )
+                })
+        })
+    }
+
+    fn clients_services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
+        self.clients.iter().flat_map(|(client_name, client)| {
+            client.services.iter().map(|(service_name, service)| {
+                (
+                    service,
+                    ServiceHost::Client {
+                        client_name,
+                        service_name,
+                    },
+                )
+            })
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum ServiceHost<'a> {
+    Node {
+        node_name: &'a Identifier,
+        service_name: &'a Identifier,
+    },
+    Device {
+        node_name: &'a Identifier,
+        zone_name: &'a Identifier,
+        device_name: &'a Identifier,
+        service_name: &'a Identifier,
+    },
+    VpnInterfaceClient {
+        node_name: &'a Identifier,
+        vpn_interface_name: &'a Identifier,
+        vpn_interface_client_name: &'a Identifier,
+        service_name: &'a Identifier,
+    },
+    Client {
+        client_name: &'a Identifier,
+        service_name: &'a Identifier,
+    },
+}
+
+impl ServiceHost<'_> {
+    pub fn to_location(self, leaf: ServiceLoc) -> ConfigLocation {
+        match self {
+            Self::Node {
+                node_name,
+                service_name,
+            } => ConfigLocation::Node(
+                node_name.clone(),
+                NodeLoc::Service(service_name.clone(), leaf),
+            ),
+
+            Self::Device {
+                node_name,
+                zone_name,
+                device_name,
+                service_name,
+            } => ConfigLocation::Node(
+                node_name.clone(),
+                NodeLoc::Zone(
+                    zone_name.clone(),
+                    ZoneLoc::Device(
+                        device_name.clone(),
+                        DeviceLoc::Service(service_name.clone(), leaf),
+                    ),
+                ),
+            ),
+
+            Self::VpnInterfaceClient {
+                node_name,
+                vpn_interface_name,
+                vpn_interface_client_name,
+                service_name,
+            } => ConfigLocation::Node(
+                node_name.clone(),
+                NodeLoc::VpnInterface(
+                    vpn_interface_name.clone(),
+                    VpnLoc::Client(
+                        vpn_interface_client_name.clone(),
+                        VpnClientLoc::Service(service_name.clone(), leaf),
+                    ),
+                ),
+            ),
+
+            Self::Client {
+                client_name,
+                service_name,
+            } => ConfigLocation::Client(
+                client_name.clone(),
+                ClientLoc::Service(service_name.clone(), leaf),
+            ),
+        }
     }
 }
 

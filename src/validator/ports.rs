@@ -108,64 +108,10 @@ fn check_external_port_collisions(config: &Config, report: &mut ValidationReport
         })
         .collect();
 
-    for (node_name, node) in &config.nodes {
-        for (service_name, service) in &node.services {
-            add_external_service(service, &mut port_registers, report, || {
-                ConfigLocation::Node(
-                    node_name.clone(),
-                    NodeLoc::Service(service_name.clone(), ServiceLoc::Port),
-                )
-            });
-        }
-
-        for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-            for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
-                for (service_name, service) in &vpn_interface_client.services {
-                    add_external_service(service, &mut port_registers, report, || {
-                        ConfigLocation::Node(
-                            node_name.clone(),
-                            NodeLoc::VpnInterface(
-                                vpn_interface_name.clone(),
-                                VpnLoc::Client(
-                                    vpn_interface_client_name.clone(),
-                                    VpnClientLoc::Service(service_name.clone(), ServiceLoc::Port),
-                                ),
-                            ),
-                        )
-                    });
-                }
-            }
-        }
-
-        for (zone_name, zone) in &node.zones {
-            for (device_name, device) in &zone.devices {
-                for (service_name, service) in &device.services {
-                    add_external_service(service, &mut port_registers, report, || {
-                        ConfigLocation::Node(
-                            node_name.clone(),
-                            NodeLoc::Zone(
-                                zone_name.clone(),
-                                ZoneLoc::Device(
-                                    device_name.clone(),
-                                    DeviceLoc::Service(service_name.clone(), ServiceLoc::Port),
-                                ),
-                            ),
-                        )
-                    });
-                }
-            }
-        }
-    }
-
-    for (client_name, client) in &config.clients {
-        for (service_name, service) in &client.services {
-            add_external_service(service, &mut port_registers, report, || {
-                ConfigLocation::Client(
-                    client_name.clone(),
-                    ClientLoc::Service(service_name.clone(), ServiceLoc::Port),
-                )
-            });
-        }
+    for (service, host) in config.services() {
+        add_external_service(service, &mut port_registers, report, || {
+            host.to_location(ServiceLoc::Port)
+        });
     }
 }
 
