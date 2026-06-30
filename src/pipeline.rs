@@ -29,6 +29,19 @@ impl UciPipeline {
     }
 
     pub fn run(&self, config: &Config, own_name: &Identifier) {
+        let commands = self.commands(config, own_name);
+        UciExecutor::batch(commands);
+    }
+
+    pub fn print(&self, config: &Config, own_name: &Identifier) {
+        let commands = self.commands(config, own_name);
+
+        for command in commands {
+            println!("{command}");
+        }
+    }
+
+    fn commands(&self, config: &Config, own_name: &Identifier) -> Vec<UciBatchCommand> {
         let config_files_used: Vec<&'static str> = self.get_files_used().collect();
 
         let mut commands = generate_delete_commands(&config_files_used);
@@ -41,7 +54,7 @@ impl UciPipeline {
             commands.push(UciBatchCommand::commit(file));
         }
 
-        UciExecutor::batch(commands);
+        commands
     }
 
     fn get_files_used(&self) -> impl Iterator<Item = &'static str> {

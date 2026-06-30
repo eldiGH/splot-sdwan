@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, fs::File, iter, net::Ipv4Addr};
+use std::{collections::HashMap, fmt::Display, fs::File, iter, net::Ipv4Addr, path::Path};
 
 use serde::Deserialize;
 
@@ -338,8 +338,8 @@ impl Display for ConfigError {
 }
 
 impl Config {
-    pub fn parse_file(path: &str) -> Result<Self, ConfigError> {
-        log::info!("Loading config from '{path}'");
+    pub fn parse_file(path: &Path) -> Result<Self, ConfigError> {
+        log::info!("Loading config from '{}'", path.display());
 
         let file = File::open(path)?;
         let config: Self = serde_yml::from_reader(file)?;
