@@ -240,7 +240,7 @@ impl UciManager for NetworkManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test_support::config, uci::UciBatchCommand};
+    use crate::{splot_config::SplotConfig, test_support::config, uci::UciBatchCommand};
 
     const FIXTURE: &str = "
 meshNetwork: 10.100.0.0/24
@@ -269,13 +269,20 @@ nodes:
         cmds.iter().any(|c| c.to_string().contains(s))
     }
 
+    const MESH_KEY: &str = "MESH_PRIVATE_AAAA";
+    const VPN_A_KEY: &str = "VPN_A_PRIVATE_BBBB";
+
     fn cmds() -> Vec<UciBatchCommand> {
         let cfg = config(FIXTURE);
+        let own_name: Identifier = "Home".parse().unwrap();
+        let splot_config = SplotConfig::for_tests(MESH_KEY, &[("vpn_a", VPN_A_KEY)]);
+
         NetworkManager.generate_commands(
             &cfg,
             &NodeContext {
-                own_name: &"Home".parse().unwrap(),
-                private_key: "",
+                own_node: cfg.nodes.get(&own_name).unwrap(),
+                own_name: &own_name,
+                splot_config: &splot_config,
             },
         )
     }
@@ -299,5 +306,19 @@ nodes:
     #[test]
     fn vpn_interface_section_present() {
         assert!(has_cmd(&cmds(), "network.spl_vpn_a='interface'"));
+    }
+
+    #[test]
+    fn mesh_interface_uses_mesh_private_key() {
+        let c = cmds();
+        assert!(has_cmd(&c, &format!("spl_mesh.private_key='{MESH_KEY}'")));
+        assert!(!has_cmd(&c, &format!("spl_mesh.private_key='{VPN_A_KEY}'")));
+    }
+
+    #[test]
+    fn vpn_interface_uses_own_private_key() {
+        let c = cmds();
+        assert!(has_cmd(&c, &format!("spl_vpn_a.private_key='{VPN_A_KEY}'")));
+        assert!(!has_cmd(&c, &format!("spl_vpn_a.private_key='{MESH_KEY}'")));
     }
 }

@@ -118,7 +118,9 @@ impl UciManager for DhcpManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{managers::UciManager, test_support::config, uci::UciBatchCommand};
+    use crate::{
+        managers::UciManager, splot_config::SplotConfig, test_support::config, uci::UciBatchCommand,
+    };
 
     const FIXTURE: &str = "
 meshNetwork: 10.100.0.0/24
@@ -165,11 +167,15 @@ clients:
 
     fn cmds() -> Vec<UciBatchCommand> {
         let cfg = config(FIXTURE);
+        let own_name: Identifier = "Home".parse().unwrap();
+        let splot_config = SplotConfig::for_tests("AAAA", &[]);
+
         DhcpManager.generate_commands(
             &cfg,
             &NodeContext {
-                own_name: &"Home".parse().unwrap(),
-                private_key: "",
+                own_node: cfg.nodes.get(&own_name).unwrap(),
+                own_name: &own_name,
+                splot_config: &splot_config,
             },
         )
     }

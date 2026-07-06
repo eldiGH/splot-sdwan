@@ -202,4 +202,40 @@ mod tests {
         let cmd = UciBatchCommand::set("network.spl_x.name", "hello world");
         assert_eq!(render(&cmd), "set network.spl_x.name='hello world'");
     }
+
+    #[test]
+    fn optional_passes_value_through() {
+        let result = optional(Ok("value".to_owned()));
+        assert!(matches!(result, Ok(Some(v)) if v == "value"));
+    }
+
+    #[test]
+    fn optional_entry_not_found_becomes_none() {
+        let result = optional(Err(Error::Failed {
+            code: Some(1),
+            stderr: ENTRY_NOT_FOUND.to_owned(),
+        }));
+        assert!(matches!(result, Ok(None)));
+    }
+
+    #[test]
+    fn optional_other_failure_stays_err() {
+        // A parse error must NOT be classified as absence — a corrupt config
+        // file must never look like a fresh install.
+        let result = optional(Err(Error::Failed {
+            code: Some(1),
+            stderr: "uci: Parse error (invalid command) at line 3, byte 0".to_owned(),
+        }));
+        assert!(matches!(result, Err(Error::Failed { .. })));
+    }
+
+    #[test]
+    fn optional_stderr_containing_not_found_is_not_none() {
+        // Only the exact message counts; a superstring must stay an error.
+        let result = optional(Err(Error::Failed {
+            code: Some(1),
+            stderr: format!("{ENTRY_NOT_FOUND}\nuci: Parse error"),
+        }));
+        assert!(matches!(result, Err(Error::Failed { .. })));
+    }
 }

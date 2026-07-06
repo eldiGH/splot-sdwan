@@ -81,13 +81,10 @@ nodes:
         clients: {}
 ";
 
-    fn id(s: &str) -> Identifier {
-        s.parse().unwrap()
-    }
-
     fn zones() -> Vec<FirewallZone> {
         let cfg = config(FIXTURE);
-        get_firewall_zones(&cfg, &id("Home"))
+        let own_name: crate::types::identifier::Identifier = "Home".parse().unwrap();
+        get_firewall_zones(cfg.nodes.get(&own_name).unwrap())
     }
 
     #[test]

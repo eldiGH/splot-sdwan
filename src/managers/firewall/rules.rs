@@ -297,7 +297,8 @@ pub fn get_firewall_egress_rules(
 mod tests {
     use super::*;
     use crate::{
-        managers::firewall::tag_resolution::build_tags_resolution_map, test_support::config,
+        managers::firewall::tag_resolution::build_tags_resolution_map, splot_config::SplotConfig,
+        test_support::config,
     };
 
     fn id(s: &str) -> Identifier {
@@ -306,8 +307,19 @@ mod tests {
 
     fn ingress(yaml: &str, own: &str) -> Vec<FirewallRule> {
         let cfg = config(yaml);
-        let tags = build_tags_resolution_map(&cfg, &id(own));
-        get_firewall_ingress_rules(&cfg, &id(own), &tags)
+        let own_name = id(own);
+        let tags = build_tags_resolution_map(&cfg, &own_name);
+        let splot_config = SplotConfig::for_tests("AAAA", &[]);
+
+        get_firewall_ingress_rules(
+            &cfg,
+            &NodeContext {
+                own_node: cfg.nodes.get(&own_name).unwrap(),
+                own_name: &own_name,
+                splot_config: &splot_config,
+            },
+            &tags,
+        )
     }
 
     #[test]

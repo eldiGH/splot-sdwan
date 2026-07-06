@@ -116,3 +116,18 @@ impl SplotConfig {
         &self.vpn_interface_keys
     }
 }
+
+#[cfg(test)]
+impl SplotConfig {
+    /// Test-only constructor bypassing uci — fields are private so that a real
+    /// `SplotConfig` can only come from `load()`, which validates the keys.
+    pub(crate) fn for_tests(mesh_key: &str, vpn_interface_keys: &[(&str, &str)]) -> Self {
+        Self {
+            mesh_key: mesh_key.to_owned(),
+            vpn_interface_keys: vpn_interface_keys
+                .iter()
+                .map(|(name, key)| (name.parse().unwrap(), (*key).to_owned()))
+                .collect(),
+        }
+    }
+}

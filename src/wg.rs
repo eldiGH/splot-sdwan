@@ -71,3 +71,52 @@ pub fn validate_private_key(private_key: &str) -> Result<(), PrivateKeyValidatio
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 43 base64 chars + '=' padding — the shape of a real wg key.
+    const VALID_KEY: &str = "abcDEF0123456789+/abcDEF0123456789+/abcDEF0=";
+
+    #[test]
+    fn valid_key_passes() {
+        assert!(validate_private_key(VALID_KEY).is_ok());
+    }
+
+    #[test]
+    fn empty_key_rejected() {
+        assert!(matches!(
+            validate_private_key(""),
+            Err(PrivateKeyValidationError::Empty)
+        ));
+    }
+
+    #[test]
+    fn wrong_length_rejected() {
+        assert!(matches!(
+            validate_private_key("tooshort="),
+            Err(PrivateKeyValidationError::InvalidLen)
+        ));
+    }
+
+    #[test]
+    fn missing_padding_rejected() {
+        // Right length, but no trailing '='.
+        let key = "A".repeat(44);
+        assert!(matches!(
+            validate_private_key(&key),
+            Err(PrivateKeyValidationError::InvalidChars)
+        ));
+    }
+
+    #[test]
+    fn invalid_chars_rejected() {
+        // Right length and padding, but '!' is not base64.
+        let key = format!("{}=", "!".repeat(43));
+        assert!(matches!(
+            validate_private_key(&key),
+            Err(PrivateKeyValidationError::InvalidChars)
+        ));
+    }
+}
