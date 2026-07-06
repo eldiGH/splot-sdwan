@@ -35,6 +35,8 @@ impl UciBatchCommand {
         Self::Commit(Some(config.into()))
     }
 
+    /// Display copy with secret values masked — never feed the result to `batch`:
+    /// it is a valid command that would overwrite the real value with the mask.
     pub fn redacted(&self) -> Self {
         if let Self::Set(path, ..) = self
             && path.ends_with(".private_key")
@@ -247,5 +249,19 @@ mod tests {
             stderr: format!("{ENTRY_NOT_FOUND}\nuci: Parse error"),
         }));
         assert!(matches!(result, Err(Error::Failed { .. })));
+    }
+
+    #[test]
+    fn redacted_masks_private_key_value() {
+        let cmd = UciBatchCommand::set("network.spl_mesh.private_key", "SECRET_AAAA");
+        let rendered = cmd.redacted().to_string();
+        assert!(rendered.contains("<redacted>"));
+        assert!(!rendered.contains("SECRET_AAAA"));
+    }
+
+    #[test]
+    fn redacted_leaves_other_commands_unchanged() {
+        let cmd = UciBatchCommand::set("network.spl_mesh.proto", "wireguard");
+        assert_eq!(cmd.redacted().to_string(), cmd.to_string());
     }
 }
