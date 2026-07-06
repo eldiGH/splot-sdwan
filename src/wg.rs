@@ -39,3 +39,35 @@ pub fn get_pubkey(private_key: &str) -> String {
 
     String::from_utf8(buf).unwrap().trim_end().to_owned()
 }
+
+#[derive(thiserror::Error, Debug)]
+pub enum PrivateKeyValidationError {
+    #[error("private key cannot be empty")]
+    Empty,
+    #[error("private key has invalid length")]
+    InvalidLen,
+    #[error("private key consists of invalid chars")]
+    InvalidChars,
+}
+
+pub fn validate_private_key(private_key: &str) -> Result<(), PrivateKeyValidationError> {
+    if private_key.is_empty() {
+        return Err(PrivateKeyValidationError::Empty);
+    }
+
+    let bytes = private_key.as_bytes();
+
+    if bytes.len() != 44 {
+        return Err(PrivateKeyValidationError::InvalidLen);
+    }
+
+    if bytes[43] != b'='
+        || !bytes[..43]
+            .iter()
+            .all(|char| char.is_ascii_alphanumeric() || *char == b'+' || *char == b'/')
+    {
+        return Err(PrivateKeyValidationError::InvalidChars);
+    }
+
+    Ok(())
+}

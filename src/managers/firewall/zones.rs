@@ -1,12 +1,11 @@
 use crate::{
-    config::Config,
+    config::Node,
     consts,
     managers::{
         UciSectionBuilder,
         firewall::{consts::FIREWALL_FILE_NAME, types::FirewallAction},
     },
     naming,
-    types::identifier::Identifier,
     uci::UciBatchCommand,
 };
 
@@ -42,7 +41,7 @@ impl FirewallZone {
     }
 }
 
-pub fn get_firewall_zones(config: &Config, own_name: &Identifier) -> Vec<FirewallZone> {
+pub fn get_firewall_zones(own_node: &Node) -> Vec<FirewallZone> {
     let mut zones = vec![FirewallZone {
         name: consts::MESH_INTERFACE_NAME.to_owned(),
         network: vec![naming::mesh_interface()],
@@ -50,12 +49,7 @@ pub fn get_firewall_zones(config: &Config, own_name: &Identifier) -> Vec<Firewal
         ..Default::default()
     }];
 
-    let node = config
-        .nodes
-        .get(own_name)
-        .expect("own node not found — config should be validated before calling managers");
-
-    zones.extend(node.vpn_interfaces.keys().map(|name| FirewallZone {
+    zones.extend(own_node.vpn_interfaces.keys().map(|name| FirewallZone {
         name: name.to_string(),
         network: vec![naming::interface(name)],
         ..Default::default()

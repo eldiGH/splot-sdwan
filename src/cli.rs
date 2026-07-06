@@ -73,12 +73,18 @@ mod tests {
     #[test]
     fn apply_subcommand_defaults_dry_run_false() {
         let cli = parse(&["splot", "apply"]);
-        assert!(matches!(cli.command(), Some(Command::Apply { dry_run: false })));
+        assert!(matches!(
+            cli.command(),
+            Some(Command::Apply { dry_run: false })
+        ));
     }
 
     #[test]
     fn apply_dry_run_flag() {
         let cli = parse(&["splot", "apply", "--dry-run"]);
-        assert!(matches!(cli.command(), Some(Command::Apply { dry_run: true })));
+        assert!(matches!(
+            cli.command(),
+            Some(Command::Apply { dry_run: true })
+        ));
     }
 }

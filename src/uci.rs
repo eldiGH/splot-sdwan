@@ -1,6 +1,6 @@
 use std::{
     io::Write,
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
 };
 
 use crate::env;
@@ -55,67 +55,89 @@ impl std::fmt::Display for UciBatchCommand {
     }
 }
 
-pub struct UciExecutor;
+fn run(args: &[&str], stdin: Option<&str>) -> Result<String, Error> {
+    let mut command = Command::new("uci");
 
-impl UciExecutor {
-    fn base() -> Command {
-        let mut command = Command::new("uci");
+    if let Some(uci_config_dir) = env::uci_config_dir() {
+        command.arg("-c").arg(uci_config_dir);
+    }
 
-        if let Some(uci_config_dir) = env::uci_config_dir() {
-            command.arg("-c").arg(uci_config_dir);
+    command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .args(args);
+
+    let output = match stdin {
+        Some(input) => {
+            command.stdin(Stdio::piped());
+            let mut child = command.spawn().map_err(Error::Spawn)?;
+            child
+                .stdin
+                .take()
+                .expect("stdin was piped and not yet taken")
+                .write_all(input.as_bytes())
+                .map_err(Error::Io)?;
+            child.wait_with_output().map_err(Error::Io)?
         }
 
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit());
+        None => command.output().map_err(Error::Spawn)?,
+    };
 
-        command
+    if !output.status.success() {
+        return Err(Error::Failed {
+            code: output.status.code(),
+            stderr: String::from_utf8_lossy(&output.stderr)
+                .trim_end()
+                .to_owned(),
+        });
     }
 
-    pub fn batch(commands: Vec<UciBatchCommand>) {
-        let mut child = Self::base()
-            .arg("batch")
-            .stdin(Stdio::piped())
-            .spawn()
-            .unwrap();
+    String::from_utf8(output.stdout)
+        .map(|s| s.trim_end().to_owned())
+        .map_err(|_| Error::NonUtf8)
+}
 
-        {
-            let mut stdin = child.stdin.take().unwrap();
+// uci exits 1 with exactly this message whether the file, section or option is missing (verified
+// with uci-git r590.g74f6277-1)
+const ENTRY_NOT_FOUND: &str = "uci: Entry not found";
 
-            for cmd in &commands {
-                stdin.write_all(cmd.to_string().as_bytes()).unwrap();
-                stdin.write_all(b"\n").unwrap();
-            }
-        }
-
-        child.wait().unwrap();
+fn optional(result: Result<String, Error>) -> Result<Option<String>, Error> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(Error::Failed { stderr, .. }) if stderr == ENTRY_NOT_FOUND => Ok(None),
+        Err(err) => Err(err),
     }
+}
 
-    pub fn show(file: &str) -> Child {
-        Self::base()
-            .arg("show")
-            .arg(file)
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap()
-    }
+pub fn batch(commands: &[UciBatchCommand]) -> Result<(), Error> {
+    let input = commands
+        .iter()
+        .map(|cmd| format!("{cmd}\n"))
+        .collect::<String>();
 
-    pub fn get(path: &str) -> Option<String> {
-        let output = Self::base()
-            .arg("get")
-            .arg(path)
-            .stdout(Stdio::piped())
-            .output()
-            .unwrap();
+    run(&["batch"], Some(&input))?;
 
-        if output.status.success() {
-            let value = String::from_utf8(output.stdout).ok()?;
-            Some(value.trim_end().to_owned())
-        } else {
-            None
-        }
-    }
+    Ok(())
+}
+
+pub fn show(file: &str) -> Result<Option<String>, Error> {
+    optional(run(&["show", file], None))
+}
+
+pub fn get(path: &str) -> Result<Option<String>, Error> {
+    optional(run(&["get", path], None))
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("failed to run uci - is it installed?")]
+    Spawn(#[source] std::io::Error),
+    #[error("i/o error while talking to uci")]
+    Io(#[source] std::io::Error),
+    #[error("uci produced non-UTF-8 output")]
+    NonUtf8,
+    #[error("uci failed (exit code {code:?}): {stderr}")]
+    Failed { code: Option<i32>, stderr: String },
 }
 
 #[cfg(test)]

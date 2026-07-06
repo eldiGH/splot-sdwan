@@ -2,7 +2,7 @@ use std::net::Ipv4Addr;
 
 use crate::{
     config::{Config, Service},
-    managers::{UciSectionBuilder, firewall::consts::FIREWALL_FILE_NAME},
+    managers::{NodeContext, UciSectionBuilder, firewall::consts::FIREWALL_FILE_NAME},
     naming,
     protocol::Protocols,
     types::{
@@ -41,7 +41,7 @@ impl FirewallRedirect {
 
 struct RedirectBuilder<'a> {
     config: &'a Config,
-    own_name: &'a Identifier,
+    node_context: &'a NodeContext<'a>,
     wan_zone: &'a ZoneRef,
 }
 
@@ -57,11 +57,9 @@ impl RedirectBuilder<'_> {
     ) -> Option<FirewallRedirect> {
         let wan = service.wan.as_ref()?;
 
-        if !wan
-            .via
-            .iter()
-            .any(|via| matches!(via, WanViaTarget::Bare(node) if node == self.own_name))
-        {
+        if !wan.via.iter().any(
+            |via| matches!(via, WanViaTarget::Bare(node) if node == self.node_context.own_name),
+        ) {
             return None;
         }
 
@@ -129,22 +127,17 @@ impl RedirectBuilder<'_> {
     }
 
     fn client_redirects(&self, redirects: &mut Vec<FirewallRedirect>) {
-        let node = self
-            .config
-            .nodes
-            .get(self.own_name)
-            .expect("own node not found — config should be validated before calling managers");
-
         for (client_name, client) in &self.config.clients {
             for (service_name, service) in &client.services {
                 let Some(wan) = &service.wan else { continue };
 
                 for via in &wan.via {
-                    if via.node() != self.own_name {
+                    if via.node() != self.node_context.own_name {
                         continue;
                     }
 
-                    let Ok(resolution) = client.resolve_wan_target(via, node) else {
+                    let Ok(resolution) = client.resolve_wan_target(via, self.node_context.own_node)
+                    else {
                         continue;
                     };
 
@@ -164,13 +157,16 @@ impl RedirectBuilder<'_> {
     }
 }
 
-pub fn get_firewall_redirects(config: &Config, own_name: &Identifier) -> Vec<FirewallRedirect> {
+pub fn get_firewall_redirects(
+    config: &Config,
+    node_context: &NodeContext,
+) -> Vec<FirewallRedirect> {
     let mut redirects: Vec<FirewallRedirect> = vec![];
 
-    let Some(wan_zone) = config
-        .nodes
-        .get(own_name)
-        .and_then(|node| node.wan_zone.as_ref())
+    let Some(wan_zone) = node_context
+        .own_node
+        .wan_zone
+        .as_ref()
         .map(|id| ZoneRef::Named(id.clone()))
     else {
         return redirects;
@@ -178,7 +174,7 @@ pub fn get_firewall_redirects(config: &Config, own_name: &Identifier) -> Vec<Fir
 
     let builder = RedirectBuilder {
         config,
-        own_name,
+        node_context,
         wan_zone: &wan_zone,
     };
 

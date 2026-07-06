@@ -1,15 +1,31 @@
 use std::fmt::Display;
 
-use crate::{config::Config, consts, types::identifier::Identifier, uci::UciBatchCommand};
+use crate::{
+    config::{Config, Node},
+    consts,
+    splot_config::SplotConfig,
+    types::identifier::Identifier,
+    uci::UciBatchCommand,
+};
 
 pub mod dhcp;
 pub mod firewall;
 pub mod network;
 
 pub trait UciManager {
-    fn generate_commands(&self, config: &Config, own_name: &Identifier) -> Vec<UciBatchCommand>;
+    fn generate_commands(
+        &self,
+        config: &Config,
+        node_context: &NodeContext,
+    ) -> Vec<UciBatchCommand>;
 
     fn config_file(&self) -> &'static str;
+}
+
+pub struct NodeContext<'a> {
+    pub own_name: &'a Identifier,
+    pub own_node: &'a Node,
+    pub splot_config: &'a SplotConfig,
 }
 
 struct UciSectionBuilder {

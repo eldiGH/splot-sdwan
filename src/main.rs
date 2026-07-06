@@ -1,13 +1,14 @@
-use std::process;
-
 use clap::Parser;
 
 use crate::{
     cli::{Cli, Command},
     config::Config,
-    managers::{dhcp::DhcpManager, firewall::FirewallManager, network::NetworkManager},
+    managers::{
+        NodeContext, dhcp::DhcpManager, firewall::FirewallManager, network::NetworkManager,
+    },
     pipeline::UciPipeline,
 };
+use anyhow::{Context, bail};
 
 pub mod cli;
 pub mod config;
@@ -25,50 +26,58 @@ pub mod uci;
 pub mod validator;
 pub mod wg;
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     env::init();
     env_logger::init();
 
     let cli = Cli::parse();
 
     let Some(command) = cli.command() else {
-        return;
+        return Ok(());
     };
 
-    let config = Config::parse_file(&cli.config_path()).unwrap();
+    let config = Config::parse_file(&cli.config_path())
+        .with_context(|| format!("failed to load config from {}", cli.config_path().display()))?;
 
     if report_issues(&config) {
-        process::exit(1);
+        bail!("there are errors in your config file");
     }
 
     match command {
         Command::Apply { dry_run } => {
-            let private_key = splot_config::ensure_initialized();
+            let mut splot_config = splot_config::SplotConfig::load()?;
+            let Some((own_name, own_node)) =
+                config.find_node_by_public_key(&wg::get_pubkey(splot_config.mesh_key()))
+            else {
+                bail!(
+                    "this router's public key was not found in the splot config - add this node and try again"
+                );
+            };
 
-            let own_name = config
-                .find_node_name_by_public_key(&wg::get_pubkey(&private_key))
-                .unwrap_or_else(|| {
-                    eprintln!(
-                        "Error: this router's public key was not found in splot config file."
-                    );
-                    eprintln!("Add this node to the config and try again.");
-                    std::process::exit(1);
-                });
+            splot_config.ensure_vpn_keys(own_node.vpn_interfaces.keys())?;
 
             let pipeline = UciPipeline::new()
                 .register(NetworkManager)
                 .register(FirewallManager)
                 .register(DhcpManager);
 
+            let node_context = NodeContext {
+                own_name,
+                own_node,
+                splot_config: &splot_config,
+            };
+
             if *dry_run {
-                pipeline.print(&config, own_name);
+                pipeline.print(&config, &node_context)?;
             } else {
-                pipeline.run(&config, own_name);
+                pipeline.run(&config, &node_context)?;
             }
         }
 
         Command::Check => {}
     }
+
+    Ok(())
 }
 
 fn report_issues(config: &Config) -> bool {

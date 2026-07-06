@@ -3,8 +3,8 @@ use std::{collections::HashSet, net::Ipv4Addr};
 use log::{Level, debug, info, log_enabled};
 
 use crate::{
-    config::{Config, NodeZoneDevice, ZoneOrVpnInterface},
-    managers::{UciManager, UciSectionBuilder},
+    config::{Config, Node, NodeZoneDevice, ZoneOrVpnInterface},
+    managers::{NodeContext, UciManager, UciSectionBuilder},
     naming,
     types::{identifier::Identifier, mac::MacAddress},
     uci::UciBatchCommand,
@@ -38,15 +38,10 @@ fn zone_device_to_lease(device_name: &Identifier, device: &NodeZoneDevice) -> Dh
     }
 }
 
-fn get_static_leases(config: &Config, own_name: &Identifier) -> Vec<DhcpStaticLease> {
+fn get_static_leases(own_node: &Node) -> Vec<DhcpStaticLease> {
     let mut static_leases = Vec::new();
 
-    let node = config
-        .nodes
-        .get(own_name)
-        .expect("own node not found — config should be validated before calling managers");
-
-    static_leases.extend(node.zones.values().flat_map(|zone| {
+    static_leases.extend(own_node.zones.values().flat_map(|zone| {
         zone.devices
             .iter()
             .filter(|(_, device)| !device.macs.is_empty())
@@ -56,12 +51,7 @@ fn get_static_leases(config: &Config, own_name: &Identifier) -> Vec<DhcpStaticLe
     static_leases
 }
 
-fn get_client_static_leases(config: &Config, own_name: &Identifier) -> Vec<DhcpStaticLease> {
-    let node = config
-        .nodes
-        .get(own_name)
-        .expect("own node not found — config should be validated before calling managers");
-
+fn get_client_static_leases(config: &Config, node_context: &NodeContext) -> Vec<DhcpStaticLease> {
     config
         .clients
         .iter()
@@ -69,10 +59,10 @@ fn get_client_static_leases(config: &Config, own_name: &Identifier) -> Vec<DhcpS
             if client.macs.is_empty() {
                 return None;
             };
-            let networks = client.ips.get(own_name)?;
+            let networks = client.ips.get(node_context.own_name)?;
 
             let leases = networks.iter().filter_map(|(network_name, ip)| {
-                match node.network_by_name(network_name)? {
+                match node_context.own_node.network_by_name(network_name)? {
                     ZoneOrVpnInterface::VpnInterface(_) => None,
                     ZoneOrVpnInterface::Zone(_) => Some(DhcpStaticLease {
                         macs: client.macs.clone().into(),
@@ -96,12 +86,15 @@ impl UciManager for DhcpManager {
     fn generate_commands(
         &self,
         config: &crate::config::Config,
-        own_name: &Identifier,
+        node_context: &NodeContext,
     ) -> Vec<UciBatchCommand> {
-        info!("Generating DHCP config for node '{own_name}'");
+        info!(
+            "Generating DHCP config for node '{}'",
+            node_context.own_name
+        );
 
-        let mut static_leases = get_static_leases(config, own_name);
-        static_leases.extend(get_client_static_leases(config, own_name));
+        let mut static_leases = get_static_leases(node_context.own_node);
+        static_leases.extend(get_client_static_leases(config, node_context));
 
         info!("  {} static lease(s)", static_leases.len());
         if log_enabled!(Level::Debug) {
@@ -172,7 +165,13 @@ clients:
 
     fn cmds() -> Vec<UciBatchCommand> {
         let cfg = config(FIXTURE);
-        DhcpManager.generate_commands(&cfg, &"Home".parse().unwrap())
+        DhcpManager.generate_commands(
+            &cfg,
+            &NodeContext {
+                own_name: &"Home".parse().unwrap(),
+                private_key: "",
+            },
+        )
     }
 
     #[test]

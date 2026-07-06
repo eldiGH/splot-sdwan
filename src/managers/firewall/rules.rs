@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt, net::Ipv4Addr};
 use crate::{
     config::{Config, Service, ZoneOrVpnInterface},
     managers::{
-        UciSectionBuilder,
+        NodeContext, UciSectionBuilder,
         firewall::{
             consts::FIREWALL_FILE_NAME,
             types::{FirewallAction, TagResolution},
@@ -111,28 +111,23 @@ fn client_address_on_network(ip: Ipv4Addr, network: ZoneOrVpnInterface<'_>) -> I
 
 pub fn get_firewall_ingress_rules(
     config: &Config,
-    own_name: &Identifier,
+    node_context: &NodeContext,
     tags: &HashMap<AllowFromRef, TagResolution>,
 ) -> Vec<FirewallRule> {
     let mut rules: Vec<FirewallRule> = Vec::new();
 
-    let node = config
-        .nodes
-        .get(own_name)
-        .expect("own node not found — config should be validated before calling managers");
-
-    for (service_name, service) in &node.services {
+    for (service_name, service) in &node_context.own_node.services {
         rules.extend(generate_rule_from_service(
             service_name,
             service,
-            node.host_interfaces(),
-            own_name,
+            node_context.own_node.host_interfaces(),
+            node_context.own_name,
             tags,
             None,
         ));
     }
 
-    for zone in node.zones.values() {
+    for zone in node_context.own_node.zones.values() {
         for (device_name, device) in &zone.devices {
             for (service_name, service) in &device.services {
                 rules.extend(generate_rule_from_service(
@@ -148,7 +143,7 @@ pub fn get_firewall_ingress_rules(
         }
     }
 
-    for vpn_interface in node.vpn_interfaces.values() {
+    for vpn_interface in node_context.own_node.vpn_interfaces.values() {
         for (client_name, client) in &vpn_interface.clients {
             for (service_name, service) in &client.services {
                 // /32 dest: VPN interfaces are routed, not L2-bridged — peers on the same
@@ -167,14 +162,14 @@ pub fn get_firewall_ingress_rules(
     }
 
     for (client_name, client) in &config.clients {
-        let Some(networks) = client.ips.get(own_name) else {
+        let Some(networks) = client.ips.get(node_context.own_name) else {
             continue;
         };
 
         let ips: Vec<Ipv4Interface> = networks
             .iter()
             .filter_map(|(network_name, ip)| {
-                let network = node.network_by_name(network_name)?;
+                let network = node_context.own_node.network_by_name(network_name)?;
 
                 Some(client_address_on_network(*ip, network))
             })

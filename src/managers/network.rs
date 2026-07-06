@@ -5,7 +5,7 @@ use log::{debug, info};
 use crate::{
     config::{Config, NodeVpnInterface},
     consts,
-    managers::{UciManager, UciSectionBuilder},
+    managers::{NodeContext, UciManager, UciSectionBuilder},
     naming,
     types::{
         identifier::Identifier,
@@ -81,7 +81,7 @@ impl WgClient {
 fn build_vpn_interface(
     name: &Identifier,
     node: &NodeVpnInterface,
-    own_name: &Identifier,
+    node_context: &NodeContext,
     config: &Config,
 ) -> WgInterface {
     let mut clients = Vec::new();
@@ -99,7 +99,7 @@ fn build_vpn_interface(
 
     clients.extend(config.clients.iter().filter_map(|(client_name, client)| {
         let public_key = client.public_key.as_ref()?;
-        let networks = client.ips.get(own_name)?;
+        let networks = client.ips.get(node_context.own_name)?;
         let ip = networks.get(name)?;
 
         Some(WgClient {
@@ -112,11 +112,17 @@ fn build_vpn_interface(
         })
     }));
 
+    let private_key = node_context
+        .splot_config
+        .vpn_interface_keys()
+        .get(name)
+        .expect("private key was already ensured");
+
     WgInterface {
         name: name.to_string(),
         addresses: vec![node.address],
         listen_port: node.listen_port,
-        private_key: "TODO".to_owned(),
+        private_key: private_key.clone(),
         clients,
     }
 }
@@ -141,18 +147,16 @@ fn build_mesh_clients(config: &Config) -> Vec<WgClient> {
         .collect()
 }
 
-fn build_node_interfaces(own_name: &Identifier, config: &Config) -> Vec<WgInterface> {
-    info!("Generating network config for node '{own_name}'");
-
-    let own_node = config
-        .nodes
-        .get(own_name)
-        .expect("own node not found — config should be validated before calling managers");
+fn build_node_interfaces(node_context: &NodeContext, config: &Config) -> Vec<WgInterface> {
+    info!(
+        "Generating network config for node '{}'",
+        node_context.own_name
+    );
 
     let mut clients = Vec::new();
 
     for (node_name, node) in &config.nodes {
-        if node_name == own_name {
+        if node_name == node_context.own_name {
             continue;
         }
 
@@ -185,19 +189,20 @@ fn build_node_interfaces(own_name: &Identifier, config: &Config) -> Vec<WgInterf
 
     let mesh_interface = WgInterface {
         addresses: vec![
-            Ipv4Interface::from_ip(own_node.mesh_ip, config.mesh_network.prefix())
+            Ipv4Interface::from_ip(node_context.own_node.mesh_ip, config.mesh_network.prefix())
                 .expect("invalid prefix, should be validated"),
         ],
-        listen_port: own_node.listen_port,
-        private_key: "TODO".to_owned(),
+        listen_port: node_context.own_node.listen_port,
+        private_key: node_context.splot_config.mesh_key().to_owned(),
         name: consts::MESH_INTERFACE_NAME.to_owned(),
         clients,
     };
 
     let mut interfaces = vec![mesh_interface];
 
-    for (vpn_interface_name, vpn_interface) in &own_node.vpn_interfaces {
-        let wg_interface = build_vpn_interface(vpn_interface_name, vpn_interface, own_name, config);
+    for (vpn_interface_name, vpn_interface) in &node_context.own_node.vpn_interfaces {
+        let wg_interface =
+            build_vpn_interface(vpn_interface_name, vpn_interface, node_context, config);
 
         debug!(
             "  VPN interface '{vpn_interface_name}': {} client(s)",
@@ -215,8 +220,12 @@ fn build_node_interfaces(own_name: &Identifier, config: &Config) -> Vec<WgInterf
 pub struct NetworkManager;
 
 impl UciManager for NetworkManager {
-    fn generate_commands(&self, config: &Config, own_name: &Identifier) -> Vec<UciBatchCommand> {
-        let interfaces = build_node_interfaces(own_name, config);
+    fn generate_commands(
+        &self,
+        config: &Config,
+        node_context: &NodeContext,
+    ) -> Vec<UciBatchCommand> {
+        let interfaces = build_node_interfaces(node_context, config);
 
         let commands = interfaces.iter().flat_map(|i| i.to_uci_commands());
 
@@ -262,7 +271,13 @@ nodes:
 
     fn cmds() -> Vec<UciBatchCommand> {
         let cfg = config(FIXTURE);
-        NetworkManager.generate_commands(&cfg, &"Home".parse().unwrap())
+        NetworkManager.generate_commands(
+            &cfg,
+            &NodeContext {
+                own_name: &"Home".parse().unwrap(),
+                private_key: "",
+            },
+        )
     }
 
     #[test]

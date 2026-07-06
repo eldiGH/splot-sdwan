@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, fs::File, iter, net::Ipv4Addr, path::Path};
+use std::{collections::HashMap, fs::File, iter, net::Ipv4Addr, path::Path};
 
 use serde::Deserialize;
 
@@ -310,31 +310,12 @@ pub struct Config {
     pub clients: HashMap<Identifier, Client>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    Io(std::io::Error),
-    Parse(serde_yml::Error),
-}
-
-impl From<std::io::Error> for ConfigError {
-    fn from(e: std::io::Error) -> Self {
-        ConfigError::Io(e)
-    }
-}
-
-impl From<serde_yml::Error> for ConfigError {
-    fn from(e: serde_yml::Error) -> Self {
-        ConfigError::Parse(e)
-    }
-}
-
-impl Display for ConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(error) => error.fmt(f),
-            Self::Parse(error) => error.fmt(f),
-        }
-    }
+    #[error("can't read config file")]
+    Io(#[from] std::io::Error),
+    #[error("can't parse config file")]
+    Parse(#[from] serde_yml::Error),
 }
 
 impl Config {
@@ -354,10 +335,10 @@ impl Config {
         Ok(config)
     }
 
-    pub fn find_node_name_by_public_key(&self, pubkey: &str) -> Option<&Identifier> {
+    pub fn find_node_by_public_key(&self, pubkey: &str) -> Option<(&Identifier, &Node)> {
         self.nodes
             .iter()
-            .find_map(|(name, node)| (node.public_key == pubkey).then_some(name))
+            .find_map(|(name, node)| (node.public_key == pubkey).then_some((name, node)))
     }
 
     pub fn services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {

@@ -1,11 +1,8 @@
-use std::io::{BufRead, BufReader};
-
 use crate::{
     config::Config,
     consts,
-    managers::UciManager,
-    types::identifier::Identifier,
-    uci::{UciBatchCommand, UciExecutor},
+    managers::{NodeContext, UciManager},
+    uci::{self, UciBatchCommand},
 };
 
 pub struct UciPipeline {
@@ -28,33 +25,40 @@ impl UciPipeline {
         self
     }
 
-    pub fn run(&self, config: &Config, own_name: &Identifier) {
-        let commands = self.commands(config, own_name);
-        UciExecutor::batch(commands);
+    pub fn run(&self, config: &Config, node_context: &NodeContext) -> Result<(), uci::Error> {
+        let commands = self.commands(config, node_context)?;
+        uci::batch(&commands)?;
+        Ok(())
     }
 
-    pub fn print(&self, config: &Config, own_name: &Identifier) {
-        let commands = self.commands(config, own_name);
+    pub fn print(&self, config: &Config, node_context: &NodeContext) -> Result<(), uci::Error> {
+        let commands = self.commands(config, node_context)?;
 
         for command in commands {
             println!("{command}");
         }
+
+        Ok(())
     }
 
-    fn commands(&self, config: &Config, own_name: &Identifier) -> Vec<UciBatchCommand> {
+    fn commands(
+        &self,
+        config: &Config,
+        node_context: &NodeContext,
+    ) -> Result<Vec<UciBatchCommand>, uci::Error> {
         let config_files_used: Vec<&'static str> = self.get_files_used().collect();
 
-        let mut commands = generate_delete_commands(&config_files_used);
+        let mut commands = generate_delete_commands(&config_files_used)?;
 
         for manager in &self.managers {
-            commands.extend(manager.generate_commands(config, own_name));
+            commands.extend(manager.generate_commands(config, node_context));
         }
 
         for file in config_files_used {
             commands.push(UciBatchCommand::commit(file));
         }
 
-        commands
+        Ok(commands)
     }
 
     fn get_files_used(&self) -> impl Iterator<Item = &'static str> {
@@ -62,18 +66,18 @@ impl UciPipeline {
     }
 }
 
-fn generate_delete_commands(files_used: &[&'static str]) -> Vec<UciBatchCommand> {
+fn generate_delete_commands(
+    files_used: &[&'static str],
+) -> Result<Vec<UciBatchCommand>, uci::Error> {
     let mut delete_commands: Vec<UciBatchCommand> = Vec::new();
 
     for file in files_used {
-        let mut child = UciExecutor::show(file);
-        let buf = BufReader::new(child.stdout.take().unwrap());
-
+        let Some(output) = uci::show(file)? else {
+            continue;
+        };
         let prefix = format!("{}.{}", file, consts::SPLOT_SECTION_PREFIX);
 
-        for line in buf.lines() {
-            let line = line.unwrap();
-
+        for line in output.lines() {
             if line.starts_with(&prefix) {
                 let rest = &line[prefix.len()..];
 
@@ -91,9 +95,7 @@ fn generate_delete_commands(files_used: &[&'static str]) -> Vec<UciBatchCommand>
                 delete_commands.push(command);
             }
         }
-
-        child.wait().unwrap();
     }
 
-    delete_commands
+    Ok(delete_commands)
 }

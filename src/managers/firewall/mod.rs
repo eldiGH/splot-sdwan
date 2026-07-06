@@ -10,7 +10,7 @@ use log::{Level, debug, info, log_enabled};
 use crate::{
     config::Config,
     managers::{
-        UciManager,
+        NodeContext, UciManager,
         firewall::{
             consts::FIREWALL_FILE_NAME,
             redirect::get_firewall_redirects,
@@ -19,7 +19,6 @@ use crate::{
             zones::get_firewall_zones,
         },
     },
-    types::identifier::Identifier,
     uci::UciBatchCommand,
 };
 
@@ -30,17 +29,28 @@ impl UciManager for FirewallManager {
         FIREWALL_FILE_NAME
     }
 
-    fn generate_commands(&self, config: &Config, own_name: &Identifier) -> Vec<UciBatchCommand> {
-        info!("Generating firewall config for node '{own_name}'");
+    fn generate_commands(
+        &self,
+        config: &Config,
+        node_context: &NodeContext,
+    ) -> Vec<UciBatchCommand> {
+        info!(
+            "Generating firewall config for node '{}'",
+            node_context.own_name
+        );
 
-        let tags = build_tags_resolution_map(config, own_name);
+        let tags = build_tags_resolution_map(config, node_context.own_name);
         debug!("  Resolved {} tag(s)", tags.len());
 
-        let zones = get_firewall_zones(config, own_name);
-        let mut rules = get_firewall_ingress_rules(config, own_name, &tags);
-        rules.extend(get_firewall_egress_rules(config, own_name, &tags));
+        let zones = get_firewall_zones(node_context.own_node);
+        let mut rules = get_firewall_ingress_rules(config, node_context, &tags);
+        rules.extend(get_firewall_egress_rules(
+            config,
+            node_context.own_name,
+            &tags,
+        ));
 
-        let redirects = get_firewall_redirects(config, own_name);
+        let redirects = get_firewall_redirects(config, node_context);
 
         info!(
             "  {} zone(s), {} rule(s), {} redirect(s)",
