@@ -5,7 +5,7 @@ use std::{
 
 use crate::env;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UciBatchCommand {
     Set(String, String),
     Del(String),
@@ -33,6 +33,16 @@ impl UciBatchCommand {
 
     pub fn commit(config: impl Into<String>) -> Self {
         Self::Commit(Some(config.into()))
+    }
+
+    pub fn redacted(&self) -> Self {
+        if let Self::Set(path, ..) = self
+            && path.ends_with(".private_key")
+        {
+            return Self::set(path, "<redacted>");
+        }
+
+        self.clone()
     }
 }
 

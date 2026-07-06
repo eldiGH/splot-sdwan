@@ -35,7 +35,7 @@ impl UciPipeline {
         let commands = self.commands(config, node_context)?;
 
         for command in commands {
-            println!("{command}");
+            println!("{}", command.redacted());
         }
 
         Ok(())
