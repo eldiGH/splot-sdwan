@@ -77,6 +77,8 @@ Update:
 
 ## 2. CLI Interface
 
+> **Status: implemented**, with a slightly different shape than specced below: `splot check` (validate + report) and `splot apply [--dry-run]` (dry-run prints the uci commands with private keys redacted), plus `-c/--config` for the config path. Logging landed as `log`/`env_logger` rather than `tracing` — revisit if structured output is ever needed. Error handling: thiserror-typed errors at module boundaries, `anyhow` in `main`.
+
 A proper CLI for interacting with splot on a router:
 
 - `splot validate` — validate the local config file and report errors
@@ -100,6 +102,8 @@ Tested end-to-end: rules in `/etc/config/firewall` show explicit src/dest zone n
 ---
 
 ## 4. Replace `ConfigPath` with a typed location enum
+
+> **Status: implemented** — `ConfigLocation` replaced `ConfigPath` across the validators.
 
 `ConfigPath` is currently `Vec<String>` — every path segment allocates, literals (`"nodes"`, `"services"`) get copied to heap, and the path's structure is invisible to the type system. Replace with an enum that captures the meaningful locations in the config tree, e.g.:
 
@@ -128,6 +132,8 @@ Open design choices:
 ---
 
 ## 5. `Config::services()` iterator / `ServiceLocation` abstraction
+
+> **Status: implemented** — `Config::services()` iterates all service hosts (`ServiceHost`).
 
 Multiple validators and generators iterate the same set of service hosts (clients, node services, zone-device services, vpn-interface-client services) with near-identical nested-loop boilerplate. Extract:
 

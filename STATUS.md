@@ -16,8 +16,9 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 
 ### Splot config (persistent local state)
 
-- Local state file managed by `src/splot_config.rs` — currently stores only the WireGuard private key.
-- `ensure_initialized()` creates the file with a generated keypair on first run; subsequent runs read the existing key.
+- Local state file (`/etc/config/splot`) managed by `src/splot_config.rs` via the `SplotConfig` struct — stores the mesh private key (`splot.config.private_key`) and one private key per `vpnInterface` on this node (`splot.vpn_interface_keys.<name>`).
+- `SplotConfig::load()` reads and validates the mesh key, generating and committing one on first run (idempotent init — handles missing file, section, or option uniformly). `ensure_vpn_keys()` does the same per declared VPN interface, batching new keys into a single commit.
+- Stored keys are validated on load; a corrupt key is a hard error naming the offending interface, never silently regenerated (regeneration would orphan paired clients).
 - Designed to grow as more local-only state is needed (e.g., last-applied config snapshot for distributed-reload rollback — see IDEAS.md).
 
 ### Config validator (`src/validator/`)
@@ -62,11 +63,20 @@ The validator runs in `main.rs` before any UCI generation — validation errors 
 - `UciPipeline` runs registered managers in sequence on each apply.
 - Generated UCI commands are accumulated into a batch and applied via `uci batch`, then committed atomically per affected config file (`network`, `dhcp`, `firewall`).
 - Reduces overhead vs invoking `uci` once per setting; gives all-or-nothing semantics per config file.
+- The uci module exposes plain functions (`get`, `show`, `batch`) over a shared `run()` helper with typed errors (`uci::Error`): spawn failures, I/O errors, and non-zero exits are distinguished, and uci's exact `Entry not found` message is classified as legitimate absence (`Ok(None)`) rather than failure.
+- Dry-run output redacts private-key values (`UciBatchCommand::redacted()`); the real batch input is never redacted.
+
+### CLI (`src/cli.rs`, `src/main.rs`)
+
+- clap-based CLI: `splot check` (validate, report errors/warnings) and `splot apply [--dry-run]`; `-c/--config` overrides the config path (default `splot.yml`).
+- `main` returns `anyhow::Result` — errors propagate with context chains (thiserror-typed at module boundaries, anyhow at the application layer); validation failures and an unenrolled router abort with actionable messages.
+- Logging via `log`/`env_logger` (`info` progress per manager, `debug` for details).
 
 ### WireGuard key handling (`src/wg.rs`)
 
 - Generates new private keys via `wg genkey`.
 - Derives public keys from private keys via `wg pubkey`.
+- Validates stored private keys structurally (`validate_private_key` — length, base64 charset, padding).
 - Used during `splot_config` initialization and to identify the current node by matching the local pubkey against `node.publicKey` in the config.
 
 ### UCI section naming (`src/naming.rs`)
@@ -76,7 +86,7 @@ The validator runs in `main.rs` before any UCI generation — validation errors 
 
 ### Tests (`cargo test`)
 
-Unit-test suite over the deterministic core (~194 tests). Covers: type parsers (`src/types/`), WAN/config resolution (`src/config.rs`), all validator passes (`src/validator/`), the tag-resolution map, the UCI generators (firewall redirects/rules/zones, network, dhcp), and UCI command/builder rendering. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_yml` with shared helpers in `src/test_support.rs`. The process/IO layer (uci executor, wg, splot_config, env, pipeline) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
+Unit-test suite over the deterministic core (~213 tests). Covers: type parsers (`src/types/`), WAN/config resolution (`src/config.rs`), all validator passes (`src/validator/`), the tag-resolution map, the UCI generators (firewall redirects/rules/zones, network, dhcp), UCI command/builder rendering, the uci not-found classification and dry-run redaction, private-key validation, and mesh-vs-vpn key routing in generated interfaces. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_yml` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, pipeline) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
 
 ---
 
@@ -84,7 +94,9 @@ Unit-test suite over the deterministic core (~194 tests). Covers: type parsers (
 
 See [ROADMAP.md](ROADMAP.md). At a glance, in priority order:
 
-1. **CLI** — `validate` / `dry-run` / `apply` subcommands plus structured logging. (The validator already runs in `main.rs`; this is about user-facing entry points.)
-2. **Per-zone src/dest scoping** — replace `src=*` / `dest=*` in generated accept rules with explicit zone names (redirects are already zone-scoped).
+1. **Per-zone src/dest scoping** — replace `src=*` / `dest=*` in generated accept rules with explicit zone names (redirects are already zone-scoped).
+2. **Nodes behind NAT** — optional `endpoint` for the hub-and-spoke shape.
+3. **Stale VPN-key pruning** — detect keys stored for interfaces no longer in the config; warn by default, delete behind an explicit `--prune-keys` flag.
+4. **Enrollment UX** — a `splot pubkey` subcommand (ensure key exists, print the public key) so new routers can be enrolled over SSH without hopping consoles.
 
 See [IDEAS.md](IDEAS.md) for longer-horizon ideas (mesh-wide DNS, distributed reload, dynamic device presence, etc.).

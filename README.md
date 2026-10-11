@@ -2,7 +2,7 @@
 
 Declarative WireGuard mesh networking for OpenWRT routers. You describe your network — routers, zones, devices, services — in a single YAML file; splot translates it into OpenWRT `network`, `dhcp`, and `firewall` configuration via `uci`.
 
-> **Status:** work in progress, hobby/learning project. The core pipeline works (config parsing, validation, UCI generation for network/DHCP/firewall), but there's no stable CLI yet and the config format may still change. Not production-ready — see [STATUS.md](STATUS.md) for what's done and [ROADMAP.md](ROADMAP.md) for what's next.
+> **Status:** work in progress, hobby/learning project. The core pipeline works (config parsing, validation, UCI generation for network/DHCP/firewall) behind a small CLI (`check`, `apply --dry-run`), but the config format may still change. Not production-ready — see [STATUS.md](STATUS.md) for what's done and [ROADMAP.md](ROADMAP.md) for what's next.
 
 ## What it does
 
@@ -100,10 +100,14 @@ Requires Rust (edition 2024), and on the target router: OpenWRT with `uci` and W
 ```sh
 cargo build --release
 # on the router, with splot.yml in the working directory:
-./splot-sdwan
+./splot-sdwan check              # validate the config, report errors and warnings
+./splot-sdwan apply --dry-run    # print the uci commands (private keys redacted)
+./splot-sdwan apply              # validate, generate, and apply via uci
 ```
 
-On first run splot generates a WireGuard keypair and stores it in its local state file. Add the resulting public key to your config as a node, then re-run.
+`-c/--config <FILE>` overrides the config path (default: `splot.yml`).
+
+On first run splot generates a WireGuard keypair and stores it in its local state file (`/etc/config/splot`). Add the resulting public key to your config as a node, then re-run.
 
 For local development, `SPLOT_UCI_CONFIG_DIR` redirects UCI output to a directory of your choice instead of `/etc/config`.
 
