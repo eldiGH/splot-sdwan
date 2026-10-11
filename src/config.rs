@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, iter, net::Ipv4Addr, path::Path};
+use std::{collections::BTreeMap, fs::File, iter, net::Ipv4Addr, path::Path};
 
 use serde::Deserialize;
 
@@ -50,7 +50,7 @@ pub struct NodeZoneDevice {
     #[serde(default)]
     pub tags: OneOrManyUnique<Identifier>,
     #[serde(default)]
-    pub services: HashMap<Identifier, Service>,
+    pub services: BTreeMap<Identifier, Service>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -62,7 +62,7 @@ pub struct NodeVpnInterfaceClient {
     #[serde(default)]
     pub tags: OneOrManyUnique<Identifier>,
     #[serde(default)]
-    pub services: HashMap<Identifier, Service>,
+    pub services: BTreeMap<Identifier, Service>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -70,7 +70,7 @@ pub struct NodeVpnInterfaceClient {
 pub struct NodeVpnInterface {
     pub listen_port: Port,
     pub address: Ipv4Interface,
-    pub clients: HashMap<Identifier, NodeVpnInterfaceClient>,
+    pub clients: BTreeMap<Identifier, NodeVpnInterfaceClient>,
 
     #[serde(default)]
     pub tags: OneOrManyUnique<Identifier>,
@@ -82,7 +82,7 @@ pub struct NodeZone {
     pub address: Ipv4Interface,
 
     #[serde(default)]
-    pub devices: HashMap<Identifier, NodeZoneDevice>,
+    pub devices: BTreeMap<Identifier, NodeZoneDevice>,
     #[serde(default)]
     pub tags: OneOrManyUnique<Identifier>,
 }
@@ -96,13 +96,13 @@ pub struct Node {
     pub mesh_ip: Ipv4Addr,
 
     #[serde(default)]
-    pub vpn_interfaces: HashMap<Identifier, NodeVpnInterface>,
+    pub vpn_interfaces: BTreeMap<Identifier, NodeVpnInterface>,
     #[serde(default)]
     pub tags: OneOrManyUnique<Identifier>,
     #[serde(default)]
-    pub services: HashMap<Identifier, Service>,
+    pub services: BTreeMap<Identifier, Service>,
     #[serde(default)]
-    pub zones: HashMap<Identifier, NodeZone>,
+    pub zones: BTreeMap<Identifier, NodeZone>,
 
     pub wan_zone: Option<Identifier>,
 }
@@ -177,9 +177,9 @@ pub struct Client {
     #[serde(default)]
     pub macs: OneOrManyUnique<MacAddress>,
     #[serde(default)]
-    pub ips: HashMap<Identifier, HashMap<Identifier, Ipv4Addr>>,
+    pub ips: BTreeMap<Identifier, BTreeMap<Identifier, Ipv4Addr>>,
     #[serde(default)]
-    pub services: HashMap<Identifier, Service>,
+    pub services: BTreeMap<Identifier, Service>,
     #[serde(default)]
     pub tags: OneOrManyUnique<Identifier>,
 }
@@ -304,10 +304,10 @@ impl Client {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
     pub mesh_network: Ipv4Network,
-    pub nodes: HashMap<Identifier, Node>,
+    pub nodes: BTreeMap<Identifier, Node>,
 
     #[serde(default)]
-    pub clients: HashMap<Identifier, Client>,
+    pub clients: BTreeMap<Identifier, Client>,
 }
 
 #[derive(Debug, thiserror::Error)]

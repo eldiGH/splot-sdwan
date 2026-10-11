@@ -2,7 +2,7 @@ use std::{fmt::Display, str::FromStr};
 
 use serde::Deserialize;
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Deserialize)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Deserialize)]
 #[serde(try_from = "String")]
 pub struct MacAddress([u8; 6]);
 

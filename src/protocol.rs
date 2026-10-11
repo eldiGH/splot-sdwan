@@ -1,10 +1,10 @@
-use std::{collections::HashSet, fmt, ops::Deref};
+use std::{collections::BTreeSet, fmt, ops::Deref};
 
 use serde::Deserialize;
 
 use crate::types::schema_helpers::OneOrManyUnique;
 
-#[derive(Deserialize, Hash, PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
     Tcp,
@@ -22,10 +22,10 @@ impl fmt::Display for Protocol {
     }
 }
 
-pub struct Protocols(HashSet<Protocol>);
+pub struct Protocols(BTreeSet<Protocol>);
 
 impl Deref for Protocols {
-    type Target = HashSet<Protocol>;
+    type Target = BTreeSet<Protocol>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -49,15 +49,15 @@ impl fmt::Display for Protocols {
     }
 }
 
-impl From<HashSet<Protocol>> for Protocols {
-    fn from(value: HashSet<Protocol>) -> Self {
+impl From<BTreeSet<Protocol>> for Protocols {
+    fn from(value: BTreeSet<Protocol>) -> Self {
         Self(value)
     }
 }
 
 impl<'a> IntoIterator for &'a Protocols {
     type Item = &'a Protocol;
-    type IntoIter = std::collections::hash_set::Iter<'a, Protocol>;
+    type IntoIter = std::collections::btree_set::Iter<'a, Protocol>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
@@ -114,8 +114,8 @@ mod tests {
     }
 
     #[test]
-    fn protocols_from_hashset() {
-        let set = HashSet::from([Protocol::Icmp]);
+    fn protocols_from_btreeset() {
+        let set = BTreeSet::from([Protocol::Icmp]);
         let p: Protocols = set.into();
         assert_eq!(p.to_string(), "icmp");
     }
@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn protocols_iterate() {
         let p = protocols([Protocol::Tcp, Protocol::Udp]);
-        let collected: HashSet<Protocol> = p.iter().copied().collect();
+        let collected: BTreeSet<Protocol> = p.iter().copied().collect();
         assert!(collected.contains(&Protocol::Tcp));
         assert!(collected.contains(&Protocol::Udp));
     }

@@ -1,15 +1,15 @@
-use std::{collections::HashMap, iter};
+use std::iter;
 
 use crate::{
     config::{Client, Config, Node},
-    managers::firewall::types::TagResolution,
+    managers::firewall::types::TagMap,
     types::{
         allow_from_ref::AllowFromRef, identifier::Identifier, ip::Ipv4Network, zone_ref::ZoneRef,
     },
 };
 
 fn add_tags(
-    tags_map: &mut HashMap<AllowFromRef, TagResolution>,
+    tags_map: &mut TagMap,
     network: Ipv4Network,
     tags: impl IntoIterator<Item = AllowFromRef>,
     zone_name: &ZoneRef,
@@ -24,10 +24,7 @@ fn add_tags(
     }
 }
 
-fn add_current_node_identifier_tag(
-    node: &Node,
-    tags_map: &mut HashMap<AllowFromRef, TagResolution>,
-) {
+fn add_current_node_identifier_tag(node: &Node, tags_map: &mut TagMap) {
     for (zone_name, zone) in &node.zones {
         add_tags(
             tags_map,
@@ -47,11 +44,7 @@ fn add_current_node_identifier_tag(
     }
 }
 
-fn add_node_tag(
-    node_name: &Identifier,
-    node: &Node,
-    tags_map: &mut HashMap<AllowFromRef, TagResolution>,
-) {
+fn add_node_tag(node_name: &Identifier, node: &Node, tags_map: &mut TagMap) {
     let node_tags = iter::once(node_name.to_owned())
         .chain(node.tags.iter().cloned())
         .map(AllowFromRef::Bare);
@@ -79,7 +72,7 @@ fn add_client_tag(
     client_name: &Identifier,
     client: &Client,
     own_name: &Identifier,
-    tags_map: &mut HashMap<AllowFromRef, TagResolution>,
+    tags_map: &mut TagMap,
 ) {
     let tags: Vec<AllowFromRef> = iter::once(client_name.clone())
         .chain(client.tags.iter().cloned())
@@ -113,11 +106,7 @@ fn add_client_tag(
     }
 }
 
-fn add_zones_tags(
-    node_name: &Identifier,
-    node: &Node,
-    tags_map: &mut HashMap<AllowFromRef, TagResolution>,
-) {
+fn add_zones_tags(node_name: &Identifier, node: &Node, tags_map: &mut TagMap) {
     for (zone_name, zone) in &node.zones {
         let zone_ref = ZoneRef::Named(zone_name.clone());
         let zone_tags = iter::once(AllowFromRef::nested(node_name.clone(), zone_name.clone()))
@@ -139,11 +128,7 @@ fn add_zones_tags(
     }
 }
 
-fn add_vpn_interfaces_tags(
-    node_name: &Identifier,
-    node: &Node,
-    tags_map: &mut HashMap<AllowFromRef, TagResolution>,
-) {
+fn add_vpn_interfaces_tags(node_name: &Identifier, node: &Node, tags_map: &mut TagMap) {
     for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
         let zone_ref = ZoneRef::Named(vpn_interface_name.clone());
         let vpn_interface_tags = iter::once(AllowFromRef::nested(
@@ -182,11 +167,8 @@ fn add_vpn_interfaces_tags(
     }
 }
 
-pub fn build_tags_resolution_map(
-    config: &Config,
-    own_name: &Identifier,
-) -> HashMap<AllowFromRef, TagResolution> {
-    let mut tags_map: HashMap<AllowFromRef, TagResolution> = HashMap::new();
+pub fn build_tags_resolution_map(config: &Config, own_name: &Identifier) -> TagMap {
+    let mut tags_map: TagMap = TagMap::new();
 
     for (node_name, node) in &config.nodes {
         if node_name == own_name {
@@ -208,10 +190,10 @@ pub fn build_tags_resolution_map(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::BTreeSet;
 
     use super::*;
-    use crate::{managers::firewall::types::TagResolution, test_support::config};
+    use crate::test_support::config;
 
     // Home: zone lan (192.168.1.1/24) with device printer (192.168.1.50, tag printable)
     //       zone guest (192.168.2.1/24)
@@ -283,16 +265,12 @@ clients:
         AllowFromRef::nested(id(node), id(local))
     }
 
-    fn map_for(own: &str) -> HashMap<AllowFromRef, TagResolution> {
+    fn map_for(own: &str) -> TagMap {
         let cfg = config(FIXTURE);
         build_tags_resolution_map(&cfg, &id(own))
     }
 
-    fn get(
-        map: &HashMap<AllowFromRef, TagResolution>,
-        key: &AllowFromRef,
-        zone: &ZoneRef,
-    ) -> HashSet<Ipv4Network> {
+    fn get(map: &TagMap, key: &AllowFromRef, zone: &ZoneRef) -> BTreeSet<Ipv4Network> {
         map.get(key)
             .and_then(|r| r.get(zone))
             .cloned()

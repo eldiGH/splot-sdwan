@@ -142,7 +142,7 @@ impl fmt::Display for ParseNestedIdentifierError {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Deserialize)]
 #[serde(try_from = "String")]
 pub struct NestedIdentifier {
     pub node: Identifier,

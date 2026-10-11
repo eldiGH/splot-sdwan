@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::Ipv4Addr};
+use std::{collections::BTreeSet, net::Ipv4Addr};
 
 use log::{Level, debug, info, log_enabled};
 
@@ -16,7 +16,7 @@ pub struct DhcpManager;
 
 struct DhcpStaticLease {
     name: String,
-    macs: HashSet<MacAddress>,
+    macs: BTreeSet<MacAddress>,
     ip: Ipv4Addr,
 }
 

@@ -24,7 +24,7 @@ impl fmt::Display for ParseAllowFromRefError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(try_from = "String")]
 pub enum AllowFromRef {
     Bare(Identifier),

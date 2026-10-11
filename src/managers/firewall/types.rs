@@ -1,9 +1,9 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     fmt,
 };
 
-use crate::types::{ip::Ipv4Network, zone_ref::ZoneRef};
+use crate::types::{allow_from_ref::AllowFromRef, ip::Ipv4Network, zone_ref::ZoneRef};
 
 pub enum FirewallAction {
     Accept,
@@ -19,4 +19,7 @@ impl fmt::Display for FirewallAction {
     }
 }
 
-pub type TagResolution = HashMap<ZoneRef, HashSet<Ipv4Network>>;
+pub type TagResolution = BTreeMap<ZoneRef, BTreeSet<Ipv4Network>>;
+
+/// Every `allowFrom` reference resolved to its addresses, grouped by zone.
+pub type TagMap = BTreeMap<AllowFromRef, TagResolution>;

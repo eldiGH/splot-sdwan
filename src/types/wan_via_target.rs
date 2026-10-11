@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashSet, hash_set},
+    collections::{HashSet, btree_set},
     fmt,
     str::FromStr,
 };
@@ -26,7 +26,7 @@ impl fmt::Display for ParseWanViaTargetError {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deserialize)]
 #[serde(try_from = "String")]
 pub enum WanViaTarget {
     Bare(Identifier),
@@ -115,7 +115,7 @@ impl TryFrom<OneOrManyUnique<WanViaTarget>> for WanViaTargets {
 
 impl<'a> IntoIterator for &'a WanViaTargets {
     type Item = &'a WanViaTarget;
-    type IntoIter = hash_set::Iter<'a, WanViaTarget>;
+    type IntoIter = btree_set::Iter<'a, WanViaTarget>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
@@ -127,13 +127,15 @@ impl WanViaTargets {
         self.0.is_empty()
     }
 
-    pub fn iter(&self) -> hash_set::Iter<'_, WanViaTarget> {
+    pub fn iter(&self) -> btree_set::Iter<'_, WanViaTarget> {
         self.0.iter()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     fn target(s: &str) -> WanViaTarget {
@@ -166,7 +168,7 @@ mod tests {
 
     #[test]
     fn targets_distinct_nodes_ok() {
-        let set = OneOrManyUnique(HashSet::from([target("Home"), target("Cabin")]));
+        let set = OneOrManyUnique(BTreeSet::from([target("Home"), target("Cabin")]));
         let targets = WanViaTargets::try_from(set).unwrap();
         assert_eq!(targets.iter().count(), 2);
         assert!(!targets.is_empty());
@@ -175,7 +177,7 @@ mod tests {
     #[test]
     fn targets_duplicate_node_rejected() {
         // bare and qualified forms that name the same node are a duplicate
-        let set = OneOrManyUnique(HashSet::from([target("Home"), target("Home.lan")]));
+        let set = OneOrManyUnique(BTreeSet::from([target("Home"), target("Home.lan")]));
         let err = WanViaTargets::try_from(set).unwrap_err();
         assert!(matches!(
             err,
@@ -185,7 +187,7 @@ mod tests {
 
     #[test]
     fn targets_single() {
-        let set = OneOrManyUnique(HashSet::from([target("Home")]));
+        let set = OneOrManyUnique(BTreeSet::from([target("Home")]));
         let targets = WanViaTargets::try_from(set).unwrap();
         assert_eq!(targets.iter().count(), 1);
     }

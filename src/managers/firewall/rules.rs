@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, net::Ipv4Addr};
+use std::{fmt, net::Ipv4Addr};
 
 use crate::{
     config::{Config, Service, ZoneOrVpnInterface},
@@ -6,13 +6,12 @@ use crate::{
         NodeContext, UciSectionBuilder,
         firewall::{
             consts::FIREWALL_FILE_NAME,
-            types::{FirewallAction, TagResolution},
+            types::{FirewallAction, TagMap},
         },
     },
     naming,
     protocol::Protocols,
     types::{
-        allow_from_ref::AllowFromRef,
         identifier::Identifier,
         ip::{Ipv4Interface, Ipv4Network},
         port::PortOrRange,
@@ -49,7 +48,7 @@ fn generate_rule_from_service(
     service: &Service,
     dest_addresses: impl IntoIterator<Item = Ipv4Interface>,
     owner_name: impl fmt::Display,
-    tag_resolutions: &HashMap<AllowFromRef, TagResolution>,
+    tag_resolutions: &TagMap,
     src_ip_filter: Option<&[Ipv4Network]>,
 ) -> Option<FirewallRule> {
     let dest_addresses: Vec<Ipv4Interface> = dest_addresses.into_iter().collect();
@@ -112,7 +111,7 @@ fn client_address_on_network(ip: Ipv4Addr, network: ZoneOrVpnInterface<'_>) -> I
 pub fn get_firewall_ingress_rules(
     config: &Config,
     node_context: &NodeContext,
-    tags: &HashMap<AllowFromRef, TagResolution>,
+    tags: &TagMap,
 ) -> Vec<FirewallRule> {
     let mut rules: Vec<FirewallRule> = Vec::new();
 
@@ -193,7 +192,7 @@ pub fn get_firewall_ingress_rules(
 pub fn get_firewall_egress_rules(
     config: &Config,
     own_name: &Identifier,
-    tags: &HashMap<AllowFromRef, TagResolution>,
+    tags: &TagMap,
 ) -> Vec<FirewallRule> {
     let mut rules = Vec::new();
 

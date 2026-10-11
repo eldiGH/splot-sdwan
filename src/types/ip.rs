@@ -199,7 +199,7 @@ impl Error for Ipv4NetworkError {
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(try_from = "String")]
 pub struct Ipv4Network {
     addr: Ipv4Addr,

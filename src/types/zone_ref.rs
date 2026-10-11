@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::{consts, types::identifier::Identifier};
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub enum ZoneRef {
     Mesh,
     Named(Identifier),

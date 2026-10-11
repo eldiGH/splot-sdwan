@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use crate::{
     config::{Client, Config, Node, ServiceHost, ServiceWan, WanResolveError},
@@ -13,7 +13,7 @@ use crate::{
 
 fn validate_service_wan<'a>(
     service_wan: &'a Option<ServiceWan>,
-    nodes: &HashMap<Identifier, Node>,
+    nodes: &BTreeMap<Identifier, Node>,
     client: Option<&Client>,
     wan_nodes_used: &mut HashSet<&'a Identifier>,
     report: &mut ValidationReport,
