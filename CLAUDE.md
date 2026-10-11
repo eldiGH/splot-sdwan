@@ -162,7 +162,8 @@ Tests are inline `#[cfg(test)] mod tests { use super::*; ... }` modules, always 
 
 ### Conventions
 
-- **`HashMap` iteration is nondeterministic** — never assert on positional order. Assert "contains an item matching a predicate", collect into sets, or rely on the builder's *sorted* output (e.g. `extend_list` sorts; an empty list emits no line, which is how "no `wan.sources` ⇒ public" is pinned down).
+- **Iteration order is deterministic** — config collections are `BTreeMap`/`BTreeSet`, so walking the config (and with it validation output and generated UCI) happens in sorted key order, and tests may assert positional order. The `HashMap`/`HashSet` left in the validator are lookup-only; don't iterate them into output. Where order isn't what a test is about, a predicate-style assertion ("contains an item matching …") is still the sturdier choice. The builder sorts list values (`extend_list`), and an empty list emits no line — which is how "no `wan.sources` ⇒ public" is pinned down.
+- **Sorted order can hide order-dependent bugs.** When a check compares items against each other (name collisions, shadowing, overlaps), a fixture that only works because of how its names sort proves nothing — cover both orderings (e.g. the conflicting name sorting before *and* after the thing it collides with).
 - **A test must be able to fail.** Avoid fixtures where the asserted name/value can't occur — a check against something absent from the fixture passes vacuously and proves nothing. When a test guards a filter, assert both the positive (expected thing appears) and the negative (the wrong thing is absent), ideally in both generation directions.
 - **Use generic placeholder names** in fixtures — `Home`, `Cabin`, `Phone`, and obviously-fake keys/endpoints (`AAAA`, `1.2.3.4`). Never real deployment names, keys, or endpoints; real config lives only in the git-ignored `splot.yml`.
 
