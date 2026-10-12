@@ -223,6 +223,78 @@ clients:
         ));
     }
 
+    // A local name equal to another node's name must be flagged no matter how the
+    // two names sort. Nodes are walked in sorted order, so the two tests below put
+    // the shadowed node before and after the node holding the local name.
+
+    #[test]
+    fn names_local_shadows_node_sorting_before() {
+        // Device "Cabin" on node "Home"; node "Cabin" sorts before "Home".
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+        devices:
+          Cabin:
+            ip: 192.168.1.20
+            macs: AA:BB:CC:DD:EE:FF
+  Cabin:
+    publicKey: BBBB
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+",
+        );
+        assert!(error_at(
+            &r,
+            "nodes.Home.zones.lan.devices.Cabin",
+            |e| matches!(e, ValidationError::LocalShadowsGlobal { name, .. } if name == "Cabin")
+        ));
+    }
+
+    #[test]
+    fn names_local_shadows_node_sorting_after() {
+        // Device "Zeta" on node "Alpha"; node "Zeta" sorts after "Alpha", so it has
+        // not been registered yet when Alpha's local names are checked — unless all
+        // global names are collected first.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Alpha:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+        devices:
+          Zeta:
+            ip: 192.168.1.20
+            macs: AA:BB:CC:DD:EE:FF
+  Zeta:
+    publicKey: BBBB
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+",
+        );
+        assert!(error_at(
+            &r,
+            "nodes.Alpha.zones.lan.devices.Zeta",
+            |e| matches!(e, ValidationError::LocalShadowsGlobal { name, .. } if name == "Zeta")
+        ));
+    }
+
     #[test]
     fn names_invalid_prefix() {
         // Zone "Home_lan" starts with the reserved prefix "Home_" (node "Home" exists).

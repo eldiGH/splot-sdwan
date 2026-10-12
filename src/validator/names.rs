@@ -83,19 +83,26 @@ pub(super) fn validate_names(
     let mut refs: HashSet<AllowFromRef> = HashSet::new();
     refs.insert(AllowFromRef::SelfNode);
 
+    // Pass 1: every global name (clients, then nodes) is registered before any local
+    // name is checked. Local names are checked against the global names seen so far
+    // (`LocalShadowsGlobal`), so registering a node's name in the same loop as its
+    // locals would miss a node that sorts after the one holding the local name.
     for client_name in config.clients.keys() {
         add_name(client_name, None, &mut refs, None, None, report, || {
             ConfigLocation::Client(client_name.clone(), ClientLoc::Root)
         });
     }
 
-    for (node_name, node) in &config.nodes {
-        let mut node_identifiers = HashSet::new();
-        node_identifiers.insert(node_name.clone());
-
+    for node_name in config.nodes.keys() {
         add_name(node_name, None, &mut refs, None, None, report, || {
             ConfigLocation::Node(node_name.clone(), NodeLoc::Root)
         });
+    }
+
+    // Pass 2: each node's local names (zones, devices, VPN interfaces and clients).
+    for (node_name, node) in &config.nodes {
+        let mut node_identifiers = HashSet::new();
+        node_identifiers.insert(node_name.clone());
 
         for (zone_name, zone) in &node.zones {
             add_name(
