@@ -165,6 +165,15 @@ Tests are inline `#[cfg(test)] mod tests { use super::*; ... }` modules, always 
 - **Pure type parsers** are driven directly through `FromStr` with a small local `parse()` helper.
 - **Config-level tests** build a `Config` from a YAML string via `serde_yml::from_str` — this mirrors real loading and exercises the serde layer too. Shared helpers live in `src/test_support.rs` (`#[cfg(test)]`-only, `pub(crate)`): `config()`, `report()`, and `has_error` / `has_warning` / `error_at` matchers. The matchers take closures because `ValidationError` / `ValidationWarning` don't derive `PartialEq` — match on the variant with `matches!(..)`.
 
+### Snapshots
+
+`example_config_snapshot` (in `src/managers/mod.rs`) pins the complete UCI output of all managers for every node of `splot.example.yml`, using [`insta`](https://insta.rs). Snapshot files live in `src/managers/snapshots/` and are committed. They record what splot generates today, known-wrong parts included.
+
+- **Any change to generator output fails this test on purpose.** Insta prints the line diff of the generated config; the diff is the review: "is this the config change I meant?"
+- **Accept an intended change** with `cargo insta review` (needs `cargo install cargo-insta`), or `INSTA_UPDATE=always cargo test` and then review the `.snap` diff in git. Never accept a snapshot change you haven't read.
+- **A change that touches generator output** comes with its snapshot diff in the same commit, so the commit shows what it does to the generated router config.
+- Keep the example config representative: a new feature that generates config should appear in `splot.example.yml`, which puts it under the snapshot too.
+
 ### Conventions
 
 - **Iteration order is deterministic** — config collections are `BTreeMap`/`BTreeSet`, so walking the config (and with it validation output and generated UCI) happens in sorted key order, and tests may assert positional order. The `HashMap`/`HashSet` left in the validator are lookup-only; don't iterate them into output. Where order isn't what a test is about, a predicate-style assertion ("contains an item matching …") is still the sturdier choice. The builder sorts list values (`extend_list`), and an empty list emits no line — which is how "no `wan.sources` ⇒ public" is pinned down.

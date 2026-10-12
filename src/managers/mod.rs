@@ -90,10 +90,65 @@ impl UciSectionBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write;
+
     use super::*;
+    use crate::test_support::config;
 
     fn render(cmd: &UciBatchCommand) -> String {
         cmd.to_string()
+    }
+
+    // ── Snapshot of everything generated for the example config ────────────
+    //
+    // Pins the complete UCI output of all managers for every node of
+    // `splot.example.yml`, so any generator change shows up as a reviewable diff
+    // of the generated router config (`cargo insta review`). It records today's
+    // output as-is, known-wrong parts included: a fix shows up as a snapshot diff.
+    // Keys are fakes; the pipeline's own delete/commit lines need uci and are
+    // not part of it.
+
+    #[test]
+    fn example_config_snapshot() {
+        let config = config(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/splot.example.yml"
+        )));
+
+        let managers: [(&str, &dyn UciManager); 3] = [
+            ("network", &network::NetworkManager),
+            ("firewall", &firewall::FirewallManager),
+            ("dhcp", &dhcp::DhcpManager),
+        ];
+
+        for (node_name, node) in &config.nodes {
+            let vpn_keys: Vec<(String, String)> = node
+                .vpn_interfaces
+                .keys()
+                .map(|name| (name.to_string(), format!("FAKE_VPN_KEY_{name}")))
+                .collect();
+            let vpn_keys: Vec<(&str, &str)> = vpn_keys
+                .iter()
+                .map(|(name, key)| (name.as_str(), key.as_str()))
+                .collect();
+            let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY", &vpn_keys);
+
+            let context = NodeContext {
+                own_name: node_name,
+                own_node: node,
+                splot_config: &splot_config,
+            };
+
+            let mut output = String::new();
+            for (label, manager) in managers {
+                writeln!(output, "# {label}").unwrap();
+                for command in manager.generate_commands(&config, &context) {
+                    writeln!(output, "{command}").unwrap();
+                }
+            }
+
+            insta::assert_snapshot!(format!("example_{node_name}"), output);
+        }
     }
 
     fn builder() -> UciSectionBuilder {
