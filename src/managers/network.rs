@@ -11,6 +11,7 @@ use crate::{
         identifier::Identifier,
         ip::{Ipv4Interface, Ipv4Network},
         port::Port,
+        wg_key::WgPublicKey,
     },
     uci::UciBatchCommand,
 };
@@ -47,7 +48,7 @@ impl WgInterface {
 
 struct WgClient {
     description: String,
-    public_key: String,
+    public_key: WgPublicKey,
     allowed_ips: Vec<Ipv4Network>,
     route_allowed_ips: bool,
     endpoint_host: Option<Ipv4Addr>,
@@ -62,7 +63,7 @@ impl WgClient {
             &format!("wireguard_{}", naming::interface(interface_name)),
         )
         .set("description", naming::name_prefixed(&self.description))
-        .set("public_key", &self.public_key)
+        .set("public_key", self.public_key.as_str())
         .set(
             "route_allowed_ips",
             if self.route_allowed_ips { "1" } else { "0" },
@@ -107,7 +108,7 @@ fn build_vpn_interface(
             description: client_name.to_string(),
             endpoint_host: None,
             endpoint_port: None,
-            public_key: public_key.to_owned(),
+            public_key: public_key.clone(),
             route_allowed_ips: false,
         })
     }));
@@ -137,7 +138,7 @@ fn build_mesh_clients(config: &Config) -> Vec<WgClient> {
 
             Some(WgClient {
                 description: client_name.to_string(),
-                public_key: public_key.to_owned(),
+                public_key: public_key.clone(),
                 allowed_ips: vec![Ipv4Network::host(*mesh_ip)],
                 route_allowed_ips: false,
                 endpoint_host: None,
@@ -246,7 +247,7 @@ mod tests {
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -256,7 +257,7 @@ nodes:
         address: 10.8.1.1/24
         clients: {}
   Cabin:
-    publicKey: CCCC
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.2

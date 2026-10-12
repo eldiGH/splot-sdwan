@@ -6,4 +6,5 @@ pub mod mac;
 pub mod port;
 pub mod schema_helpers;
 pub mod wan_via_target;
+pub mod wg_key;
 pub mod zone_ref;

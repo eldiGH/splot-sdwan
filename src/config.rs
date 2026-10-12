@@ -16,6 +16,7 @@ use crate::{
         port::{Port, ServicePort},
         schema_helpers::OneOrManyUnique,
         wan_via_target::{WanViaTarget, WanViaTargets},
+        wg_key::WgPublicKey,
         zone_ref::ZoneRef,
     },
 };
@@ -56,7 +57,7 @@ pub struct NodeZoneDevice {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeVpnInterfaceClient {
-    pub public_key: String,
+    pub public_key: WgPublicKey,
     pub ip: Ipv4Addr,
 
     #[serde(default)]
@@ -90,7 +91,7 @@ pub struct NodeZone {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Node {
-    pub public_key: String,
+    pub public_key: WgPublicKey,
     pub endpoint: Ipv4Addr,
     pub listen_port: Port,
     pub mesh_ip: Ipv4Addr,
@@ -172,7 +173,7 @@ impl Node {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Client {
     pub mesh_ip: Option<Ipv4Addr>,
-    pub public_key: Option<String>,
+    pub public_key: Option<WgPublicKey>,
 
     #[serde(default)]
     pub macs: OneOrManyUnique<MacAddress>,
@@ -338,7 +339,7 @@ impl Config {
     pub fn find_node_by_public_key(&self, pubkey: &str) -> Option<(&Identifier, &Node)> {
         self.nodes
             .iter()
-            .find_map(|(name, node)| (node.public_key == pubkey).then_some((name, node)))
+            .find_map(|(name, node)| (node.public_key.as_str() == pubkey).then_some((name, node)))
     }
 
     pub fn services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
@@ -515,7 +516,7 @@ mod tests {
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -760,7 +761,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -807,7 +808,7 @@ nodes:
 clients:
   Phone:
     meshIp: 10.100.0.100
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     tag: admin
 "
         ));

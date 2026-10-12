@@ -87,6 +87,11 @@ pub enum ValidationError {
         at: ConfigLocation,
     },
 
+    DuplicatePublicKey {
+        at: ConfigLocation,
+        with: ConfigLocation,
+    },
+
     NodeNetworkMissing {
         node_name: Identifier,
         network_name: Identifier,
@@ -238,6 +243,10 @@ impl fmt::Display for ValidationError {
             Self::NodeMissing { node_name, at } => {
                 write!(f, "{at}: node '{node_name}' does not exist")
             }
+            Self::DuplicatePublicKey { at, with } => write!(
+                f,
+                "{at}: public key is already used at {with} - every node and client needs its own key"
+            ),
             Self::NodeNetworkMissing {
                 node_name,
                 network_name,
@@ -319,6 +328,7 @@ impl ValidationError {
             Self::NetworkCollision { at, .. } => at,
             Self::NodeClientManyZones { at, .. } => at,
             Self::NodeMissing { at, .. } => at,
+            Self::DuplicatePublicKey { at, .. } => at,
             Self::NodeNetworkMissing { at, .. } => at,
             Self::PortCollision { at, .. } => at,
             Self::PublicKeyMissing { at, .. } => at,

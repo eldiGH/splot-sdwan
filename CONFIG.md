@@ -42,7 +42,7 @@ HomeRouter:
 
 | Field           | Type                       | Required | Description                                                                                                                                                                                                       |
 | --------------- | -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `publicKey`     | string                     | yes      | WireGuard public key (base64). splot uses this to identify which node it's running on.                                                                                                                            |
+| `publicKey`     | string                     | yes      | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients). splot uses this to identify which node it's running on.                                                                                                                            |
 | `endpoint`      | IPv4 address               | yes      | Public IP used by other mesh nodes to establish WireGuard connections.                                                                                                                                            |
 | `listenPort`    | integer                    | yes      | WireGuard listen port for the mesh interface.                                                                                                                                                                     |
 | `meshIp`        | IPv4 address               | yes      | This node's IP on the mesh WireGuard interface (within `meshNetwork`).                                                                                                                                            |
@@ -137,7 +137,7 @@ Phone:
 
 | Field       | Type                      | Required | Description                                                      |
 | ----------- | ------------------------- | -------- | ---------------------------------------------------------------- |
-| `publicKey` | string                    | yes      | WireGuard public key of this client (base64).                    |
+| `publicKey` | string                    | yes      | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients).                    |
 | `ip`        | IPv4 address              | yes      | The client's IP on the interface's subnet.                       |
 | `tags`      | string or list of strings | no       | Explicit tags assigned to this client.                           |
 | `services`  | map of name → Service     | no       | Services exposed by this client and accessible through the mesh. |
@@ -168,7 +168,7 @@ Phone:
 | Field       | Type                                                | Required | Description                                                                                                                          |
 | ----------- | --------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `meshIp`    | IPv4 address                                        | no       | The client's IP on the mesh interface (within `meshNetwork`). Set when the client connects directly to the mesh via WireGuard.       |
-| `publicKey` | string                                              | no       | WireGuard public key (base64). Required if `meshIp` or any VPN interface IP is set — otherwise the client can't be a WireGuard peer. |
+| `publicKey` | string                                              | no       | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients). Required if `meshIp` or any VPN interface IP is set — otherwise the client can't be a WireGuard peer. |
 | `macs`      | MAC string or list                                  | no       | MAC addresses. Used to generate static DHCP leases for the client's zone IPs on each node.                                           |
 | `ips`       | map of nodeName → (map of localName → IPv4 address) | no       | The client's IPs on each node, keyed by zone or VPN interface name within that node. See [Tags](#tags) for resolution.               |
 | `services`  | map of name → Service                               | no       | Services exposed by this client.                                                                                                     |

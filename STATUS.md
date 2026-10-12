@@ -14,6 +14,7 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 - `deny_unknown_fields` on every config struct: a misspelled key anywhere is a parse error naming the config path, the unknown key, the valid keys, and the line/column.
 - Typed IP / network handling via `src/types/ip.rs` (`Ipv4Addr`, `Ipv4Interface`, `Ipv4Network` with subnet membership / overlap predicates).
 - Typed MAC handling via `src/types/mac.rs`.
+- Typed WireGuard public keys via `src/types/wg_key.rs` (`WgPublicKey`): 44 characters of canonical base64 ending in `=` — the same check stored private keys go through, and the same rule `wg` itself enforces.
 
 ### Splot config (persistent local state)
 
@@ -29,7 +30,7 @@ Multi-pass validator that checks `splot.yml` before any UCI commands are generat
 1. **`names`** — collects global + per-node names; checks identifier syntax, namespace uniqueness, cross-namespace collisions, reserved prefixes (`spl_` and `{NodeName}_`).
 2. **`tags`** — collects valid tags; checks tag syntax and tag/name collisions.
 3. **`identifiers`** — checks every `allowFrom` reference resolves to a known identifier; warns on empty `allowFrom`.
-4. **`entities`** — semantic checks: client IPs reference valid node/network, mac/publicKey required-iff-used, unreachable clients.
+4. **`entities`** — semantic checks: client IPs reference valid node/network, mac/publicKey required-iff-used, public keys unique across nodes / VPN clients / global clients, unreachable clients.
 5. **`networks`** — subnet uniqueness across mesh + zones + VPN interfaces; IP-in-subnet containment, and host IPs may not be their subnet's network or broadcast address (/31 and /32 excepted); IP uniqueness per mesh/zone/VPN-interface; `client.ips` ≤ 1 zone per `(client, node)`.
 
 Plus a `ports` pass (per-node listen-port uniqueness — `node.listen_port` vs each `vpn_interface.listen_port`) and a `wan` pass: each `wan.via` target resolves to a reachable destination; the qualified `{Node}.{Network}` form is rejected on non-client services; `wanZone` is declared where needed and doesn't collide with a zone / VPN-interface / mesh name; declared-but-unused `wanZone` is a warning.

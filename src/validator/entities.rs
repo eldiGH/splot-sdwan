@@ -1,6 +1,11 @@
+use std::collections::{HashMap, hash_map::Entry};
+
 use crate::{
     config::{Client, Config, ZoneOrVpnInterface},
-    types::config_location::{ClientIpLoc, ClientLoc, ConfigLocation},
+    types::{
+        config_location::{ClientIpLoc, ClientLoc, ConfigLocation, NodeLoc, VpnClientLoc, VpnLoc},
+        wg_key::WgPublicKey,
+    },
     validator::types::{ValidationError, ValidationReport, ValidationWarning},
 };
 
@@ -108,9 +113,73 @@ fn check_unreachable_clients(config: &Config, report: &mut ValidationReport) {
     }
 }
 
+fn note_public_key<'a>(
+    key: &'a WgPublicKey,
+    at: ConfigLocation,
+    seen: &mut HashMap<&'a WgPublicKey, ConfigLocation>,
+    report: &mut ValidationReport,
+) {
+    match seen.entry(key) {
+        Entry::Occupied(first) => report.errors.push(ValidationError::DuplicatePublicKey {
+            at,
+            with: first.get().clone(),
+        }),
+        Entry::Vacant(slot) => {
+            slot.insert(at);
+        }
+    }
+}
+
+/// Every node, VPN client and global client needs its own public key. Two nodes
+/// sharing one make "which node am I" ambiguous, and WireGuard can't hold two
+/// peers with the same key on one interface.
+fn check_public_key_uniqueness(config: &Config, report: &mut ValidationReport) {
+    let mut seen = HashMap::new();
+
+    for (node_name, node) in &config.nodes {
+        note_public_key(
+            &node.public_key,
+            ConfigLocation::Node(node_name.clone(), NodeLoc::PublicKey),
+            &mut seen,
+            report,
+        );
+    }
+
+    for (node_name, node) in &config.nodes {
+        for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
+            for (client_name, client) in &vpn_interface.clients {
+                note_public_key(
+                    &client.public_key,
+                    ConfigLocation::Node(
+                        node_name.clone(),
+                        NodeLoc::VpnInterface(
+                            vpn_interface_name.clone(),
+                            VpnLoc::Client(client_name.clone(), VpnClientLoc::PublicKey),
+                        ),
+                    ),
+                    &mut seen,
+                    report,
+                );
+            }
+        }
+    }
+
+    for (client_name, client) in &config.clients {
+        if let Some(public_key) = &client.public_key {
+            note_public_key(
+                public_key,
+                ConfigLocation::Client(client_name.clone(), ClientLoc::PublicKey),
+                &mut seen,
+                report,
+            );
+        }
+    }
+}
+
 pub(super) fn check_entities(config: &Config, report: &mut ValidationReport) {
     check_client_networks(config, report);
     check_clients_macs(config, report);
     check_clients_public_key(config, report);
+    check_public_key_uniqueness(config, report);
     check_unreachable_clients(config, report);
 }

@@ -329,7 +329,7 @@ mod tests {
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -340,7 +340,7 @@ nodes:
         allowFrom: Phone
 clients:
   Phone:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     meshIp: 10.100.0.100
 ",
             "Home",
@@ -365,7 +365,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -403,7 +403,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -428,7 +428,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -438,7 +438,7 @@ nodes:
         proto: tcp
         allowFrom: Phone
   Cabin:
-    publicKey: CCCC
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.2
@@ -447,7 +447,7 @@ nodes:
         address: 192.168.2.1/24
 clients:
   Phone:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     meshIp: 10.100.0.100
 ",
             "Home",
@@ -473,7 +473,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -486,7 +486,7 @@ nodes:
             macs: AA:BB:CC:DD:EE:01
             tags: staff
   Cabin:
-    publicKey: CCCC
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.2
@@ -531,7 +531,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -539,7 +539,7 @@ nodes:
       lan:
         address: 192.168.1.1/24
   Cabin:
-    publicKey: CCCC
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.2

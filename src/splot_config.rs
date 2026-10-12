@@ -3,8 +3,9 @@ use std::{collections::HashMap, fs, iter, path::PathBuf};
 use crate::{
     env,
     types::identifier::Identifier,
+    types::wg_key::KeyFormatError,
     uci::{self, UciBatchCommand},
-    wg::{self, PrivateKeyValidationError, validate_private_key},
+    wg::{self, validate_private_key},
 };
 
 fn get_config_dir() -> PathBuf {
@@ -33,11 +34,11 @@ pub enum SplotConfigError {
     #[error("failed to create splot config file")]
     Io(#[from] std::io::Error),
     #[error("stored mesh private key is invalid")]
-    InvalidMeshKey(#[source] PrivateKeyValidationError),
+    InvalidMeshKey(#[source] KeyFormatError),
     #[error("stored vpn interface private key is invalid")]
     InvalidVpnInterfaceKey {
         #[source]
-        err: PrivateKeyValidationError,
+        err: KeyFormatError,
         interface: Identifier,
     },
     #[error("uci error")]

@@ -126,7 +126,7 @@ mod tests {
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -157,7 +157,7 @@ clients:
       Home:
         vpn_a: 10.8.1.10
   MeshOnly:
-    publicKey: DDDD
+    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
     meshIp: 10.100.0.100
 ";
 

@@ -4,6 +4,10 @@
 # endpoints, and addresses with your own. `splot.yml` is git-ignored so your
 # real keys never end up in the repo.
 #
+# Public keys are validated (44 characters of base64, ending in `=`), so the
+# placeholders below (`Replace…PublicKeyAAAA…=`) are well-formed fakes: the file
+# passes `splot check` as-is, but none of them is anyone's real key.
+#
 # Each router runs `splot` and identifies itself by matching its local
 # WireGuard public key against one of the nodes' `publicKey` values.
 #
@@ -16,7 +20,7 @@ meshNetwork: 10.100.0.0/24
 # whole mesh. Tags applied here are usable in any service's `allowFrom`.
 clients:
   Phone:
-    publicKey: REPLACE_WITH_PHONE_WG_PUBLIC_KEY
+    publicKey: ReplacePhonePublicKeyAAAAAAAAAAAAAAAAAAAAAA=
     meshIp: 10.100.0.100
     macs: aa:bb:cc:00:00:01
     tags: admin
@@ -29,7 +33,7 @@ nodes:
   # Internet-facing router. Hosts services and exposes some to the WAN
   # through the firewall zone named in `wanZone`.
   Home:
-    publicKey: REPLACE_WITH_HOME_WG_PUBLIC_KEY
+    publicKey: ReplaceHomePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 203.0.113.10
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -80,13 +84,13 @@ nodes:
         address: 10.8.0.1/24
         clients:
           laptop:
-            publicKey: REPLACE_WITH_LAPTOP_WG_PUBLIC_KEY
+            publicKey: ReplaceLaptopPublicKeyAAAAAAAAAAAAAAAAAAAAA=
             ip: 10.8.0.2
             tags: admin
 
   # Remote site. No WAN exposure of its own — reachable over the mesh.
   Cabin:
-    publicKey: REPLACE_WITH_CABIN_WG_PUBLIC_KEY
+    publicKey: ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 203.0.113.20
     listenPort: 51820
     meshIp: 10.100.0.2

@@ -205,7 +205,7 @@ mod tests {
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -226,11 +226,11 @@ nodes:
         address: 10.8.1.1/24
         clients:
           alice:
-            publicKey: CCCC
+            publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
             ip: 10.8.1.10
             tags: staff
   Cabin:
-    publicKey: DDDD
+    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.2
@@ -239,7 +239,7 @@ nodes:
         address: 192.168.3.1/24
 clients:
   Phone:
-    publicKey: EEEE
+    publicKey: EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEA=
     meshIp: 10.100.0.100
     tags: mobile
     ips:

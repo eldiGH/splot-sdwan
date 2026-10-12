@@ -3,6 +3,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+use crate::types::wg_key::{KeyFormatError, check_key_format};
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("failed to run wg - is wireguard-tools installed?")]
@@ -65,83 +67,32 @@ pub fn get_pubkey(private_key: &str) -> Result<String, Error> {
     run(&["pubkey"], Some(private_key))
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum PrivateKeyValidationError {
-    #[error("private key cannot be empty")]
-    Empty,
-    #[error("private key has invalid length")]
-    InvalidLen,
-    #[error("private key consists of invalid chars")]
-    InvalidChars,
-}
-
-pub fn validate_private_key(private_key: &str) -> Result<(), PrivateKeyValidationError> {
-    if private_key.is_empty() {
-        return Err(PrivateKeyValidationError::Empty);
-    }
-
-    let bytes = private_key.as_bytes();
-
-    if bytes.len() != 44 {
-        return Err(PrivateKeyValidationError::InvalidLen);
-    }
-
-    if bytes[43] != b'='
-        || !bytes[..43]
-            .iter()
-            .all(|char| char.is_ascii_alphanumeric() || *char == b'+' || *char == b'/')
-    {
-        return Err(PrivateKeyValidationError::InvalidChars);
-    }
-
-    Ok(())
+/// Checks a stored private key's format. Private and public keys share one
+/// format, so this is the same check `WgPublicKey` uses.
+pub fn validate_private_key(private_key: &str) -> Result<(), KeyFormatError> {
+    check_key_format(private_key)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // 43 base64 chars + '=' padding — the shape of a real wg key.
-    const VALID_KEY: &str = "abcDEF0123456789+/abcDEF0123456789+/abcDEF0=";
+    // The format rules themselves are tested in `types::wg_key`; these only pin
+    // that private keys go through the same check.
 
     #[test]
     fn valid_key_passes() {
-        assert!(validate_private_key(VALID_KEY).is_ok());
+        assert!(validate_private_key("abcDEF0123456789+/abcDEF0123456789+/abcDEF0=").is_ok());
     }
 
     #[test]
-    fn empty_key_rejected() {
-        assert!(matches!(
-            validate_private_key(""),
-            Err(PrivateKeyValidationError::Empty)
-        ));
-    }
-
-    #[test]
-    fn wrong_length_rejected() {
-        assert!(matches!(
-            validate_private_key("tooshort="),
-            Err(PrivateKeyValidationError::InvalidLen)
-        ));
-    }
-
-    #[test]
-    fn missing_padding_rejected() {
-        // Right length, but no trailing '='.
-        let key = "A".repeat(44);
-        assert!(matches!(
+    fn key_wg_would_reject_is_rejected() {
+        // Passed the old shape-only check, but `wg pubkey` refuses it: the
+        // character before '=' isn't canonical for 32 bytes.
+        let key = format!("{}B=", "A".repeat(42));
+        assert_eq!(
             validate_private_key(&key),
-            Err(PrivateKeyValidationError::InvalidChars)
-        ));
-    }
-
-    #[test]
-    fn invalid_chars_rejected() {
-        // Right length and padding, but '!' is not base64.
-        let key = format!("{}=", "!".repeat(43));
-        assert!(matches!(
-            validate_private_key(&key),
-            Err(PrivateKeyValidationError::InvalidChars)
-        ));
+            Err(KeyFormatError::NonCanonical)
+        );
     }
 }

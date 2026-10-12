@@ -76,7 +76,7 @@ mod tests {
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -85,7 +85,7 @@ nodes:
         address: 192.168.1.1/24
 clients:
   Phone:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     meshIp: 10.100.0.100
 ";
 
@@ -114,12 +114,12 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Alpha:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.200.0.1
   Zeta:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.2
@@ -142,13 +142,13 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Phone:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
 clients:
   Phone:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     meshIp: 10.100.0.100
 ",
         );
@@ -166,7 +166,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -202,7 +202,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -215,7 +215,7 @@ nodes:
         address: 10.8.1.1/24
         clients:
           shared:
-            publicKey: BBBB
+            publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
             ip: 10.8.1.10
 ",
         );
@@ -234,7 +234,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -247,7 +247,7 @@ nodes:
             macs: AA:BB:CC:DD:EE:FF
 clients:
   Phone:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     meshIp: 10.100.0.100
 ",
         );
@@ -269,7 +269,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -281,7 +281,7 @@ nodes:
             ip: 192.168.1.20
             macs: AA:BB:CC:DD:EE:FF
   Cabin:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.2
@@ -304,7 +304,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Alpha:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -316,7 +316,7 @@ nodes:
             ip: 192.168.1.20
             macs: AA:BB:CC:DD:EE:FF
   Zeta:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.2
@@ -337,7 +337,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -360,7 +360,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -368,7 +368,7 @@ nodes:
       lan:
         address: 192.168.1.1/24
   Cabin:
-    publicKey: CCCC
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.2
@@ -393,13 +393,13 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
 clients:
   Phone:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     meshIp: 10.100.0.100
     tags: Home
 ",
@@ -418,7 +418,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -428,7 +428,7 @@ nodes:
         tags: admin
 clients:
   Phone:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     meshIp: 10.100.0.100
     tags: admin
 ",
@@ -448,7 +448,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -473,7 +473,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -498,7 +498,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -522,7 +522,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -551,7 +551,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -579,7 +579,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -602,7 +602,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -628,13 +628,13 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
 clients:
   Orphan:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
 ",
         );
         assert!(has_warning(&r, |w| matches!(
@@ -650,7 +650,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -672,7 +672,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -697,7 +697,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -717,6 +717,99 @@ clients:
         ));
     }
 
+    // Every node, VPN client and global client needs its own public key: two nodes
+    // sharing one make "which node am I" ambiguous, and WireGuard can't have two
+    // peers with the same key on one interface. The later occurrence is flagged.
+
+    #[test]
+    fn entities_duplicate_public_key_between_nodes() {
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+  Cabin:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+",
+        );
+        // Cabin sorts first, so Home's key is the duplicate.
+        assert!(error_at(&r, "nodes.Home.publicKey", |e| matches!(
+            e,
+            ValidationError::DuplicatePublicKey { with, .. } if with.to_string() == "nodes.Cabin.publicKey"
+        )));
+    }
+
+    #[test]
+    fn entities_duplicate_public_key_vpn_client_and_global_client() {
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    vpnInterfaces:
+      guests:
+        listenPort: 51821
+        address: 10.8.0.1/24
+        clients:
+          laptop:
+            publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+            ip: 10.8.0.2
+clients:
+  Phone:
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+    meshIp: 10.100.0.100
+",
+        );
+        assert!(error_at(&r, "clients.Phone.publicKey", |e| matches!(
+            e,
+            ValidationError::DuplicatePublicKey { with, .. }
+                if with.to_string() == "nodes.Home.vpnInterfaces.guests.clients.laptop.publicKey"
+        )));
+    }
+
+    #[test]
+    fn entities_distinct_public_keys_are_fine() {
+        // Same shape as above, every key distinct: no duplicate error.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    vpnInterfaces:
+      guests:
+        listenPort: 51821
+        address: 10.8.0.1/24
+        clients:
+          laptop:
+            publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+            ip: 10.8.0.2
+clients:
+  Phone:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    meshIp: 10.100.0.100
+",
+        );
+        assert!(!has_error(&r, |e| matches!(
+            e,
+            ValidationError::DuplicatePublicKey { .. }
+        )));
+    }
+
     // ── networks ───────────────────────────────────────────────────────────
 
     #[test]
@@ -727,7 +820,7 @@ clients:
 meshNetwork: 192.168.1.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 192.168.1.1
@@ -750,7 +843,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -758,7 +851,7 @@ nodes:
       lan:
         address: 192.168.1.1/24
   Cabin:
-    publicKey: CCCC
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.2
@@ -781,7 +874,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.200.0.1
@@ -801,7 +894,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -828,12 +921,12 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
   Cabin:
-    publicKey: CCCC
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -853,7 +946,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -894,7 +987,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: {node_mesh_ip}
@@ -913,11 +1006,11 @@ nodes:
         address: 10.8.0.1/24
         clients:
           laptop:
-            publicKey: CCCC
+            publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
             ip: {vpn_client_ip}
 clients:
   Phone:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     meshIp: {client_mesh_ip}
     macs: AA:BB:CC:DD:EE:02
     ips:
@@ -997,12 +1090,12 @@ clients:
 meshNetwork: 10.100.0.0/31
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.0
   Cabin:
-    publicKey: CCCC
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1024,7 +1117,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1053,7 +1146,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1082,7 +1175,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1114,7 +1207,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1142,7 +1235,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1168,7 +1261,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1194,7 +1287,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1223,14 +1316,14 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
     wanZone: wan
 clients:
   Phone:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     ips:
       Home:
         lan: 192.168.1.50
@@ -1257,7 +1350,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1272,7 +1365,7 @@ nodes:
         clients: {}
 clients:
   Phone:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     macs: AA:BB:CC:DD:EE:FF
     ips:
       Home:
@@ -1299,7 +1392,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1315,7 +1408,7 @@ nodes:
         clients: {}
 clients:
   Phone:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     ips:
       Home:
         vpn_a: 10.8.1.10
@@ -1342,7 +1435,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1351,14 +1444,14 @@ nodes:
       lan:
         address: 192.168.1.1/24
   Cabin:
-    publicKey: CCCC
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
     meshIp: 10.100.0.2
     wanZone: wan
 clients:
   Phone:
-    publicKey: BBBB
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     macs: AA:BB:CC:DD:EE:FF
     ips:
       Home:
@@ -1385,7 +1478,7 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1414,7 +1507,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1445,7 +1538,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
@@ -1472,7 +1565,7 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
-    publicKey: AAAA
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
