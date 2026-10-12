@@ -67,7 +67,7 @@ mod tests {
     }
 
     fn parse(yaml: &str) -> OneOrManyUnique<String> {
-        serde_yml::from_str::<Wrapper>(yaml).unwrap().values
+        serde_norway::from_str::<Wrapper>(yaml).unwrap().values
     }
 
     #[test]

@@ -315,7 +315,7 @@ pub enum ConfigError {
     #[error("can't read config file")]
     Io(#[from] std::io::Error),
     #[error("can't parse config file")]
-    Parse(#[from] serde_yml::Error),
+    Parse(#[from] serde_norway::Error),
 }
 
 impl Config {
@@ -323,7 +323,7 @@ impl Config {
         log::info!("Loading config from '{}'", path.display());
 
         let file = File::open(path)?;
-        let config: Self = serde_yml::from_reader(file)?;
+        let config: Self = serde_norway::from_reader(file)?;
 
         log::info!(
             "Config loaded: {} node(s), {} client(s), mesh network {}",
@@ -750,7 +750,7 @@ clients:
     // to the whole internet, with `check` passing.
 
     fn parse_error(yaml: &str) -> String {
-        match serde_yml::from_str::<Config>(yaml) {
+        match serde_norway::from_str::<Config>(yaml) {
             Ok(_) => panic!("config with an unknown key parsed successfully"),
             Err(err) => err.to_string(),
         }

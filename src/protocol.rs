@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn protocols_from_one_or_many_unique() {
-        let omu: OneOrManyUnique<Protocol> = serde_yml::from_str("- tcp\n- udp").unwrap();
+        let omu: OneOrManyUnique<Protocol> = serde_norway::from_str("- tcp\n- udp").unwrap();
         let p: Protocols = omu.into();
         assert!(p.contains(&Protocol::Tcp));
         assert!(p.contains(&Protocol::Udp));

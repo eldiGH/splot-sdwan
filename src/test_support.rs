@@ -7,7 +7,7 @@ use crate::{
 };
 
 pub(crate) fn config(yaml: &str) -> Config {
-    serde_yml::from_str(yaml).expect("test fixture YAML failed to parse")
+    serde_norway::from_str(yaml).expect("test fixture YAML failed to parse")
 }
 
 pub(crate) fn report(yaml: &str) -> ValidationReport {

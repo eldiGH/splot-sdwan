@@ -163,7 +163,7 @@ Tests are inline `#[cfg(test)] mod tests { use super::*; ... }` modules, always 
 ### Fixtures
 
 - **Pure type parsers** are driven directly through `FromStr` with a small local `parse()` helper.
-- **Config-level tests** build a `Config` from a YAML string via `serde_yml::from_str` — this mirrors real loading and exercises the serde layer too. Shared helpers live in `src/test_support.rs` (`#[cfg(test)]`-only, `pub(crate)`): `config()`, `report()`, and `has_error` / `has_warning` / `error_at` matchers. The matchers take closures because `ValidationError` / `ValidationWarning` don't derive `PartialEq` — match on the variant with `matches!(..)`.
+- **Config-level tests** build a `Config` from a YAML string via `serde_norway::from_str` — this mirrors real loading and exercises the serde layer too. Shared helpers live in `src/test_support.rs` (`#[cfg(test)]`-only, `pub(crate)`): `config()`, `report()`, and `has_error` / `has_warning` / `error_at` matchers. The matchers take closures because `ValidationError` / `ValidationWarning` don't derive `PartialEq` — match on the variant with `matches!(..)`.
 
 ### Snapshots
 
@@ -184,3 +184,5 @@ Tests are inline `#[cfg(test)] mod tests { use super::*; ... }` modules, always 
 ### Verify
 
 `cargo test`, `cargo fmt --check`, and `cargo clippy -- -D warnings` all stay clean. Sanity-check a new test by temporarily inverting the condition it guards — if it still passes, it isn't testing what it claims.
+
+When dependencies change, `cargo audit` (RustSec advisory database) must report no advisories. It exits 0 even for "unsound"/"unmaintained" warnings, so read its output rather than the exit code.
