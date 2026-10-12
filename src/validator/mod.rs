@@ -35,6 +35,11 @@ pub fn validate_config(config: &Config) -> ValidationReport {
 
     check_wan(config, &mut report);
 
+    // Canonical order for every consumer: by config location, so the output reads
+    // top to bottom like the config instead of pass by pass. Stable sort — several
+    // diagnostics at one location keep the order their passes produced them in.
+    report.sort();
+
     report
 }
 
@@ -96,6 +101,34 @@ clients:
             "unexpected warnings: {:?}",
             r.warnings.iter().map(|w| w.to_string()).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn report_is_sorted_by_config_location() {
+        // The names pass runs before the networks pass, so unsorted the error on
+        // Zeta (names) would come before the one on Alpha (networks). Sorted, the
+        // report reads top to bottom like the config: Alpha first, then Zeta.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Alpha:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.200.0.1
+  Zeta:
+    publicKey: BBBB
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    zones:
+      Zeta_lan:
+        address: 192.168.1.1/24
+",
+        );
+        let paths: Vec<String> = r.errors.iter().map(|e| e.path().to_string()).collect();
+        assert_eq!(paths, ["nodes.Alpha.meshIp", "nodes.Zeta.zones.Zeta_lan"]);
     }
 
     // ── names ──────────────────────────────────────────────────────────────
