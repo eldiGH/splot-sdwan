@@ -12,9 +12,14 @@ A Rust helper tool for managing WireGuard mesh networks on OpenWRT routers. It s
 
 ## Project Context
 
-This is a hobby/learning project. The primary goal is to learn Rust and systems programming concepts through building something practical.
+This is a hobby project that started as a way to learn Rust and systems programming. The goal now is a tool the owner actually runs on their network — while keeping full control over its architecture and direction.
 
-**Collaboration style:** Do not edit code directly. Instead, present options, suggestions, and explanations so the owner can make informed decisions and learn by doing.
+**Collaboration style — the owner is the architect, Claude is the engineer:**
+
+- **The owner decides:** architecture, config shape, design decisions (tasks tagged `decision`), and whether each change goes in. When a task runs into a real design question, stop and ask — don't pick an answer silently.
+- **Claude implements** one task at a time from the owner's task list: tests first (watch them fail), then the change; `cargo test`, `cargo fmt --check` and `cargo clippy -- -D warnings` clean.
+- **Review gate:** leave each task's changes **uncommitted**. The owner reviews them in Neovim (diffview / gitsigns) and says "commit" or asks for changes; only then commit, with the task ID in the subject.
+- **Every task ends with a review guide:** what changed and why; where the risk is and the 2–3 spots worth reading; what the tests prove and what was verified; which files are mechanical and safe to skim. Keep commits single-purpose — formatting-only or mechanical changes separate from logic.
 
 ---
 
