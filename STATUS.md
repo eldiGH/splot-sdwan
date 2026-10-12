@@ -30,7 +30,7 @@ Multi-pass validator that checks `splot.yml` before any UCI commands are generat
 2. **`tags`** — collects valid tags; checks tag syntax and tag/name collisions.
 3. **`identifiers`** — checks every `allowFrom` reference resolves to a known identifier; warns on empty `allowFrom`.
 4. **`entities`** — semantic checks: client IPs reference valid node/network, mac/publicKey required-iff-used, unreachable clients.
-5. **`networks`** — subnet uniqueness across mesh + zones + VPN interfaces; IP-in-subnet containment; IP uniqueness per mesh/zone/VPN-interface; `client.ips` ≤ 1 zone per `(client, node)`.
+5. **`networks`** — subnet uniqueness across mesh + zones + VPN interfaces; IP-in-subnet containment, and host IPs may not be their subnet's network or broadcast address (/31 and /32 excepted); IP uniqueness per mesh/zone/VPN-interface; `client.ips` ≤ 1 zone per `(client, node)`.
 
 Plus a `ports` pass (per-node listen-port uniqueness — `node.listen_port` vs each `vpn_interface.listen_port`) and a `wan` pass: each `wan.via` target resolves to a reachable destination; the qualified `{Node}.{Network}` form is rejected on non-client services; `wanZone` is declared where needed and doesn't collide with a zone / VPN-interface / mesh name; declared-but-unused `wanZone` is a warning.
 
@@ -77,6 +77,7 @@ The validator runs in `main.rs` before any UCI generation — validation errors 
 
 - Generates new private keys via `wg genkey`.
 - Derives public keys from private keys via `wg pubkey`.
+- Failures are typed errors (`wg::Error`): a missing `wg` binary, a non-zero exit (with wg's stderr), or non-UTF-8 output — never a panic or an empty key.
 - Validates stored private keys structurally (`validate_private_key` — length, base64 charset, padding).
 - Used during `splot_config` initialization and to identify the current node by matching the local pubkey against `node.publicKey` in the config.
 

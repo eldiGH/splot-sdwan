@@ -18,7 +18,7 @@ fn init_mesh_key() -> Result<String, SplotConfigError> {
         .create(true)
         .open(&path)?;
 
-    let private_key = wg::generate_private_key();
+    let private_key = wg::generate_private_key()?;
     uci::batch(&[
         UciBatchCommand::set("splot.config", "splot"),
         UciBatchCommand::set("splot.config.private_key", &private_key),
@@ -42,6 +42,8 @@ pub enum SplotConfigError {
     },
     #[error("uci error")]
     Uci(#[from] uci::Error),
+    #[error("failed to generate a WireGuard key")]
+    Wg(#[from] wg::Error),
 }
 
 pub struct SplotConfig {
@@ -85,7 +87,7 @@ impl SplotConfig {
                 }
 
                 None => {
-                    let key = wg::generate_private_key();
+                    let key = wg::generate_private_key()?;
                     keys_to_add.insert(interface.clone(), key.clone());
                     self.vpn_interface_keys.insert(interface.clone(), key);
                 }

@@ -38,6 +38,30 @@ fn add_network(
     true
 }
 
+/// A host IP must lie inside its subnet and must not be the subnet's network or
+/// broadcast address.
+fn check_host_ip(
+    ip: Ipv4Addr,
+    network: Ipv4Network,
+    report: &mut ValidationReport,
+    locate: impl FnOnce() -> ConfigLocation,
+) {
+    if !network.contains(ip) {
+        report.errors.push(ValidationError::IpOutsideSubnet {
+            ip,
+            network,
+            at: locate(),
+        });
+    } else if let Some(kind) = network.reserved_address(ip) {
+        report.errors.push(ValidationError::ReservedHostAddress {
+            ip,
+            network,
+            kind,
+            at: locate(),
+        });
+    }
+}
+
 fn check_mesh_ips(config: &Config, report: &mut ValidationReport, networks: &mut Vec<Ipv4Network>) {
     if !add_network(config.mesh_network, networks, report, || {
         ConfigLocation::MeshNetwork
@@ -46,25 +70,17 @@ fn check_mesh_ips(config: &Config, report: &mut ValidationReport, networks: &mut
     }
 
     for (client_name, client) in &config.clients {
-        if let Some(mesh_ip) = client.mesh_ip
-            && !config.mesh_network.contains(mesh_ip)
-        {
-            report.errors.push(ValidationError::IpOutsideSubnet {
-                ip: mesh_ip,
-                network: config.mesh_network,
-                at: ConfigLocation::Client(client_name.clone(), ClientLoc::MeshIp),
-            })
+        if let Some(mesh_ip) = client.mesh_ip {
+            check_host_ip(mesh_ip, config.mesh_network, report, || {
+                ConfigLocation::Client(client_name.clone(), ClientLoc::MeshIp)
+            });
         }
     }
 
     for (node_name, node) in &config.nodes {
-        if !config.mesh_network.contains(node.mesh_ip) {
-            report.errors.push(ValidationError::IpOutsideSubnet {
-                ip: node.mesh_ip,
-                network: config.mesh_network,
-                at: ConfigLocation::Node(node_name.clone(), NodeLoc::MeshIp),
-            })
-        }
+        check_host_ip(node.mesh_ip, config.mesh_network, report, || {
+            ConfigLocation::Node(node_name.clone(), NodeLoc::MeshIp)
+        });
     }
 }
 
@@ -87,19 +103,15 @@ fn check_zones_ips(
             }
 
             for (device_name, device) in &zone.devices {
-                if !zone_network.contains(device.ip) {
-                    report.errors.push(ValidationError::IpOutsideSubnet {
-                        ip: device.ip,
-                        network: zone_network,
-                        at: ConfigLocation::Node(
-                            node_name.clone(),
-                            NodeLoc::Zone(
-                                zone_name.clone(),
-                                ZoneLoc::Device(device_name.clone(), DeviceLoc::Ip),
-                            ),
+                check_host_ip(device.ip, zone_network, report, || {
+                    ConfigLocation::Node(
+                        node_name.clone(),
+                        NodeLoc::Zone(
+                            zone_name.clone(),
+                            ZoneLoc::Device(device_name.clone(), DeviceLoc::Ip),
                         ),
-                    })
-                }
+                    )
+                });
             }
         }
     }
@@ -124,19 +136,20 @@ fn check_vpn_interfaces_ips(
             }
 
             for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
-                if !vpn_interface_network.contains(vpn_interface_client.ip) {
-                    report.errors.push(ValidationError::IpOutsideSubnet {
-                        ip: vpn_interface_client.ip,
-                        network: vpn_interface_network,
-                        at: ConfigLocation::Node(
+                check_host_ip(
+                    vpn_interface_client.ip,
+                    vpn_interface_network,
+                    report,
+                    || {
+                        ConfigLocation::Node(
                             node_name.clone(),
                             NodeLoc::VpnInterface(
                                 vpn_interface_name.clone(),
                                 VpnLoc::Client(vpn_interface_client_name.clone(), VpnClientLoc::Ip),
                             ),
-                        ),
-                    })
-                }
+                        )
+                    },
+                );
             }
         }
     }
@@ -157,19 +170,15 @@ fn check_clients_ips(config: &Config, report: &mut ValidationReport) {
                     continue;
                 };
 
-                if !node_network.contains(*ip) {
-                    report.errors.push(ValidationError::IpOutsideSubnet {
-                        ip: *ip,
-                        network: node_network,
-                        at: ConfigLocation::Client(
-                            client_name.clone(),
-                            ClientLoc::Ip(
-                                node_name.clone(),
-                                ClientIpLoc::Network(node_network_name.clone()),
-                            ),
+                check_host_ip(*ip, node_network, report, || {
+                    ConfigLocation::Client(
+                        client_name.clone(),
+                        ClientLoc::Ip(
+                            node_name.clone(),
+                            ClientIpLoc::Network(node_network_name.clone()),
                         ),
-                    });
-                }
+                    )
+                });
             }
         }
     }

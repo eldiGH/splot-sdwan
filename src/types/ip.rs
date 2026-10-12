@@ -61,19 +61,23 @@ fn fmt_cidr(ip: &Ipv4Addr, prefix: u8, f: &mut std::fmt::Formatter<'_>) -> std::
 }
 
 fn validate_interface_addr(ip: Ipv4Addr, prefix: u8) -> Result<Ipv4Interface, Ipv4InterfaceError> {
-    let bits = ip.to_bits();
-    let mask = mask_from_prefix(prefix);
-    if prefix < 32 && (bits & mask) == bits {
-        return Err(Ipv4InterfaceError::IsNetworkAddress(ip, prefix));
-    }
+    let network = Ipv4Network {
+        addr: Ipv4Addr::from_bits(ip.to_bits() & mask_from_prefix(prefix)),
+        prefix,
+    };
 
-    Ok(Ipv4Interface { addr: ip, prefix })
+    match network.reserved_address(ip) {
+        Some(ReservedAddress::Network) => Err(Ipv4InterfaceError::IsNetworkAddress(ip, prefix)),
+        Some(ReservedAddress::Broadcast) => Err(Ipv4InterfaceError::IsBroadcastAddress(ip, prefix)),
+        None => Ok(Ipv4Interface { addr: ip, prefix }),
+    }
 }
 
 #[derive(Debug)]
 pub enum Ipv4InterfaceError {
     ParseCidrError(ParseCidrError),
     IsNetworkAddress(Ipv4Addr, u8),
+    IsBroadcastAddress(Ipv4Addr, u8),
 }
 
 impl Display for Ipv4InterfaceError {
@@ -83,6 +87,10 @@ impl Display for Ipv4InterfaceError {
             Self::IsNetworkAddress(ip, prefix) => {
                 fmt_cidr(ip, *prefix, f)?;
                 write!(f, " is a network address, expected host address")
+            }
+            Self::IsBroadcastAddress(ip, prefix) => {
+                fmt_cidr(ip, *prefix, f)?;
+                write!(f, " is a broadcast address, expected host address")
             }
         }
     }
@@ -199,6 +207,22 @@ impl Error for Ipv4NetworkError {
     }
 }
 
+/// The two addresses of a subnet that can't belong to a host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReservedAddress {
+    Network,
+    Broadcast,
+}
+
+impl Display for ReservedAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Network => write!(f, "network"),
+            Self::Broadcast => write!(f, "broadcast"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(try_from = "String")]
 pub struct Ipv4Network {
@@ -258,6 +282,26 @@ impl Ipv4Network {
 
     pub fn contains(&self, ip: Ipv4Addr) -> bool {
         (self.mask() & ip.to_bits()) == self.addr.to_bits()
+    }
+
+    /// The last address of the subnet.
+    pub fn broadcast(&self) -> Ipv4Addr {
+        Ipv4Addr::from_bits(self.addr.to_bits() | !self.mask())
+    }
+
+    /// Whether `ip` is this subnet's network or broadcast address, which can't be
+    /// assigned to a host. A /31 (RFC 3021 point-to-point) and a /32 have no such
+    /// addresses: every address in them is a host.
+    pub fn reserved_address(&self, ip: Ipv4Addr) -> Option<ReservedAddress> {
+        if self.prefix > 30 {
+            None
+        } else if ip == self.addr {
+            Some(ReservedAddress::Network)
+        } else if ip == self.broadcast() {
+            Some(ReservedAddress::Broadcast)
+        } else {
+            None
+        }
     }
 
     pub fn overlap(&self, network: Ipv4Network) -> bool {
@@ -356,6 +400,41 @@ mod tests {
         ));
         // but /32 is always a valid host
         assert!("192.168.1.0/32".parse::<Ipv4Interface>().is_ok());
+    }
+
+    #[test]
+    fn network_broadcast_and_reserved_addresses() {
+        let n = net("192.168.1.0/24");
+        assert_eq!(n.broadcast(), ip("192.168.1.255"));
+        assert_eq!(
+            n.reserved_address(ip("192.168.1.0")),
+            Some(ReservedAddress::Network)
+        );
+        assert_eq!(
+            n.reserved_address(ip("192.168.1.255")),
+            Some(ReservedAddress::Broadcast)
+        );
+        assert_eq!(n.reserved_address(ip("192.168.1.1")), None);
+        assert_eq!(n.reserved_address(ip("192.168.1.254")), None);
+        // /31 and /32 have no reserved addresses
+        assert_eq!(net("10.0.0.0/31").reserved_address(ip("10.0.0.0")), None);
+        assert_eq!(net("10.0.0.0/31").reserved_address(ip("10.0.0.1")), None);
+        assert_eq!(net("10.0.0.5/32").reserved_address(ip("10.0.0.5")), None);
+    }
+
+    #[test]
+    fn interface_rejects_broadcast_address() {
+        assert!(matches!(
+            "192.168.1.255/24".parse::<Ipv4Interface>(),
+            Err(Ipv4InterfaceError::IsBroadcastAddress(..))
+        ));
+    }
+
+    #[test]
+    fn interface_slash_31_both_addresses_valid() {
+        // RFC 3021 point-to-point: no network/broadcast address in a /31.
+        assert!("10.0.0.0/31".parse::<Ipv4Interface>().is_ok());
+        assert!("10.0.0.1/31".parse::<Ipv4Interface>().is_ok());
     }
 
     #[test]

@@ -1,43 +1,68 @@
 use std::{
-    io::{Read, Write},
+    io::Write,
     process::{Command, Stdio},
 };
 
-fn wg() -> Command {
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("failed to run wg - is wireguard-tools installed?")]
+    Spawn(#[source] std::io::Error),
+    #[error("i/o error while talking to wg")]
+    Io(#[source] std::io::Error),
+    #[error("wg produced non-UTF-8 output")]
+    NonUtf8,
+    #[error("wg failed (exit code {code:?}): {stderr}")]
+    Failed { code: Option<i32>, stderr: String },
+}
+
+/// Runs `wg <args>`, optionally feeding `stdin`, and returns its trimmed stdout.
+/// A non-zero exit is an error carrying wg's stderr — never an empty "result".
+fn run(args: &[&str], stdin: Option<&str>) -> Result<String, Error> {
     let mut command = Command::new("wg");
     command
-        .stderr(Stdio::null())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped());
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-    command
-}
+    let output = match stdin {
+        Some(input) => {
+            command.stdin(Stdio::piped());
+            let mut child = command.spawn().map_err(Error::Spawn)?;
+            child
+                .stdin
+                .take()
+                .expect("stdin was piped and not yet taken")
+                .write_all(input.as_bytes())
+                .map_err(Error::Io)?;
+            child.wait_with_output().map_err(Error::Io)?
+        }
 
-pub fn generate_private_key() -> String {
-    let output = wg().arg("genkey").output().unwrap();
+        None => command
+            .stdin(Stdio::null())
+            .output()
+            .map_err(Error::Spawn)?,
+    };
 
-    String::from_utf8(output.stdout)
-        .unwrap()
-        .trim_end()
-        .to_owned()
-}
-
-pub fn get_pubkey(private_key: &str) -> String {
-    let mut child = wg().arg("pubkey").stdin(Stdio::piped()).spawn().unwrap();
-
-    {
-        let mut stdin = child.stdin.take().unwrap();
-        stdin.write_all(private_key.as_bytes()).unwrap();
+    if !output.status.success() {
+        return Err(Error::Failed {
+            code: output.status.code(),
+            stderr: String::from_utf8_lossy(&output.stderr)
+                .trim_end()
+                .to_owned(),
+        });
     }
 
-    let mut stdout = child.stdout.take().unwrap();
+    String::from_utf8(output.stdout)
+        .map(|s| s.trim_end().to_owned())
+        .map_err(|_| Error::NonUtf8)
+}
 
-    let mut buf = Vec::new();
-    stdout.read_to_end(&mut buf).unwrap();
+pub fn generate_private_key() -> Result<String, Error> {
+    run(&["genkey"], None)
+}
 
-    child.wait().unwrap();
-
-    String::from_utf8(buf).unwrap().trim_end().to_owned()
+pub fn get_pubkey(private_key: &str) -> Result<String, Error> {
+    run(&["pubkey"], Some(private_key))
 }
 
 #[derive(thiserror::Error, Debug)]

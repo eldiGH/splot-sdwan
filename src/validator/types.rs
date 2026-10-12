@@ -3,8 +3,11 @@ use std::{fmt, net::Ipv4Addr};
 use crate::{
     consts,
     types::{
-        allow_from_ref::AllowFromRef, config_location::ConfigLocation, identifier::Identifier,
-        ip::Ipv4Network, port::PortOrRange,
+        allow_from_ref::AllowFromRef,
+        config_location::ConfigLocation,
+        identifier::Identifier,
+        ip::{Ipv4Network, ReservedAddress},
+        port::PortOrRange,
     },
 };
 
@@ -44,6 +47,12 @@ pub enum ValidationError {
     IpOutsideSubnet {
         ip: Ipv4Addr,
         network: Ipv4Network,
+        at: ConfigLocation,
+    },
+    ReservedHostAddress {
+        ip: Ipv4Addr,
+        network: Ipv4Network,
+        kind: ReservedAddress,
         at: ConfigLocation,
     },
     NetworkCollision {
@@ -172,6 +181,17 @@ impl fmt::Display for ValidationError {
             Self::IpOutsideSubnet { ip, network, at } => {
                 write!(f, "{at}: IP {ip} is outside subnet {network}")
             }
+            Self::ReservedHostAddress {
+                ip,
+                network,
+                kind,
+                at,
+            } => {
+                write!(
+                    f,
+                    "{at}: IP {ip} is the {kind} address of {network} and can't be assigned to a host"
+                )
+            }
             Self::NetworkCollision {
                 network,
                 conflicting_with,
@@ -293,6 +313,7 @@ impl ValidationError {
             Self::InvalidWanVia { at, .. } => at,
             Self::IpCollision { at, .. } => at,
             Self::IpOutsideSubnet { at, .. } => at,
+            Self::ReservedHostAddress { at, .. } => at,
             Self::LocalNameCollision { at, .. } => at,
             Self::MacMissing { at } => at,
             Self::NetworkCollision { at, .. } => at,

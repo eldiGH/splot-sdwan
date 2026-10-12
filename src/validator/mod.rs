@@ -47,7 +47,8 @@ pub fn validate_config(config: &Config) -> ValidationReport {
 mod tests {
     use crate::{
         test_support::{error_at, has_error, has_warning, report, warning_at},
-        validator::types::{ValidationError, ValidationWarning},
+        types::ip::ReservedAddress,
+        validator::types::{ValidationError, ValidationReport, ValidationWarning},
     };
 
     #[test]
@@ -874,6 +875,144 @@ clients:
             e,
             ValidationError::NodeClientManyZones { .. }
         )));
+    }
+
+    // A host IP must not be its subnet's network or broadcast address. Such an IP
+    // used to pass validation and then panic in the generators. The fixture puts
+    // all five kinds of host IP on reserved addresses; the two tests swap which
+    // ones get the network address and which the broadcast address.
+
+    fn reserved_fixture(
+        node_mesh_ip: &str,
+        client_mesh_ip: &str,
+        device_ip: &str,
+        vpn_client_ip: &str,
+        client_zone_ip: &str,
+    ) -> String {
+        format!(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: {node_mesh_ip}
+    zones:
+      lan:
+        address: 192.168.1.1/24
+        devices:
+          printer:
+            ip: {device_ip}
+            macs: AA:BB:CC:DD:EE:01
+      iot:
+        address: 192.168.2.1/24
+    vpnInterfaces:
+      guests:
+        listenPort: 51821
+        address: 10.8.0.1/24
+        clients:
+          laptop:
+            publicKey: CCCC
+            ip: {vpn_client_ip}
+clients:
+  Phone:
+    publicKey: BBBB
+    meshIp: {client_mesh_ip}
+    macs: AA:BB:CC:DD:EE:02
+    ips:
+      Home:
+        iot: {client_zone_ip}
+"
+        )
+    }
+
+    fn reserved_at(r: &ValidationReport, path: &str, expected: ReservedAddress) -> bool {
+        error_at(
+            r,
+            path,
+            |e| matches!(e, ValidationError::ReservedHostAddress { kind, .. } if *kind == expected),
+        )
+    }
+
+    const NODE_MESH_IP: &str = "nodes.Home.meshIp";
+    const CLIENT_MESH_IP: &str = "clients.Phone.meshIp";
+    const DEVICE_IP: &str = "nodes.Home.zones.lan.devices.printer.ip";
+    const VPN_CLIENT_IP: &str = "nodes.Home.vpnInterfaces.guests.clients.laptop.ip";
+    const CLIENT_ZONE_IP: &str = "clients.Phone.ips.Home.iot";
+
+    #[test]
+    fn networks_host_ip_on_network_address() {
+        let r = report(&reserved_fixture(
+            "10.100.0.0",
+            "10.100.0.255",
+            "192.168.1.0",
+            "10.8.0.0",
+            "192.168.2.0",
+        ));
+        assert!(reserved_at(&r, NODE_MESH_IP, ReservedAddress::Network));
+        assert!(reserved_at(&r, CLIENT_MESH_IP, ReservedAddress::Broadcast));
+        assert!(reserved_at(&r, DEVICE_IP, ReservedAddress::Network));
+        assert!(reserved_at(&r, VPN_CLIENT_IP, ReservedAddress::Network));
+        assert!(reserved_at(&r, CLIENT_ZONE_IP, ReservedAddress::Network));
+    }
+
+    #[test]
+    fn networks_host_ip_on_broadcast_address() {
+        let r = report(&reserved_fixture(
+            "10.100.0.255",
+            "10.100.0.0",
+            "192.168.1.255",
+            "10.8.0.255",
+            "192.168.2.255",
+        ));
+        assert!(reserved_at(&r, NODE_MESH_IP, ReservedAddress::Broadcast));
+        assert!(reserved_at(&r, CLIENT_MESH_IP, ReservedAddress::Network));
+        assert!(reserved_at(&r, DEVICE_IP, ReservedAddress::Broadcast));
+        assert!(reserved_at(&r, VPN_CLIENT_IP, ReservedAddress::Broadcast));
+        assert!(reserved_at(&r, CLIENT_ZONE_IP, ReservedAddress::Broadcast));
+    }
+
+    #[test]
+    fn networks_host_ips_ordinary_addresses_are_fine() {
+        // Same fixture, every IP an ordinary host address: no reserved-address error.
+        let r = report(&reserved_fixture(
+            "10.100.0.1",
+            "10.100.0.100",
+            "192.168.1.50",
+            "10.8.0.2",
+            "192.168.2.60",
+        ));
+        assert!(!has_error(&r, |e| matches!(
+            e,
+            ValidationError::ReservedHostAddress { .. }
+        )));
+    }
+
+    #[test]
+    fn networks_slash_31_has_no_reserved_addresses() {
+        // RFC 3021: both addresses of a /31 are usable host addresses.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/31
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.0
+  Cabin:
+    publicKey: CCCC
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.1
+",
+        );
+        assert!(
+            r.errors.is_empty(),
+            "unexpected errors: {:?}",
+            r.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+        );
     }
 
     // ── ports ──────────────────────────────────────────────────────────────
