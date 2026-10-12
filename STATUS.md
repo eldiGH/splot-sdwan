@@ -11,7 +11,7 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 - YAML config loader at `src/config.rs` — deserializes `splot.yml` into typed Rust structs (`Config`, `Node`, `Zone`, `VpnInterface`, `Client`, `Service`, etc.).
 - Custom `OneOrManyUnique<T>` type — accepts a single value or a list in YAML, deduplicated into a `BTreeSet`. Used for `tags`, `macs`, `proto`, `allowFrom`.
 - All config maps and sets are `BTreeMap`/`BTreeSet`, so iteration order — and with it validation output and generated UCI — is deterministic across runs.
-- `deny_unknown_fields` at the top-level `Config` struct catches typos in field names.
+- `deny_unknown_fields` on every config struct: a misspelled key anywhere is a parse error naming the config path, the unknown key, the valid keys, and the line/column.
 - Typed IP / network handling via `src/types/ip.rs` (`Ipv4Addr`, `Ipv4Interface`, `Ipv4Network` with subnet membership / overlap predicates).
 - Typed MAC handling via `src/types/mac.rs`.
 

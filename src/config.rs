@@ -21,7 +21,7 @@ use crate::{
 };
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ServiceWan {
     pub via: WanViaTargets,
 
@@ -30,7 +30,7 @@ pub struct ServiceWan {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Service {
     pub port: ServicePort,
     pub proto: OneOrManyUnique<Protocol>,
@@ -42,7 +42,7 @@ pub struct Service {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeZoneDevice {
     pub ip: Ipv4Addr,
     pub macs: OneOrManyUnique<MacAddress>,
@@ -54,7 +54,7 @@ pub struct NodeZoneDevice {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeVpnInterfaceClient {
     pub public_key: String,
     pub ip: Ipv4Addr,
@@ -66,7 +66,7 @@ pub struct NodeVpnInterfaceClient {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeVpnInterface {
     pub listen_port: Port,
     pub address: Ipv4Interface,
@@ -77,7 +77,7 @@ pub struct NodeVpnInterface {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeZone {
     pub address: Ipv4Interface,
 
@@ -88,7 +88,7 @@ pub struct NodeZone {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Node {
     pub public_key: String,
     pub endpoint: Ipv4Addr,
@@ -169,7 +169,7 @@ impl Node {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Client {
     pub mesh_ip: Option<Ipv4Addr>,
     pub public_key: Option<String>,
@@ -741,5 +741,76 @@ clients:
         let f = Fixture::load();
         // Nowhere has no ips entry at all
         assert!(f.nowhere.network_by_name(&id("Home"), &id("lan")).is_none());
+    }
+
+    // --- Unknown keys are rejected at every level ---
+    //
+    // A typo below the top level used to be silently ignored. The worst case is a
+    // misspelled `wan.sources`: the allowlist vanished and the service was exposed
+    // to the whole internet, with `check` passing.
+
+    fn parse_error(yaml: &str) -> String {
+        match serde_yml::from_str::<Config>(yaml) {
+            Ok(_) => panic!("config with an unknown key parsed successfully"),
+            Err(err) => err.to_string(),
+        }
+    }
+
+    const NODE: &str = "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAA
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+";
+
+    #[test]
+    fn misspelled_wan_sources_is_rejected() {
+        let err = parse_error(&format!(
+            "{NODE}
+    services:
+      https:
+        port: 443
+        proto: tcp
+        wan:
+          via: Home
+          source: 198.51.100.0/24
+"
+        ));
+        assert!(err.contains("unknown field `source`"), "{err}");
+    }
+
+    #[test]
+    fn misspelled_device_key_is_rejected() {
+        let err = parse_error(&format!(
+            "{NODE}
+    zones:
+      lan:
+        address: 192.168.1.1/24
+        devices:
+          printer:
+            ip: 192.168.1.16
+            macs: aa:bb:cc:00:00:02
+            macss: aa:bb:cc:00:00:03
+"
+        ));
+        assert!(err.contains("unknown field `macss`"), "{err}");
+    }
+
+    #[test]
+    fn misspelled_client_key_is_rejected() {
+        let err = parse_error(&format!(
+            "{NODE}
+clients:
+  Phone:
+    meshIp: 10.100.0.100
+    publicKey: BBBB
+    tag: admin
+"
+        ));
+        assert!(err.contains("unknown field `tag`"), "{err}");
     }
 }
