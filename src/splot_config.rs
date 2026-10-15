@@ -12,6 +12,12 @@ fn get_config_dir() -> PathBuf {
     PathBuf::from(env::uci_config_dir().unwrap_or_else(|| "/etc/config".to_owned()))
 }
 
+/// uci option holding a VPN interface's private key. Option names follow the same
+/// rules as section names, so `-` in the interface name is mapped to `_`.
+fn vpn_key_path(interface: &Identifier) -> String {
+    format!("splot.vpn_interface_keys.{}", uci::name(interface.as_ref()))
+}
+
 fn init_mesh_key() -> Result<String, SplotConfigError> {
     let path = get_config_dir().join("splot");
     fs::OpenOptions::new()
@@ -76,7 +82,7 @@ impl SplotConfig {
         let mut keys_to_add = HashMap::new();
 
         for interface in interfaces {
-            match uci::get(&format!("splot.vpn_interface_keys.{interface}"))? {
+            match uci::get(&vpn_key_path(interface))? {
                 Some(key) => {
                     validate_private_key(&key).map_err(|err| {
                         SplotConfigError::InvalidVpnInterfaceKey {
@@ -100,9 +106,11 @@ impl SplotConfig {
         }
 
         let commands = iter::once(UciBatchCommand::set("splot.vpn_interface_keys", "keys"))
-            .chain(keys_to_add.into_iter().map(|(interface, key)| {
-                UciBatchCommand::set(format!("splot.vpn_interface_keys.{interface}"), key)
-            }))
+            .chain(
+                keys_to_add
+                    .into_iter()
+                    .map(|(interface, key)| UciBatchCommand::set(vpn_key_path(&interface), key)),
+            )
             .chain(iter::once(UciBatchCommand::commit("splot")))
             .collect::<Vec<_>>();
 

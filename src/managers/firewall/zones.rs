@@ -4,8 +4,8 @@ use crate::{
     managers::{
         UciSectionBuilder,
         firewall::{consts::FIREWALL_FILE_NAME, types::FirewallAction},
+        naming,
     },
-    naming,
     uci::UciBatchCommand,
 };
 
@@ -31,7 +31,7 @@ impl Default for FirewallZone {
 
 impl FirewallZone {
     pub fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
-        UciSectionBuilder::new(FIREWALL_FILE_NAME, &self.name, "zone")
+        UciSectionBuilder::new(FIREWALL_FILE_NAME, &naming::interface(&self.name), "zone")
             .set("name", naming::name_prefixed(&self.name))
             .set("input", self.input.to_string())
             .set("output", self.output.to_string())
@@ -44,14 +44,14 @@ impl FirewallZone {
 pub fn get_firewall_zones(own_node: &Node) -> Vec<FirewallZone> {
     let mut zones = vec![FirewallZone {
         name: consts::MESH_INTERFACE_NAME.to_owned(),
-        network: vec![naming::mesh_interface()],
+        network: vec![naming::mesh_interface().to_string()],
 
         ..Default::default()
     }];
 
     zones.extend(own_node.vpn_interfaces.keys().map(|name| FirewallZone {
         name: name.to_string(),
-        network: vec![naming::interface(name)],
+        network: vec![naming::interface(name).to_string()],
         ..Default::default()
     }));
 
@@ -126,5 +126,39 @@ nodes:
     fn operator_managed_zones_not_included() {
         // "lan" is operator-managed; splot must not create a firewall zone for it.
         assert!(!zones().iter().any(|z| z.name == "lan"));
+    }
+
+    #[test]
+    fn hyphenated_vpn_interface_zone_points_at_the_mapped_interface() {
+        // The zone's `network` list must name the interface exactly as the network
+        // generator created it (`spl_guest_wifi`), or the zone covers nothing.
+        let cfg = config(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    vpnInterfaces:
+      guest-wifi:
+        listenPort: 51821
+        address: 10.8.0.1/24
+        clients: {}
+",
+        );
+        let own_name: crate::types::identifier::Identifier = "Home".parse().unwrap();
+        let zones = get_firewall_zones(cfg.nodes.get(&own_name).unwrap());
+        let rendered: Vec<String> = zones
+            .iter()
+            .flat_map(|zone| zone.to_uci_commands())
+            .map(|command| command.to_string())
+            .collect();
+        assert!(rendered.contains(&"set firewall.spl_guest_wifi='zone'".to_owned()));
+        assert!(
+            rendered
+                .contains(&"add_list firewall.spl_guest_wifi.network='spl_guest_wifi'".to_owned())
+        );
     }
 }

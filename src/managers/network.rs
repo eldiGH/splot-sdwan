@@ -5,8 +5,10 @@ use log::{debug, info};
 use crate::{
     config::{Config, NodeVpnInterface},
     consts,
-    managers::{NodeContext, UciManager, UciSectionBuilder},
-    naming,
+    managers::{
+        NodeContext, UciManager, UciSectionBuilder,
+        naming::{self, SectionKind, UciSectionName},
+    },
     types::{
         identifier::Identifier,
         ip::{Ipv4Interface, Ipv4Network},
@@ -29,12 +31,13 @@ struct WgInterface {
 
 impl WgInterface {
     fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
-        let mut commands = UciSectionBuilder::new(FILE_NAME, &self.name, "interface")
-            .set("proto", "wireguard")
-            .set("private_key", &self.private_key)
-            .set("listen_port", self.listen_port.to_string())
-            .extend_list("address", &self.addresses)
-            .build();
+        let mut commands =
+            UciSectionBuilder::new(FILE_NAME, &naming::interface(&self.name), "interface")
+                .set("proto", "wireguard")
+                .set("private_key", &self.private_key)
+                .set("listen_port", self.listen_port.to_string())
+                .extend_list("address", &self.addresses)
+                .build();
 
         commands.extend(
             self.clients
@@ -59,7 +62,7 @@ impl WgClient {
     fn to_uci_commands(&self, interface_name: &str) -> Vec<UciBatchCommand> {
         UciSectionBuilder::new(
             FILE_NAME,
-            &self.description,
+            &UciSectionName::tagged(SectionKind::Peer, [interface_name, &self.description]),
             &format!("wireguard_{}", naming::interface(interface_name)),
         )
         .set("description", naming::name_prefixed(&self.description))
@@ -300,8 +303,12 @@ nodes:
 
     #[test]
     fn remote_node_peer_section_present() {
-        // Cabin is a remote mesh peer → section with wireguard_spl_mesh type.
-        assert!(has_cmd(&cmds(), "network.spl_Cabin='wireguard_spl_mesh'"));
+        // Cabin is a remote mesh peer → peer section on the mesh interface, with
+        // wireguard_spl_mesh type.
+        assert!(has_cmd(
+            &cmds(),
+            "network.spl_peer_mesh_Cabin='wireguard_spl_mesh'"
+        ));
     }
 
     #[test]
@@ -321,5 +328,104 @@ nodes:
         let c = cmds();
         assert!(has_cmd(&c, &format!("spl_vpn_a.private_key='{VPN_A_KEY}'")));
         assert!(!has_cmd(&c, &format!("spl_vpn_a.private_key='{MESH_KEY}'")));
+    }
+
+    fn cmds_for(yaml: &str, vpn_interfaces: &[&str]) -> Vec<UciBatchCommand> {
+        let cfg = config(yaml);
+        let own_name: Identifier = "Home".parse().unwrap();
+        let keys: Vec<(&str, &str)> = vpn_interfaces
+            .iter()
+            .map(|name| (*name, VPN_A_KEY))
+            .collect();
+        let splot_config = SplotConfig::for_tests(MESH_KEY, &keys);
+
+        NetworkManager.generate_commands(
+            &cfg,
+            &NodeContext {
+                own_node: cfg.nodes.get(&own_name).unwrap(),
+                own_name: &own_name,
+                splot_config: &splot_config,
+            },
+        )
+    }
+
+    #[test]
+    fn same_client_on_mesh_and_vpn_interface_gets_two_peer_sections() {
+        // Phone is a mesh peer (meshIp) and a peer on Home's `guests` interface.
+        // Both peer sections used to be named `spl_Phone`, and uci merged them into
+        // one `guests` peer: the mesh peer silently disappeared.
+        let c = cmds_for(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    vpnInterfaces:
+      guests:
+        listenPort: 51821
+        address: 10.8.0.1/24
+        clients: {}
+clients:
+  Phone:
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+    meshIp: 10.100.0.100
+    ips:
+      Home:
+        guests: 10.8.0.5
+",
+            &["guests"],
+        );
+        assert!(has_cmd(
+            &c,
+            "set network.spl_peer_mesh_Phone='wireguard_spl_mesh'"
+        ));
+        assert!(has_cmd(
+            &c,
+            "set network.spl_peer_guests_Phone='wireguard_spl_guests'"
+        ));
+        assert!(!has_cmd(&c, "set network.spl_Phone="));
+        assert!(crate::pipeline::find_duplicate_sections(&c).is_empty());
+    }
+
+    #[test]
+    fn hyphenated_vpn_interface_gets_valid_names_everywhere() {
+        // uci rejects '-' in section names; the interface, and the peer type that
+        // has to match it (`wireguard_<interface>`), both use the mapped name.
+        let c = cmds_for(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    vpnInterfaces:
+      guest-wifi:
+        listenPort: 51821
+        address: 10.8.0.1/24
+        clients:
+          old-laptop:
+            publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+            ip: 10.8.0.2
+",
+            &["guest-wifi"],
+        );
+        assert!(has_cmd(&c, "set network.spl_guest_wifi='interface'"));
+        assert!(has_cmd(
+            &c,
+            "set network.spl_peer_guest_wifi_old_laptop='wireguard_spl_guest_wifi'"
+        ));
+        // No section or section type anywhere contains a hyphen.
+        for command in &c {
+            if let UciBatchCommand::Set(path, value) = command
+                && path.matches('.').count() == 1
+            {
+                assert!(!path.contains('-') && !value.contains('-'), "{command}");
+            }
+        }
     }
 }

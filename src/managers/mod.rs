@@ -2,7 +2,6 @@ use std::fmt::Display;
 
 use crate::{
     config::{Config, Node},
-    consts,
     splot_config::SplotConfig,
     types::identifier::Identifier,
     uci::UciBatchCommand,
@@ -10,7 +9,10 @@ use crate::{
 
 pub mod dhcp;
 pub mod firewall;
+pub mod naming;
 pub mod network;
+
+use naming::UciSectionName;
 
 pub trait UciManager {
     fn generate_commands(
@@ -34,8 +36,8 @@ struct UciSectionBuilder {
 }
 
 impl UciSectionBuilder {
-    fn new(file: &str, name: &str, section_type: &str) -> Self {
-        let path = format!("{file}.{}{name}", consts::SPLOT_SECTION_PREFIX);
+    fn new(file: &str, name: &UciSectionName, section_type: &str) -> Self {
+        let path = format!("{file}.{name}");
 
         let commands = vec![UciBatchCommand::set(&path, section_type)];
 
@@ -152,7 +154,7 @@ mod tests {
     }
 
     fn builder() -> UciSectionBuilder {
-        UciSectionBuilder::new("firewall", "my_rule", "rule")
+        UciSectionBuilder::new("firewall", &UciSectionName::new(["my_rule"]), "rule")
     }
 
     #[test]

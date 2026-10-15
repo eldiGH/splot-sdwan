@@ -48,6 +48,12 @@ impl UciBatchCommand {
     }
 }
 
+/// Maps an identifier to a valid uci section/option name. uci accepts only
+/// `[A-Za-z0-9_]` there, while identifiers may also contain `-`, so `-` becomes `_`.
+pub fn name(identifier: &str) -> String {
+    identifier.replace('-', "_")
+}
+
 impl std::fmt::Display for UciBatchCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -213,6 +219,13 @@ mod tests {
         // The value is placed inside single-quotes; spaces inside are fine.
         let cmd = UciBatchCommand::set("network.spl_x.name", "hello world");
         assert_eq!(render(&cmd), "set network.spl_x.name='hello world'");
+    }
+
+    #[test]
+    fn name_maps_hyphens_to_underscores() {
+        // uci rejects '-' in section and option names ("uci: Invalid argument").
+        assert_eq!(name("a-b-c"), "a_b_c");
+        assert_eq!(name("plain_name"), "plain_name");
     }
 
     #[test]

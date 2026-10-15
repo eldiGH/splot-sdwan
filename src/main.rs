@@ -15,7 +15,6 @@ pub mod config;
 pub mod consts;
 pub mod env;
 pub mod managers;
-pub mod naming;
 pub mod pipeline;
 pub mod protocol;
 pub mod splot_config;

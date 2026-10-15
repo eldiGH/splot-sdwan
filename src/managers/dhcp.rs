@@ -4,8 +4,10 @@ use log::{Level, debug, info, log_enabled};
 
 use crate::{
     config::{Config, Node, NodeZoneDevice, ZoneOrVpnInterface},
-    managers::{NodeContext, UciManager, UciSectionBuilder},
-    naming,
+    managers::{
+        NodeContext, UciManager, UciSectionBuilder,
+        naming::{self, UciSectionName},
+    },
     types::{identifier::Identifier, mac::MacAddress},
     uci::UciBatchCommand,
 };
@@ -22,7 +24,7 @@ struct DhcpStaticLease {
 
 impl DhcpStaticLease {
     fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
-        UciSectionBuilder::new(FILE_NAME, &self.name, "host")
+        UciSectionBuilder::new(FILE_NAME, &UciSectionName::new([&self.name]), "host")
             .set("name", naming::name_prefixed(&self.name))
             .set("ip", self.ip.to_string())
             .extend_list("mac", &self.macs)

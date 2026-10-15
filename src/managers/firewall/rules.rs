@@ -8,8 +8,8 @@ use crate::{
             consts::FIREWALL_FILE_NAME,
             types::{FirewallAction, TagMap},
         },
+        naming::{self, SectionKind, UciSectionName},
     },
-    naming,
     protocol::Protocols,
     types::{
         identifier::Identifier,
@@ -19,8 +19,19 @@ use crate::{
     uci::UciBatchCommand,
 };
 
+/// Where the protected host is, seen from the node being configured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleDirection {
+    /// A host on this node: its own services, its devices and VPN clients, and
+    /// global clients on its networks.
+    Ingress,
+    /// A host on another node, reached from sources local to this node.
+    Egress,
+}
+
 pub struct FirewallRule {
     pub name: String,
+    pub direction: RuleDirection,
     pub src_ip: Vec<Ipv4Network>,
     pub proto: Protocols,
     pub dest_port: PortOrRange,
@@ -30,7 +41,13 @@ pub struct FirewallRule {
 
 impl FirewallRule {
     pub fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
-        UciSectionBuilder::new(FIREWALL_FILE_NAME, &self.name, "rule")
+        let kind = match self.direction {
+            RuleDirection::Ingress => SectionKind::RuleIn,
+            RuleDirection::Egress => SectionKind::RuleOut,
+        };
+        let section = UciSectionName::tagged(kind, [&self.name]);
+
+        UciSectionBuilder::new(FIREWALL_FILE_NAME, &section, "rule")
             .set("name", naming::name_prefixed(&self.name))
             .set("src", "*")
             .set("dest", "*")
@@ -44,6 +61,7 @@ impl FirewallRule {
 }
 
 fn generate_rule_from_service(
+    direction: RuleDirection,
     service_name: &Identifier,
     service: &Service,
     dest_addresses: impl IntoIterator<Item = Ipv4Interface>,
@@ -90,6 +108,7 @@ fn generate_rule_from_service(
     Some(FirewallRule {
         src_ip: src_ips,
         name: rule_name,
+        direction,
         dest_ip: dest_addresses
             .iter()
             .map(|address| Ipv4Network::host(address.ip()))
@@ -117,6 +136,7 @@ pub fn get_firewall_ingress_rules(
 
     for (service_name, service) in &node_context.own_node.services {
         rules.extend(generate_rule_from_service(
+            RuleDirection::Ingress,
             service_name,
             service,
             node_context.own_node.host_interfaces(),
@@ -130,6 +150,7 @@ pub fn get_firewall_ingress_rules(
         for (device_name, device) in &zone.devices {
             for (service_name, service) in &device.services {
                 rules.extend(generate_rule_from_service(
+                    RuleDirection::Ingress,
                     service_name,
                     service,
                     [Ipv4Interface::from_ip(device.ip, zone.address.prefix())
@@ -149,6 +170,7 @@ pub fn get_firewall_ingress_rules(
                 // interface traverse the firewall, so the same-network filter must keep
                 // same-subnet sources rather than treating them as no-ops.
                 rules.extend(generate_rule_from_service(
+                    RuleDirection::Ingress,
                     service_name,
                     service,
                     [Ipv4Interface::host(client.ip)],
@@ -176,6 +198,7 @@ pub fn get_firewall_ingress_rules(
 
         for (service_name, service) in &client.services {
             rules.extend(generate_rule_from_service(
+                RuleDirection::Ingress,
                 service_name,
                 service,
                 ips.iter().cloned(),
@@ -212,6 +235,7 @@ pub fn get_firewall_egress_rules(
 
         rules.extend(node.services.iter().filter_map(|(service_name, service)| {
             generate_rule_from_service(
+                RuleDirection::Egress,
                 service_name,
                 service,
                 host_interfaces.iter().cloned(),
@@ -227,6 +251,7 @@ pub fn get_firewall_egress_rules(
             for (device_name, device) in &zone.devices {
                 for (service_name, service) in &device.services {
                     rules.extend(generate_rule_from_service(
+                        RuleDirection::Egress,
                         service_name,
                         service,
                         [Ipv4Interface::from_ip(device.ip, zone.address.prefix())
@@ -246,6 +271,7 @@ pub fn get_firewall_egress_rules(
                     // interface traverse the firewall, so the same-network filter must keep
                     // same-subnet sources rather than treating them as no-ops.
                     rules.extend(generate_rule_from_service(
+                        RuleDirection::Egress,
                         service_name,
                         service,
                         [Ipv4Interface::host(client.ip)],
@@ -279,6 +305,7 @@ pub fn get_firewall_egress_rules(
 
         for (service_name, service) in &client.services {
             rules.extend(generate_rule_from_service(
+                RuleDirection::Egress,
                 service_name,
                 service,
                 external_client_addresses.iter().cloned(),
@@ -571,5 +598,61 @@ nodes:
         let rules = egress(EGRESS_FIXTURE, "Cabin");
         // From Cabin, `web` is local (ingress), so it must not appear in egress.
         assert!(!rules.iter().any(|r| r.name.contains("web")));
+    }
+
+    #[test]
+    fn ingress_and_egress_rule_of_one_service_get_distinct_sections() {
+        // Laptop lives on both Home's and Cabin's LAN and offers ssh. From Home's
+        // view that's an ingress rule (its Home IP) and an egress rule (its Cabin
+        // IP). Both used to be `spl_Laptop_ssh`, and uci merged them into one rule
+        // allowing the cross-product of all sources and destinations.
+        let yaml = "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    zones:
+      lan:
+        address: 192.168.2.1/24
+        devices:
+          pc:
+            ip: 192.168.2.10
+            macs: AA:BB:CC:DD:EE:01
+clients:
+  Laptop:
+    macs: AA:BB:CC:DD:EE:02
+    ips:
+      Home: { lan: 192.168.1.50 }
+      Cabin: { lan: 192.168.2.50 }
+    services:
+      ssh: { port: 22, proto: tcp, allowFrom: [Cabin.pc, Home.lan] }
+";
+        // The first command of a rule creates its section.
+        let sections = |rules: Vec<FirewallRule>| -> Vec<String> {
+            rules
+                .iter()
+                .map(|rule| rule.to_uci_commands()[0].to_string())
+                .collect()
+        };
+        let ingress = sections(ingress(yaml, "Home"));
+        let egress = sections(egress(yaml, "Home"));
+
+        let laptop_in = "set firewall.spl_in_Laptop_ssh='rule'".to_owned();
+        let laptop_out = "set firewall.spl_out_Laptop_ssh='rule'".to_owned();
+        assert!(ingress.contains(&laptop_in), "{ingress:?}");
+        assert!(!ingress.contains(&laptop_out), "{ingress:?}");
+        assert!(egress.contains(&laptop_out), "{egress:?}");
+        assert!(!egress.contains(&laptop_in), "{egress:?}");
     }
 }

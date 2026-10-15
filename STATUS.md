@@ -82,10 +82,13 @@ The validator runs in `main.rs` before any UCI generation — validation errors 
 - Validates stored private keys structurally (`validate_private_key` — length, base64 charset, padding).
 - Used during `splot_config` initialization and to identify the current node by matching the local pubkey against `node.publicKey` in the config.
 
-### UCI section naming (`src/naming.rs`)
+### UCI section naming (`src/managers/naming.rs`)
 
-- Canonical names for splot-generated UCI sections — uses the `spl_` prefix (declared in `consts.rs`) to keep splot-managed sections distinct from operator-managed ones.
-- Qualified naming scheme for cross-node rules: a remote device's service is namespaced by node name (e.g., `Home_printer_ssh`), preventing collisions with same-name objects on different nodes.
+- Section names are a uci concern: the generated structs (`FirewallRule`, `FirewallRedirect`, …) carry what an object is (its name, a rule's `direction`), and `to_uci_commands()` turns that into a section name. Other backends will name things their own way.
+- Every generated section name, and every reference to one, is built by `UciSectionName`: the `spl_` prefix (declared in `consts.rs`) keeps splot-managed sections apart from operator-managed ones, parts are joined with `_`, and `-` is mapped to `_` by `uci::name` (uci rejects `-` in section and option names).
+- Where a uci file mixes kinds, the name carries a kind tag, so different kinds can't collide: WireGuard peers `spl_peer_<interface>_<name>`, firewall rules `spl_in_…` (traffic to this node's hosts) / `spl_out_…` (from local sources to other nodes), port forwards `spl_dnat_…`. Interfaces, zones and DHCP hosts keep `spl_<name>`, because other config refers to them by name.
+- Cross-node rules are namespaced by node name (e.g. `spl_out_Home_printer_ssh`).
+- Safety net: the pipeline refuses a batch that creates the same section twice (`find_duplicate_sections`), instead of letting uci merge the two into one. It runs before splot touches uci at all.
 
 ### Tests (`cargo test`)
 

@@ -2,8 +2,11 @@ use std::net::Ipv4Addr;
 
 use crate::{
     config::{Config, Service},
-    managers::{NodeContext, UciSectionBuilder, firewall::consts::FIREWALL_FILE_NAME},
-    naming,
+    managers::{
+        NodeContext, UciSectionBuilder,
+        firewall::consts::FIREWALL_FILE_NAME,
+        naming::{self, SectionKind, UciSectionName},
+    },
     protocol::Protocols,
     types::{
         identifier::Identifier, ip::Ipv4Network, port::PortOrRange, wan_via_target::WanViaTarget,
@@ -25,7 +28,9 @@ pub struct FirewallRedirect {
 
 impl FirewallRedirect {
     pub fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
-        UciSectionBuilder::new(FIREWALL_FILE_NAME, &self.name, "redirect")
+        let section = UciSectionName::tagged(SectionKind::Dnat, [&self.name]);
+
+        UciSectionBuilder::new(FIREWALL_FILE_NAME, &section, "redirect")
             .set("name", naming::name_prefixed(&self.name))
             .set("target", "DNAT")
             .set("src", self.src.to_string())
@@ -64,9 +69,9 @@ impl RedirectBuilder<'_> {
         }
 
         let name = if node_name == owner_name {
-            format!("{owner_name}_{service_name}_redirect")
+            format!("{owner_name}_{service_name}")
         } else {
-            format!("{node_name}_{owner_name}_{service_name}_redirect")
+            format!("{node_name}_{owner_name}_{service_name}")
         };
 
         Some(FirewallRedirect {
@@ -141,8 +146,9 @@ impl RedirectBuilder<'_> {
                         continue;
                     };
 
+                    let name = format!("{client_name}_{service_name}");
                     redirects.push(FirewallRedirect {
-                        name: format!("{client_name}_{service_name}_redirect"),
+                        name,
                         proto: service.proto.clone().into(),
                         src: self.wan_zone.clone(),
                         src_dport: service.port.external(),
