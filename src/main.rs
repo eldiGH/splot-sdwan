@@ -69,7 +69,13 @@ fn main() -> anyhow::Result<()> {
             if *dry_run {
                 pipeline.print(&config, &node_context)?;
             } else {
-                pipeline.run(&config, &node_context)?;
+                let changed = pipeline.run(&config, &node_context)?;
+
+                if changed.is_empty() {
+                    println!("Nothing changed.");
+                } else {
+                    println!("Applied and reloaded: {}", changed.join(", "));
+                }
             }
         }
 

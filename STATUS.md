@@ -60,14 +60,24 @@ The validator runs in `main.rs` before any UCI generation — validation errors 
   - Global clients (`config.clients`) with `macs` and zone IPs on the current node.
 - Lease ties MAC to the zone IP so the device gets a predictable address every connection.
 
-### Batch UCI command execution (`src/uci.rs`, `src/pipeline.rs`)
+### Batch UCI command execution (`src/uci.rs`, `src/pipeline/`)
 
-- `UciPipeline` runs registered managers in sequence on each apply.
+- `UciPipeline` runs registered managers in sequence on each apply. It is the whole OpenWrt apply — check, stage, commit, reload — so `main` only reports the result.
 - Apply refuses to start while `network`, `firewall` or `dhcp` has uncommitted uci changes. uci keeps staged changes in one place per file, shared by every uci user on the router, so splot would commit (or revert) someone else's changes together with its own.
 - It then stages everything (deleting splot's old sections, creating the new ones) in one `uci batch` without commits. `uci batch` exits 0 even when it rejects a line — it prints the error to stderr and carries on — so any stderr output counts as failure: splot reverts its staged changes and commits nothing.
 - Only then does it commit, file by file. Commits across files aren't atomic: if one fails (e.g. a full flash), the files before it keep the new config, and the error says which.
 - The uci module exposes plain functions (`get`, `show`, `has_changes`, `batch`, `commit`, `revert`) over a shared `run()` helper with typed errors (`uci::Error`): spawn failures, I/O errors, non-zero exits and rejected input (stderr output) are distinguished, and uci's exact `Entry not found` message is classified as legitimate absence (`Ok(None)`) rather than failure.
 - Dry-run output redacts private-key values (`UciBatchCommand::redacted()`); the real batch input is never redacted.
+
+### Reloading services after apply (`src/pipeline/reload.rs`)
+
+- `uci commit` only writes files. After a commit that changed anything (each file's `uci show` is compared before and after), splot reloads the affected services and reports any failure; nothing changed → no reload.
+- `reload_config` reloads every service whose config changed: fw4 for `firewall`, dnsmasq for `dhcp`, netifd for interface-level changes (key, port, addresses). procd runs these reloads a second later.
+- netifd's reload doesn't see peer changes (peers are separate `wireguard_<interface>` sections), so when `network` changed, splot runs `ubus call network reload` (netifd re-reads the config now, so new interfaces exist) and then updates each of its WireGuard interfaces. It asks netifd first (`ubus call network get_proto_handlers`) whether the WireGuard handler supports renew:
+  - yes (OpenWrt 25.12+): `ubus call network.interface.<iface> renew` re-runs the setup with `wg syncconf`; live, tunnels stay up.
+  - no (24.10): `down` + `up` on the interface; the tunnels drop for a moment.
+- Every command is a request to procd/netifd that returns at once; the daemons do the restarts afterwards, independently of splot's session, so a reload that briefly drops the mesh can't cut splot off halfway. splot runs all commands even after one fails, then reports every failure.
+- `apply` fails before writing anything when `ubus` isn't available. `--dry-run` lists the reload commands as `#` comments, which `uci batch` ignores.
 
 ### CLI (`src/cli.rs`, `src/main.rs`)
 

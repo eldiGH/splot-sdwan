@@ -1,16 +1,23 @@
+mod reload;
+
 use std::collections::HashSet;
 
 use crate::{
     config::Config,
     consts,
-    managers::{NodeContext, UciManager},
+    managers::{NodeContext, UciManager, network},
     uci::{self, UciBatchCommand},
 };
+use reload::Reload;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineError {
     #[error(transparent)]
     Uci(#[from] uci::Error),
+    #[error("failed to ask netifd how WireGuard picks up changed peers")]
+    Netifd(#[source] reload::Error),
+    #[error(transparent)]
+    Reload(#[from] reload::Error),
     #[error(
         "generated config contains several sections named {}, which uci would silently merge into one - rename one of the objects behind each (names that differ only in '-' vs '_', or in where a '_' falls, end up identical)",
         .0.join(", ")
@@ -81,7 +88,14 @@ impl UciPipeline {
         self
     }
 
-    pub fn run(&self, config: &Config, node_context: &NodeContext) -> Result<(), PipelineError> {
+    /// Applies the generated config and makes it live: refuses to start while the
+    /// files have uncommitted changes, stages and commits splot's changes, then
+    /// reloads the services whose config changed. Returns the changed files.
+    pub fn run(
+        &self,
+        config: &Config,
+        node_context: &NodeContext,
+    ) -> Result<Vec<&'static str>, PipelineError> {
         // uci keeps uncommitted changes in one place per file, shared by every uci
         // user on the router: committing or reverting ours would commit or revert
         // theirs too. So don't start while there are any.
@@ -95,12 +109,45 @@ impl UciPipeline {
             return Err(PipelineError::PendingChanges(pending));
         }
 
-        self.changeset(config, node_context)?.apply()
+        // Asked before anything is written.
+        let peer_update = reload::peer_update().map_err(PipelineError::Netifd)?;
+
+        let files = self.files();
+        let before = snapshot(&files)?;
+        self.changeset(config, node_context, &before)?.apply()?;
+        let after = snapshot(&files)?;
+        let changed = changed_files(&before, &after);
+
+        if let Some(reload) = Reload::new(
+            &changed,
+            network::wireguard_interfaces(node_context.own_node),
+            peer_update,
+        ) {
+            reload.run()?;
+        }
+
+        Ok(changed)
     }
 
+    /// Prints what `run` would send to uci, and the reload after it.
     pub fn print(&self, config: &Config, node_context: &NodeContext) -> Result<(), PipelineError> {
-        for command in self.changeset(config, node_context)?.commands() {
+        let peer_update = reload::peer_update().map_err(PipelineError::Netifd)?;
+
+        let files = self.files();
+        let current = snapshot(&files)?;
+
+        for command in self.changeset(config, node_context, &current)?.commands() {
             println!("{}", command.redacted());
+        }
+
+        // As comments, so the output stays a valid `uci batch` script.
+        let wireguard_interfaces = network::wireguard_interfaces(node_context.own_node);
+        if let Some(reload) = Reload::new(&files, wireguard_interfaces, peer_update) {
+            println!("# Then, if anything changed, splot reloads the services;");
+            println!("# the network and WireGuard lines only if network changed:");
+            for command in reload.commands() {
+                println!("#   {command}");
+            }
         }
 
         Ok(())
@@ -117,8 +164,9 @@ impl UciPipeline {
         &self,
         config: &Config,
         node_context: &NodeContext,
+        current: &Snapshot,
     ) -> Result<Changeset, PipelineError> {
-        let files: Vec<&'static str> = self.get_files_used().collect();
+        let files = self.files();
         let generated = self.generate(config, node_context);
 
         // Checked before anything touches uci.
@@ -127,10 +175,15 @@ impl UciPipeline {
             return Err(PipelineError::DuplicateSections(duplicates));
         }
 
-        let mut changes = generate_delete_commands(&files)?;
+        let mut changes = delete_commands(current);
         changes.extend(generated);
 
         Ok(Changeset { files, changes })
+    }
+
+    /// The uci files the registered managers write.
+    fn files(&self) -> Vec<&'static str> {
+        self.get_files_used().collect()
     }
 
     fn get_files_used(&self) -> impl Iterator<Item = &'static str> {
@@ -220,13 +273,32 @@ pub(crate) fn find_duplicate_sections(commands: &[UciBatchCommand]) -> Vec<Strin
     duplicates
 }
 
-fn generate_delete_commands(
-    files_used: &[&'static str],
-) -> Result<Vec<UciBatchCommand>, uci::Error> {
+/// Each file's `uci show` output, or `None` when uci doesn't know the file.
+type Snapshot = Vec<(&'static str, Option<String>)>;
+
+fn snapshot(files: &[&'static str]) -> Result<Snapshot, uci::Error> {
+    files
+        .iter()
+        .map(|file| Ok((*file, uci::show(file)?)))
+        .collect()
+}
+
+/// The files whose config differs between the two snapshots.
+fn changed_files(before: &Snapshot, after: &Snapshot) -> Vec<&'static str> {
+    before
+        .iter()
+        .zip(after)
+        .filter(|((_, old), (_, new))| old != new)
+        .map(|((file, _), _)| *file)
+        .collect()
+}
+
+/// A delete for every splot-owned section (`<file>.spl_…`) in the snapshot.
+fn delete_commands(snapshot: &Snapshot) -> Vec<UciBatchCommand> {
     let mut delete_commands: Vec<UciBatchCommand> = Vec::new();
 
-    for file in files_used {
-        let Some(output) = uci::show(file)? else {
+    for (file, output) in snapshot {
+        let Some(output) = output else {
             continue;
         };
         let prefix = format!("{}.{}", file, consts::SPLOT_SECTION_PREFIX);
@@ -251,7 +323,7 @@ fn generate_delete_commands(
         }
     }
 
-    Ok(delete_commands)
+    delete_commands
 }
 
 #[cfg(test)]
@@ -266,6 +338,52 @@ mod tests {
 
     fn set(path: &str, value: &str) -> UciBatchCommand {
         UciBatchCommand::set(path, value)
+    }
+
+    #[test]
+    fn deletes_splot_sections_only() {
+        let snapshot: Snapshot = vec![
+            (
+                "network",
+                Some(
+                    "network.loopback=interface
+network.loopback.proto='static'
+network.split_lan=interface
+network.spl_mesh=interface
+network.spl_mesh.proto='wireguard'
+network.spl_wireguard_spl_mesh_Cabin=wireguard_spl_mesh"
+                        .to_owned(),
+                ),
+            ),
+            ("dhcp", None), // no such file yet
+        ];
+        let rendered: Vec<String> = delete_commands(&snapshot)
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+        assert_eq!(
+            rendered,
+            [
+                "delete network.spl_mesh",
+                "delete network.spl_wireguard_spl_mesh_Cabin",
+            ]
+        );
+    }
+
+    #[test]
+    fn changed_files_are_those_whose_config_differs() {
+        let before: Snapshot = vec![
+            ("network", Some("network.spl_mesh=interface".to_owned())),
+            ("firewall", Some("firewall.spl_zone_mesh=zone".to_owned())),
+            ("dhcp", None),
+        ];
+        let after: Snapshot = vec![
+            ("network", Some("network.spl_mesh=interface".to_owned())),
+            ("firewall", Some("firewall.spl_zone_lan=zone".to_owned())),
+            ("dhcp", Some("dhcp.spl_host_nas=host".to_owned())),
+        ];
+        assert_eq!(changed_files(&before, &after), ["firewall", "dhcp"]);
+        assert!(changed_files(&before, &before).is_empty());
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::{iter, net::Ipv4Addr};
 use log::{debug, info};
 
 use crate::{
-    config::{Config, NodeVpnInterface},
+    config::{Config, Node, NodeVpnInterface},
     consts,
     managers::{
         NodeContext, UciManager, UciSection, UciSectionBuilder,
@@ -258,6 +258,18 @@ fn build_node_interfaces(node_context: &NodeContext, config: &Config) -> Vec<WgI
     interfaces
 }
 
+/// The names of splot's WireGuard interfaces on `node` — the mesh, then one per
+/// VPN interface: the interfaces `NetworkManager` creates.
+// TODO(T18): with hubs replacing `vpnInterfaces`, a node has one WireGuard
+// interface: this becomes just the mesh interface, and the test keeping it in step
+// with `build_node_interfaces` goes away.
+pub fn wireguard_interfaces(node: &Node) -> Vec<String> {
+    iter::once(naming::mesh_interface())
+        .chain(node.vpn_interfaces.keys().map(naming::interface))
+        .map(|name| name.to_string())
+        .collect()
+}
+
 pub struct NetworkManager;
 
 impl UciManager for NetworkManager {
@@ -324,6 +336,25 @@ nodes:
                 splot_config: &splot_config,
             },
         )
+    }
+
+    #[test]
+    fn wireguard_interfaces_are_the_generated_interface_sections() {
+        // The reload after apply renews these by name: they must be exactly the
+        // interfaces this manager creates.
+        let cfg = config(FIXTURE);
+        let home = &cfg.nodes[&"Home".parse::<Identifier>().unwrap()];
+        let generated: Vec<String> = cmds()
+            .iter()
+            .filter_map(|command| match command {
+                UciBatchCommand::Set(path, value) if value == "interface" => {
+                    path.strip_prefix("network.").map(str::to_owned)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(generated, ["spl_mesh", "spl_vpn_a"]);
+        assert_eq!(wireguard_interfaces(home), generated);
     }
 
     #[test]
