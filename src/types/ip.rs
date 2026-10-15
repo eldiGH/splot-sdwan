@@ -171,13 +171,6 @@ impl Ipv4Interface {
 
         (ip.to_bits() & mask) == (self.addr.to_bits() & mask)
     }
-
-    pub fn host(ip: Ipv4Addr) -> Self {
-        Self {
-            addr: ip,
-            prefix: 32,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -221,6 +214,13 @@ impl Display for ReservedAddress {
             Self::Broadcast => write!(f, "broadcast"),
         }
     }
+}
+
+/// Why an IP can't be a host on a subnet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotAHost {
+    Outside,
+    Reserved(ReservedAddress),
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
@@ -301,6 +301,21 @@ impl Ipv4Network {
             Some(ReservedAddress::Broadcast)
         } else {
             None
+        }
+    }
+
+    /// `ip` as a host on this subnet: inside it, and neither its network nor its
+    /// broadcast address.
+    pub fn host_interface(&self, ip: Ipv4Addr) -> Result<Ipv4Interface, NotAHost> {
+        if !self.contains(ip) {
+            Err(NotAHost::Outside)
+        } else if let Some(kind) = self.reserved_address(ip) {
+            Err(NotAHost::Reserved(kind))
+        } else {
+            Ok(Ipv4Interface {
+                addr: ip,
+                prefix: self.prefix,
+            })
         }
     }
 
@@ -464,5 +479,36 @@ mod tests {
         let i: Ipv4Interface = "192.168.1.1/24".parse().unwrap();
         assert!(i.is_in_same_network(ip("192.168.1.50")));
         assert!(!i.is_in_same_network(ip("192.168.2.1")));
+    }
+
+    #[test]
+    fn network_host_interface_takes_the_subnet_prefix() {
+        let n = net("192.168.1.0/24");
+        assert_eq!(
+            n.host_interface(ip("192.168.1.50")).unwrap().to_string(),
+            "192.168.1.50/24"
+        );
+        // A /32 has no reserved addresses: its one address is a host.
+        assert_eq!(
+            net("10.0.0.5/32")
+                .host_interface(ip("10.0.0.5"))
+                .unwrap()
+                .to_string(),
+            "10.0.0.5/32"
+        );
+    }
+
+    #[test]
+    fn network_host_interface_rejects_what_cant_be_a_host() {
+        let n = net("192.168.1.0/24");
+        assert_eq!(n.host_interface(ip("192.168.2.50")), Err(NotAHost::Outside));
+        assert_eq!(
+            n.host_interface(ip("192.168.1.0")),
+            Err(NotAHost::Reserved(ReservedAddress::Network))
+        );
+        assert_eq!(
+            n.host_interface(ip("192.168.1.255")),
+            Err(NotAHost::Reserved(ReservedAddress::Broadcast))
+        );
     }
 }

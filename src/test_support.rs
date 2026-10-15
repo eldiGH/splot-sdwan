@@ -1,8 +1,8 @@
 use crate::{
     config::Config,
-    model::validator::{
-        self,
-        types::{ValidationError, ValidationReport, ValidationWarning},
+    model::{
+        self, Network,
+        validator::types::{ValidationError, ValidationReport, ValidationWarning},
     },
 };
 
@@ -11,8 +11,30 @@ pub(crate) fn config(yaml: &str) -> Config {
 }
 
 pub(crate) fn report(yaml: &str) -> ValidationReport {
-    let cfg = config(yaml);
-    validator::validate_config(&cfg)
+    match model::validate(&config(yaml)) {
+        Ok(validated) => ValidationReport {
+            errors: Vec::new(),
+            warnings: validated.warnings,
+        },
+        Err(report) => report,
+    }
+}
+
+/// A fixture that must pass validation: its config, and the network it describes.
+pub(crate) fn checked(yaml: &str) -> (Config, Network) {
+    let config = config(yaml);
+
+    match model::validate(&config) {
+        Ok(validated) => (config, validated.network),
+        Err(report) => panic!(
+            "test fixture doesn't validate: {:?}",
+            report
+                .errors
+                .iter()
+                .map(|error| error.to_string())
+                .collect::<Vec<_>>()
+        ),
+    }
 }
 
 pub(crate) fn has_error(report: &ValidationReport, f: impl Fn(&ValidationError) -> bool) -> bool {

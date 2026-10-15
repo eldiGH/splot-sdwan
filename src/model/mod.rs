@@ -1,1 +1,214 @@
+//! The checked model: what a config becomes once it passed validation.
+
+pub mod host;
 pub mod validator;
+
+use crate::config::Config;
+use host::Host;
+use validator::{
+    Checked,
+    types::{ValidationReport, ValidationWarning},
+};
+
+/// The network a config describes, once it passed validation. Only [`validate`]
+/// makes one, so everything that reads it can rely on what validation checked.
+pub struct Network {
+    hosts: Vec<Host>,
+}
+
+impl Network {
+    /// Every host, in config order: each node, its devices zone by zone and its hub
+    /// clients, then the global clients.
+    pub fn hosts(&self) -> &[Host] {
+        &self.hosts
+    }
+}
+
+/// A network, and the warnings its config produced.
+pub struct Validated {
+    pub network: Network,
+    pub warnings: Vec<ValidationWarning>,
+}
+
+/// Turns `config` into a [`Network`] if it has no errors. Every problem is
+/// reported, not just the first.
+pub fn validate(config: &Config) -> Result<Validated, ValidationReport> {
+    let Checked { hosts, report } = validator::check(config);
+
+    if report.errors.is_empty() {
+        Ok(Validated {
+            network: Network { hosts },
+            warnings: report.warnings,
+        })
+    } else {
+        Err(report)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        model::host::{HostAddress, HostRef, Place},
+        test_support::{checked, config},
+        types::identifier::Identifier,
+    };
+
+    // Home declares a WAN zone no service uses: a warning, not an error.
+    const WARNING_ONLY: &str = "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+";
+
+    #[test]
+    fn config_with_warnings_only_becomes_a_network() {
+        let Ok(validated) = validate(&config(WARNING_ONLY)) else {
+            panic!("a config with warnings only must validate");
+        };
+        assert_eq!(validated.warnings.len(), 1);
+    }
+
+    #[test]
+    fn config_with_errors_becomes_no_network() {
+        // The same, plus a meshIp outside meshNetwork.
+        let yaml = WARNING_ONLY.replace("meshIp: 10.100.0.1", "meshIp: 10.200.0.1");
+        let Err(report) = validate(&config(&yaml)) else {
+            panic!("a config with errors must not validate");
+        };
+        assert!(!report.errors.is_empty());
+        // The warnings are still reported alongside the errors.
+        assert_eq!(report.warnings.len(), 1);
+    }
+
+    // One host of every kind. The device (printer) sorts after the hub client
+    // (camera) by name, but comes first in the config.
+    const HOSTS: &str = "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+        devices:
+          printer:
+            ip: 192.168.1.50
+            macs: AA:BB:CC:DD:EE:01
+            services:
+              ipp: { port: 631, proto: tcp, allowFrom: Phone }
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+clients:
+  Phone:
+    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+    meshIp: 10.100.1.10
+    macs: AA:BB:CC:DD:EE:02
+    ips:
+      Home: { lan: 192.168.1.60 }
+";
+
+    fn id(s: &str) -> Identifier {
+        s.parse().unwrap()
+    }
+
+    fn local(node: &str, name: &str) -> HostRef {
+        HostRef::Local {
+            node: id(node),
+            name: id(name),
+        }
+    }
+
+    fn address(interface: &str, place: Place) -> HostAddress {
+        HostAddress {
+            interface: interface.parse().unwrap(),
+            place,
+        }
+    }
+
+    fn home_lan() -> Place {
+        Place::Zone {
+            node: id("Home"),
+            zone: id("lan"),
+        }
+    }
+
+    #[test]
+    fn hosts_come_in_config_order() {
+        let (_, network) = checked(HOSTS);
+        let ids: Vec<HostRef> = network.hosts().iter().map(|h| h.id().clone()).collect();
+        assert_eq!(
+            ids,
+            [
+                HostRef::Node(id("Cabin")),
+                HostRef::Node(id("Home")),
+                local("Home", "printer"),
+                local("Home", "camera"),
+                HostRef::Client(id("Phone")),
+            ]
+        );
+    }
+
+    #[test]
+    fn every_address_has_its_subnet_and_its_place() {
+        let (_, network) = checked(HOSTS);
+        let [_, home, printer, camera, phone] = network.hosts() else {
+            panic!("expected five hosts");
+        };
+
+        assert_eq!(
+            home.addresses(),
+            [
+                address("10.100.0.1/16", Place::Mesh),
+                address("192.168.1.1/24", home_lan()),
+            ]
+        );
+        assert_eq!(
+            printer.addresses(),
+            [address("192.168.1.50/24", home_lan())]
+        );
+        assert_eq!(
+            camera.addresses(),
+            [address("10.100.49.10/24", Place::Hub { node: id("Home") })]
+        );
+        assert_eq!(
+            phone.addresses(),
+            [
+                address("10.100.1.10/16", Place::Mesh),
+                address("192.168.1.60/24", home_lan()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_host_carries_its_macs_and_services() {
+        let (_, network) = checked(HOSTS);
+        let [_, home, printer, camera, phone] = network.hosts() else {
+            panic!("expected five hosts");
+        };
+
+        assert!(printer.services().contains_key(&id("ipp")));
+        assert_eq!(printer.macs().len(), 1);
+        assert_eq!(phone.macs().len(), 1);
+        // Nodes and hub clients get no leases.
+        assert!(home.macs().is_empty());
+        assert!(camera.macs().is_empty());
+    }
+}

@@ -6,6 +6,7 @@ use crate::{
     managers::{
         NodeContext, dhcp::DhcpManager, firewall::FirewallManager, network::NetworkManager,
     },
+    model::{Network, Validated, validator::types::ValidationWarning},
     pipeline::UciPipeline,
 };
 use anyhow::{Context, bail};
@@ -38,9 +39,9 @@ fn main() -> anyhow::Result<()> {
     let config = Config::parse_file(&cli.config_path())
         .with_context(|| format!("failed to load config from {}", cli.config_path().display()))?;
 
-    if report_issues(&config) {
+    let Some(network) = validate(&config) else {
         bail!("there are errors in your config file");
-    }
+    };
 
     match command {
         Command::Apply { dry_run } => {
@@ -65,9 +66,9 @@ fn main() -> anyhow::Result<()> {
             };
 
             if *dry_run {
-                pipeline.print(&config, &node_context)?;
+                pipeline.print(&config, &network, &node_context)?;
             } else {
-                let changed = pipeline.run(&config, &node_context)?;
+                let changed = pipeline.run(&config, &network, &node_context)?;
 
                 if changed.is_empty() {
                     println!("Nothing changed.");
@@ -83,25 +84,35 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn report_issues(config: &Config) -> bool {
-    let report = model::validator::validate_config(config);
+/// Validates the config and prints what validation found. `None` when it has
+/// errors.
+fn validate(config: &Config) -> Option<Network> {
+    match model::validate(config) {
+        Ok(Validated { network, warnings }) => {
+            print_warnings(&warnings);
 
-    for error in &report.errors {
-        eprintln!("error: {error}");
+            Some(network)
+        }
+        Err(report) => {
+            for error in &report.errors {
+                eprintln!("error: {error}");
+            }
+            print_warnings(&report.warnings);
+
+            eprintln!();
+            eprintln!(
+                "validation failed: {} error(s), {} warning(s)",
+                report.errors.len(),
+                report.warnings.len()
+            );
+
+            None
+        }
     }
+}
 
-    for warning in &report.warnings {
+fn print_warnings(warnings: &[ValidationWarning]) {
+    for warning in warnings {
         eprintln!("warning: {warning}");
     }
-
-    if !report.errors.is_empty() {
-        eprintln!();
-        eprintln!(
-            "validation failed: {} error(s), {} warning(s)",
-            report.errors.len(),
-            report.warnings.len()
-        );
-    }
-
-    !report.errors.is_empty()
 }

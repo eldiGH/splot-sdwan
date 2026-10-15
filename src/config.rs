@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs::File, iter, net::Ipv4Addr, path::Path};
+use std::{collections::BTreeMap, fs::File, net::Ipv4Addr, path::Path};
 
 use serde::Deserialize;
 
@@ -21,7 +21,7 @@ use crate::{
     },
 };
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ServiceWan {
     pub via: WanViaTargets,
@@ -30,7 +30,7 @@ pub struct ServiceWan {
     pub sources: OneOrManyUnique<Ipv4Network>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Service {
     pub port: ServicePort,
@@ -127,11 +127,6 @@ impl Node {
     /// The node's hub clients; none when it has no hub.
     pub fn hub_clients(&self) -> impl Iterator<Item = (&Identifier, &NodeHubClient)> {
         self.hub.iter().flat_map(|hub| &hub.clients)
-    }
-
-    pub fn host_interfaces(&self) -> impl Iterator<Item = Ipv4Interface> {
-        let mesh = Ipv4Interface::host(self.mesh_ip);
-        iter::once(mesh).chain(self.addresses())
     }
 }
 

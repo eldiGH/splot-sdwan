@@ -9,6 +9,7 @@ use crate::{
         NodeContext, UciManager, UciSection, UciSectionBuilder,
         naming::{self, UciSectionName},
     },
+    model::Network,
     types::{
         ip::{Ipv4Interface, Ipv4Network},
         port::Port,
@@ -214,6 +215,7 @@ impl UciManager for NetworkManager {
     fn generate_commands(
         &self,
         config: &Config,
+        _network: &Network,
         node_context: &NodeContext,
     ) -> Vec<UciBatchCommand> {
         interface_commands(&build_mesh_interface(node_context, config))

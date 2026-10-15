@@ -163,7 +163,7 @@ A hub is a network inside `meshNetwork` that a node sets aside for devices reach
 
 ### Scope
 
-Tests cover the **deterministic core**: type parsers (`src/types/`), WAN/config resolution (`src/config.rs`), all validator passes (`src/model/validator/`), the tag-resolution map, the UCI generators (firewall redirects/rules/zones, network, dhcp), and UCI command/builder rendering. The process/IO layer (`uci` executor, `wg`, `splot_config`, `env`, `pipeline`, `main`) is **out of scope** for now — it shells out and touches the filesystem; revisit as integration tests later.
+Tests cover the **deterministic core**: type parsers (`src/types/`), WAN/config resolution (`src/config.rs`), all validator passes and the model they build (`src/model/`), the tag-resolution map, the UCI generators (firewall redirects/rules/zones, network, dhcp), and UCI command/builder rendering. The process/IO layer (`uci` executor, `wg`, `splot_config`, `env`, `pipeline`, `main`) is **out of scope** for now — it shells out and touches the filesystem; revisit as integration tests later.
 
 ### Placement
 
@@ -172,7 +172,7 @@ Tests are inline `#[cfg(test)] mod tests { use super::*; ... }` modules, always 
 ### Fixtures
 
 - **Pure type parsers** are driven directly through `FromStr` with a small local `parse()` helper.
-- **Config-level tests** build a `Config` from a YAML string via `serde_norway::from_str` — this mirrors real loading and exercises the serde layer too. Shared helpers live in `src/test_support.rs` (`#[cfg(test)]`-only, `pub(crate)`): `config()`, `report()`, and `has_error` / `has_warning` / `error_at` matchers. The matchers take closures because `ValidationError` / `ValidationWarning` don't derive `PartialEq` — match on the variant with `matches!(..)`.
+- **Config-level tests** build a `Config` from a YAML string via `serde_norway::from_str` — this mirrors real loading and exercises the serde layer too. Shared helpers live in `src/test_support.rs` (`#[cfg(test)]`-only, `pub(crate)`): `config()`, `report()`, `checked()` (a fixture that must pass validation: its `Config` and the `Network` the generators take), and `has_error` / `has_warning` / `error_at` matchers. The matchers take closures because `ValidationError` / `ValidationWarning` don't derive `PartialEq` — match on the variant with `matches!(..)`.
 
 ### Snapshots
 

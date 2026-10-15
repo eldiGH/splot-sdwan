@@ -2,6 +2,7 @@ use std::{fmt::Display, iter};
 
 use crate::{
     config::{Config, Node},
+    model::Network,
     splot_config::SplotConfig,
     types::identifier::Identifier,
     uci::UciBatchCommand,
@@ -15,9 +16,13 @@ pub mod network;
 use naming::UciSectionName;
 
 pub trait UciManager {
+    /// What `config` describes, as uci commands for one node. The generators read
+    /// what the checked model holds from `network`, and the rest, for now, from
+    /// `config`.
     fn generate_commands(
         &self,
         config: &Config,
+        network: &Network,
         node_context: &NodeContext,
     ) -> Vec<UciBatchCommand>;
 
@@ -123,7 +128,7 @@ mod tests {
     use std::fmt::Write;
 
     use super::*;
-    use crate::test_support::config;
+    use crate::test_support;
 
     fn render(cmd: &UciBatchCommand) -> String {
         cmd.to_string()
@@ -140,7 +145,7 @@ mod tests {
 
     #[test]
     fn example_config_snapshot() {
-        let config = config(include_str!(concat!(
+        let (config, network) = test_support::checked(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/splot.example.yml"
         )));
@@ -163,7 +168,7 @@ mod tests {
             let mut output = String::new();
             for (label, manager) in managers {
                 writeln!(output, "# {label}").unwrap();
-                for command in manager.generate_commands(&config, &context) {
+                for command in manager.generate_commands(&config, &network, &context) {
                     writeln!(output, "{command}").unwrap();
                 }
             }

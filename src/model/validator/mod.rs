@@ -11,15 +11,26 @@ use std::collections::HashSet;
 
 use crate::{
     config::Config,
-    model::validator::{
-        entities::check_entities, names::validate_names, networks::check_networks,
-        ports::check_ports, references::check_references_resolution, tags::validate_tags,
-        types::ValidationReport, wan::check_wan,
+    model::{
+        host::Host,
+        validator::{
+            entities::check_entities, names::validate_names, networks::check_networks,
+            ports::check_ports, references::check_references_resolution, tags::validate_tags,
+            types::ValidationReport, wan::check_wan,
+        },
     },
     types::allow_from_ref::AllowFromRef,
 };
 
-pub fn validate_config(config: &Config) -> ValidationReport {
+/// What the passes built from a config, out of the parts that passed their
+/// checks, and what they found.
+pub(super) struct Checked {
+    pub(super) hosts: Vec<Host>,
+    pub(super) report: ValidationReport,
+}
+
+/// Runs every pass over `config`. The report is in config order.
+pub(super) fn check(config: &Config) -> Checked {
     let mut report = ValidationReport::default();
 
     let names = validate_names(config, &mut report);
@@ -29,7 +40,7 @@ pub fn validate_config(config: &Config) -> ValidationReport {
 
     check_entities(config, &mut report);
 
-    check_networks(config, &mut report);
+    let hosts = check_networks(config, &mut report);
 
     check_ports(config, &mut report);
 
@@ -40,7 +51,7 @@ pub fn validate_config(config: &Config) -> ValidationReport {
     // diagnostics at one location keep the order their passes produced them in.
     report.sort();
 
-    report
+    Checked { hosts, report }
 }
 
 #[cfg(test)]

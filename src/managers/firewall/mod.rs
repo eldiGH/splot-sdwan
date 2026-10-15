@@ -19,6 +19,7 @@ use crate::{
             zones::get_firewall_zones,
         },
     },
+    model::Network,
     uci::UciBatchCommand,
 };
 
@@ -32,6 +33,7 @@ impl UciManager for FirewallManager {
     fn generate_commands(
         &self,
         config: &Config,
+        network: &Network,
         node_context: &NodeContext,
     ) -> Vec<UciBatchCommand> {
         info!(
@@ -43,9 +45,10 @@ impl UciManager for FirewallManager {
         debug!("  Resolved {} tag(s)", tags.len());
 
         let zones = get_firewall_zones();
-        let mut rules = get_firewall_ingress_rules(config, node_context, &tags);
+        let mut rules = get_firewall_ingress_rules(network, node_context.own_name, &tags);
         rules.extend(get_firewall_egress_rules(
             config,
+            network,
             node_context.own_name,
             &tags,
         ));

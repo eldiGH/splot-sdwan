@@ -3,8 +3,9 @@ use std::{collections::BTreeSet, net::Ipv4Addr};
 use log::{Level, debug, info, log_enabled};
 
 use crate::{
-    config::{Config, Node, NodeZoneDevice},
+    config::Config,
     managers::{NodeContext, UciManager, UciSection, UciSectionBuilder, naming},
+    model::{Network, host::Place},
     types::{identifier::Identifier, mac::MacAddress},
     uci::UciBatchCommand,
 };
@@ -38,49 +39,25 @@ impl UciSection for DhcpStaticLease {
     }
 }
 
-fn zone_device_to_lease(device_name: &Identifier, device: &NodeZoneDevice) -> DhcpStaticLease {
-    DhcpStaticLease {
-        ip: device.ip,
-        macs: device.macs.clone().into(),
-        name: device_name.to_string(),
-    }
-}
-
-fn get_static_leases(own_node: &Node) -> Vec<DhcpStaticLease> {
-    let mut static_leases = Vec::new();
-
-    static_leases.extend(own_node.zones.values().flat_map(|zone| {
-        zone.devices
-            .iter()
-            .filter(|(_, device)| !device.macs.is_empty())
-            .map(|(device_name, device)| zone_device_to_lease(device_name, device))
-    }));
-
-    static_leases
-}
-
-fn get_client_static_leases(config: &Config, node_context: &NodeContext) -> Vec<DhcpStaticLease> {
-    config
-        .clients
+/// A lease for each address a host with MACs has on this node's zones: the
+/// node's devices, and global clients on its zones.
+fn get_static_leases(network: &Network, own_name: &Identifier) -> Vec<DhcpStaticLease> {
+    network
+        .hosts()
         .iter()
-        .filter_map(|(client_name, client)| {
-            if client.macs.is_empty() {
-                return None;
-            };
-            let networks = client.ips.get(node_context.own_name)?;
-
-            let leases = networks
+        .filter(|host| !host.macs().is_empty())
+        .flat_map(|host| {
+            host.addresses()
                 .iter()
-                .filter(|(zone_name, _)| node_context.own_node.zones.contains_key(*zone_name))
-                .map(|(_, ip)| DhcpStaticLease {
-                    macs: client.macs.clone().into(),
-                    ip: *ip,
-                    name: client_name.to_string(),
-                });
-
-            Some(leases.collect::<Vec<_>>())
+                .filter(|address| {
+                    matches!(address.place(), Place::Zone { node, .. } if node == own_name)
+                })
+                .map(|address| DhcpStaticLease {
+                    name: host.id().name().to_string(),
+                    macs: host.macs().clone(),
+                    ip: address.ip(),
+                })
         })
-        .flatten()
         .collect()
 }
 
@@ -91,7 +68,8 @@ impl UciManager for DhcpManager {
 
     fn generate_commands(
         &self,
-        config: &crate::config::Config,
+        _config: &Config,
+        network: &Network,
         node_context: &NodeContext,
     ) -> Vec<UciBatchCommand> {
         info!(
@@ -99,8 +77,7 @@ impl UciManager for DhcpManager {
             node_context.own_name
         );
 
-        let mut static_leases = get_static_leases(node_context.own_node);
-        static_leases.extend(get_client_static_leases(config, node_context));
+        let static_leases = get_static_leases(network, node_context.own_name);
 
         info!("  {} static lease(s)", static_leases.len());
         if log_enabled!(Level::Debug) {
@@ -125,7 +102,8 @@ impl UciManager for DhcpManager {
 mod tests {
     use super::*;
     use crate::{
-        managers::UciManager, splot_config::SplotConfig, test_support::config, uci::UciBatchCommand,
+        managers::UciManager, splot_config::SplotConfig, test_support::checked,
+        uci::UciBatchCommand,
     };
 
     const FIXTURE: &str = "
@@ -146,12 +124,26 @@ nodes:
           macless:
             ip: 192.168.1.51
             macs: []
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    zones:
+      lan:
+        address: 192.168.2.1/24
+        devices:
+          nas:
+            ip: 192.168.2.50
+            macs: AA:BB:CC:DD:EE:01
 clients:
   Phone:
     macs: BB:CC:DD:EE:FF:00
     ips:
       Home:
         lan: 192.168.1.60
+      Cabin:
+        lan: 192.168.2.60
   MeshOnly:
     publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
     meshIp: 10.100.0.100
@@ -162,14 +154,15 @@ clients:
     }
 
     fn cmds() -> Vec<UciBatchCommand> {
-        let cfg = config(FIXTURE);
+        let (config, network) = checked(FIXTURE);
         let own_name: Identifier = "Home".parse().unwrap();
         let splot_config = SplotConfig::for_tests("AAAA");
 
         DhcpManager.generate_commands(
-            &cfg,
+            &config,
+            &network,
             &NodeContext {
-                own_node: cfg.nodes.get(&own_name).unwrap(),
+                own_node: config.nodes.get(&own_name).unwrap(),
                 own_name: &own_name,
                 splot_config: &splot_config,
             },
@@ -202,5 +195,14 @@ clients:
     #[test]
     fn global_client_no_zone_ip_no_lease() {
         assert!(!has_cmd(&cmds(), "spl_host_MeshOnly"));
+    }
+
+    #[test]
+    fn leases_only_on_this_nodes_zones() {
+        // Cabin's nas, and Phone's IP on Cabin, are Cabin's to lease.
+        let c = cmds();
+        assert!(!has_cmd(&c, "spl_host_nas"), "Cabin's device got a lease");
+        assert!(has_cmd(&c, "ip='192.168.1.60'"), "Phone's Home IP missing");
+        assert!(!has_cmd(&c, "ip='192.168.2.60'"), "Phone's Cabin IP leased");
     }
 }
