@@ -10,12 +10,12 @@ The DNS hierarchy mirrors the per-node namespace used for `allowFrom` references
 
 - `{deviceName}.{nodeName}` — for LAN devices (e.g., `printer.Home`)
 - `{nodeName}` — for the router itself (e.g., `Home`)
-- `{vpnClientName}.{nodeName}` — for VPN clients hosted by that node (e.g., `Pixel8.Home`); flat 2-level matches the per-node namespace where VPN client names are unique within a node across all VPN interfaces
+- `{hubClientName}.{nodeName}` — for hub clients of that node (e.g., `lte-cam.Home`); flat 2-level matches the per-node namespace
 - `{globalClientName}` — for global clients in `config.clients` (no node prefix; they roam between nodes)
 
 **Two approaches to consider — both could coexist:**
 
-1. **Automatic records** — splot auto-generates DNS entries for every named thing (lanDevice, VPN client, node) that exposes at least one service. No extra config required.
+1. **Automatic records** — splot auto-generates DNS entries for every named thing (lanDevice, hub client, node) that exposes at least one service. No extra config required.
 2. **Explicit domains** — an optional `domain` field (or array) per device/node/client allows overriding or adding custom hostnames independent of the automatic scheme.
 
 **Implementation notes:**
@@ -163,7 +163,7 @@ Layer them, the way Tailscale does: **prefer a direct hole-punched path, fall ba
 
 ## [LOW] allowedIps / Client as Gateway
 
-Currently each VPN client has a single IP. Adding an optional `allowedIps` field would let a client act as a gateway to another network (e.g., a second router or a non-mesh subnet behind a VPN client).
+Currently each hub client has a single IP. Adding an optional `allowedIps` field would let a client act as a gateway to another network (e.g., a second router or a non-mesh subnet behind a hub client).
 
 **Tag resolution behavior:**
 

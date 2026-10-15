@@ -8,7 +8,7 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 
 ### Config parsing
 
-- YAML config loader at `src/config.rs` — deserializes `splot.yml` into typed Rust structs (`Config`, `Node`, `Zone`, `VpnInterface`, `Client`, `Service`, etc.).
+- YAML config loader at `src/config.rs` — deserializes `splot.yml` into typed Rust structs (`Config`, `Node`, `NodeZone`, `NodeHub`, `Client`, `Service`, etc.).
 - Custom `OneOrManyUnique<T>` type — accepts a single value or a list in YAML, deduplicated into a `BTreeSet`. Used for `tags`, `macs`, `proto`, `allowFrom`.
 - All config maps and sets are `BTreeMap`/`BTreeSet`, so iteration order — and with it validation output and generated UCI — is deterministic across runs.
 - `deny_unknown_fields` on every config struct: a misspelled key anywhere is a parse error naming the config path, the unknown key, the valid keys, and the line/column.
@@ -18,38 +18,39 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 
 ### Splot config (persistent local state)
 
-- Local state file (`/etc/config/splot`) managed by `src/splot_config.rs` via the `SplotConfig` struct — stores the mesh private key (`splot.config.private_key`) and one private key per `vpnInterface` on this node (`splot.vpn_interface_keys.<name>`).
-- `SplotConfig::load()` reads and validates the mesh key, generating and committing one on first run (idempotent init — handles missing file, section, or option uniformly). `ensure_vpn_keys()` does the same per declared VPN interface, batching new keys into a single commit.
-- Stored keys are validated on load; a corrupt key is a hard error naming the offending interface, never silently regenerated (regeneration would orphan paired clients).
+- Local state file (`/etc/config/splot`) managed by `src/splot_config.rs` via the `SplotConfig` struct — stores the node's one private key, for the mesh interface (`splot.config.private_key`).
+- `SplotConfig::load()` reads and validates the key, generating and committing one on first run (idempotent init — handles missing file, section, or option uniformly).
+- A stored key is validated on load; a corrupt key is a hard error, never silently regenerated (regeneration would orphan the node's peers).
 - Designed to grow as more local-only state is needed (e.g., last-applied config snapshot for distributed-reload rollback — see IDEAS.md).
 
 ### Config validator (`src/validator/`)
 
 Multi-pass validator that checks `splot.yml` before any UCI commands are generated. Several passes, the first few producing data the next consumes:
 
-1. **`names`** — collects global + per-node names; checks identifier syntax, namespace uniqueness, cross-namespace collisions, reserved prefixes (`spl_` and `{NodeName}_`).
+1. **`names`** — collects global + per-node names; checks identifier syntax, namespace uniqueness, cross-namespace collisions, reserved prefixes (`spl_` and `{NodeName}_`) and the reserved local name `hub`; registers `{NodeName}.hub` for nodes with a hub.
 2. **`tags`** — collects valid tags; checks tag syntax and tag/name collisions.
 3. **`identifiers`** — checks every `allowFrom` reference resolves to a known identifier; warns on empty `allowFrom`.
-4. **`entities`** — semantic checks: client IPs reference valid node/network, mac/publicKey required-iff-used, public keys unique across nodes / VPN clients / global clients, unreachable clients.
-5. **`networks`** — subnet uniqueness across mesh + zones + VPN interfaces; IP-in-subnet containment, and host IPs may not be their subnet's network or broadcast address (/31 and /32 excepted); IP uniqueness per mesh/zone/VPN-interface; `client.ips` ≤ 1 zone per `(client, node)`.
+4. **`entities`** — semantic checks: client IPs reference valid node/network, mac/publicKey required-iff-used, public keys unique across nodes / hub clients / global clients, unreachable clients.
+5. **`networks`** — subnet uniqueness across mesh + zones; hub networks lie inside `meshNetwork`, don't overlap each other, and hold no `meshIp`; IP-in-subnet containment, and host IPs may not be their subnet's network or broadcast address (/31 and /32 excepted); IP uniqueness per mesh/zone/hub; `client.ips` ≤ 1 zone per `(client, node)`.
 
-Plus a `ports` pass (per-node listen-port uniqueness — `node.listen_port` vs each `vpn_interface.listen_port`) and a `wan` pass: each `wan.via` target resolves to a reachable destination; the qualified `{Node}.{Network}` form is rejected on non-client services; `wanZone` is declared where needed and doesn't collide with a zone / VPN-interface / mesh name; declared-but-unused `wanZone` is a warning.
+Plus a `ports` pass (per-host service-port uniqueness, the node's WireGuard listen port included, and external-port uniqueness on each router's WAN) and a `wan` pass: each `wan.via` target resolves to a reachable destination; the qualified `{Node}.{Network}` form is rejected on non-client services; `wanZone` is declared where needed and doesn't collide with a zone or the mesh name; declared-but-unused `wanZone` is a warning.
 
 The validator runs in `main.rs` before any UCI generation — validation errors abort the run.
 
 ### Firewall config generation (`src/managers/firewall/`)
 
-- **Zones (`zones.rs`)**: splot-managed zones rendered as `config zone` UCI sections — the mesh zone (`spl_mesh`) and one per `vpnInterface` on the current node. Default policy `input`/`forward` `DROP`, `output ACCEPT`; access granted only via explicit service rules.
-- **Rules (`rules.rs`)**: per-service `config rule` UCI sections generated from `services` declared anywhere in the config (node, device, VPN client, global client). Each `allowFrom` reference is resolved through the tag-resolution map to a set of source IPs (same-LAN sources are filtered out, since they don't traverse this router). Rules currently match on `src_ip` / `dest_ip` with `src` / `dest` left as `*` — per-zone scoping is still pending (see [ROADMAP.md](ROADMAP.md)).
-- **Redirects (`redirect.rs`)**: `config redirect` (DNAT port-forward) UCI sections for services that declare `wan`. `wan.via` selects which routers expose the service via their `wanZone`; the destination IP and zone are resolved per host type (node → `meshIp`, device → `ip`, VPN client → `ip`, global client → priority chain). Cross-node exposure works — one node can forward to a service hosted on another over the mesh. `wan.sources` (the CIDR allowlist) is applied as the redirect's `src_ip`: empty/missing means publicly reachable, a non-empty list restricts the forward to those CIDRs.
-- **Tag resolution (`tag_resolution.rs`)**: builds the IP/subnet → zone map used by rule generation. Handles explicit tags, bare node names, qualified `{Node}.{LocalName}` forms, and `$node`. Currently the only mechanism for LAN/mesh access control.
+- **Zones (`zones.rs`)**: splot's one managed zone, the mesh zone (`spl_mesh`), rendered as a `config zone` UCI section. Everything that arrives over WireGuard is in it, hub clients included. Default policy `input`/`forward` `DROP`, `output ACCEPT`; access granted only via explicit service rules.
+- **Rules (`rules.rs`)**: per-service `config rule` UCI sections generated from `services` declared anywhere in the config (node, device, hub client, global client). Each `allowFrom` reference is resolved through the tag-resolution map to a set of source IPs (same-LAN sources are filtered out, since they don't traverse this router). Rules currently match on `src_ip` / `dest_ip` with `src` / `dest` left as `*` — per-zone scoping is still pending (see [ROADMAP.md](ROADMAP.md)).
+- **Redirects (`redirect.rs`)**: `config redirect` (DNAT port-forward) UCI sections for services that declare `wan`. `wan.via` selects which routers expose the service via their `wanZone`; the destination IP and zone are resolved per host type (node → `meshIp`, device → `ip`, hub client → `ip` in the mesh zone, global client → priority chain). Cross-node exposure works — one node can forward to a service hosted on another over the mesh. `wan.sources` (the CIDR allowlist) is applied as the redirect's `src_ip`: empty/missing means publicly reachable, a non-empty list restricts the forward to those CIDRs.
+- **Tag resolution (`tag_resolution.rs`)**: builds the IP/subnet → zone map used by rule generation. Handles explicit tags, bare node names, qualified `{Node}.{LocalName}` forms (including `{Node}.hub`), and `$node`. Everything on a hub resolves under the mesh zone. Currently the only mechanism for LAN/mesh access control.
 
 ### Network interface generation (`src/managers/network.rs`)
 
-- Generates `config interface` UCI sections for the splot-managed WireGuard interfaces on the current node:
-  - The mesh interface (one per node, `spl_mesh`)
-  - One per `vpnInterface` declared on the node
-- Peer sections (`config wireguard_<iface>`) for each remote node (mesh peers) and each VPN client.
+- Generates the `config interface` UCI section for the node's one WireGuard interface, the mesh interface (`spl_mesh`).
+- Peer sections (`config wireguard_spl_mesh`):
+  - each remote node, with `AllowedIPs` = its `meshIp`, its zones and its hub network (even while the hub is empty);
+  - each global client with `meshIp`;
+  - this node's own hub clients (peers on their hub node only).
 - Includes WireGuard-specific knobs: `listen_port`, `private_key`, `public_key`, `endpoint_host`, `endpoint_port`, `allowed_ips`, `persistent_keepalive`.
 
 ### DHCP config generation (`src/managers/dhcp.rs`)
@@ -103,7 +104,7 @@ The validator runs in `main.rs` before any UCI generation — validation errors 
 
 ### Tests (`cargo test`)
 
-Unit-test suite over the deterministic core (~213 tests). Covers: type parsers (`src/types/`), WAN/config resolution (`src/config.rs`), all validator passes (`src/validator/`), the tag-resolution map, the UCI generators (firewall redirects/rules/zones, network, dhcp), UCI command/builder rendering, the uci not-found classification and dry-run redaction, private-key validation, and mesh-vs-vpn key routing in generated interfaces. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, pipeline) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
+Unit-test suite over the deterministic core (~280 tests). Covers: type parsers (`src/types/`), WAN/config resolution (`src/config.rs`), all validator passes (`src/validator/`), the tag-resolution map, the UCI generators (firewall redirects/rules/zones, network, dhcp), UCI command/builder rendering, the uci not-found classification and dry-run redaction, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, pipeline) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
 
 ---
 
@@ -113,7 +114,6 @@ See [ROADMAP.md](ROADMAP.md). At a glance, in priority order:
 
 1. **Per-zone src/dest scoping** — replace `src=*` / `dest=*` in generated accept rules with explicit zone names (redirects are already zone-scoped).
 2. **Nodes behind NAT** — optional `endpoint` for the hub-and-spoke shape.
-3. **Stale VPN-key pruning** — detect keys stored for interfaces no longer in the config; warn by default, delete behind an explicit `--prune-keys` flag.
-4. **Enrollment UX** — a `splot pubkey` subcommand (ensure key exists, print the public key) so new routers can be enrolled over SSH without hopping consoles.
+3. **Enrollment UX** — a `splot pubkey` subcommand (ensure key exists, print the public key) so new routers can be enrolled over SSH without hopping consoles.
 
 See [IDEAS.md](IDEAS.md) for longer-horizon ideas (mesh-wide DNS, distributed reload, dynamic device presence, etc.).

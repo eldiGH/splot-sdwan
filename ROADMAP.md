@@ -6,7 +6,7 @@ Confirmed next implementation steps, in priority order.
 
 ## 1. WAN exposure (port forwards)
 
-> **Status: implemented.** Config shape, validation, destination-IP resolution, `config redirect` generation, and `wan.sources` enforcement (applied as the redirect's `src_ip`) are all in place; the addressless-zone cleanup is done too. The rest of this section is the spec it was built to.
+> **Status: implemented.** Config shape, validation, destination-IP resolution, `config redirect` generation, and `wan.sources` enforcement (applied as the redirect's `src_ip`) are all in place; the addressless-zone cleanup is done too. The rest of this section is the spec it was built to. Since then, per-node hubs replaced `vpnInterfaces`, so the VPN-interface steps of the destination-IP rules below are gone — see [CONFIG.md → Destination IP selection](CONFIG.md#destination-ip-selection) for the current rule.
 
 Make services declared in splot config externally reachable through a router's WAN zone. This is the next big config feature — it ties together a lot of existing work and unlocks practical deployments where some services need to be public.
 

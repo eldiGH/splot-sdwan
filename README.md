@@ -16,7 +16,7 @@ Declarative WireGuard mesh networking for OpenWRT routers. You describe your net
 ## Example config
 
 ```yaml
-meshNetwork: 10.100.0.0/24
+meshNetwork: 10.100.0.0/16
 
 clients:
   Phone:
@@ -54,10 +54,17 @@ nodes:
                 proto: tcp
                 allowFrom: admin
 
-    vpnInterfaces:
-      wg_guest:
-        listenPort: 51821
-        address: 10.8.6.1/24
+    hub:
+      network: 10.100.10.0/24
+      clients:
+        lte-cam:
+          publicKey: <wireguard-pubkey>
+          ip: 10.100.10.10
+          services:
+            rtsp:
+              port: 554
+              proto: tcp
+              allowFrom: admin
 
   Cabin:
     publicKey: <wireguard-pubkey>
@@ -69,7 +76,7 @@ nodes:
         address: 192.168.2.1/24
 ```
 
-With this config, `Phone` (tagged `admin`) can reach SSH on the `Home` router and the printer on its LAN — from anywhere in the mesh. Nothing else gets through.
+With this config, `Phone` (tagged `admin`) can reach SSH on the `Home` router, the printer on its LAN, and the camera behind Home's hub — from anywhere in the mesh. Nothing else gets through.
 
 ## Concepts
 
@@ -77,7 +84,7 @@ With this config, `Phone` (tagged `admin`) can reach SSH on the `Home` router an
 | --- | --- |
 | **Node** | An OpenWRT router participating in the mesh |
 | **Zone** | A downstream network the router serves (LAN, VLAN) — operator-managed, splot only references it |
-| **VPN interface** | An extra WireGuard interface for external clients, fully managed by splot |
+| **Hub** | A network inside the mesh for devices that reach it through one node alone (e.g. behind NAT); its clients are peers on that node |
 | **Device** | A fixed host inside a zone (static IP, optional DHCP lease) |
 | **Client** | A roaming device (phone, laptop) known mesh-wide |
 | **Service** | A port/protocol on any of the above, with `allowFrom` (mesh/LAN access) and/or `wan` (public exposure) |

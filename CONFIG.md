@@ -7,7 +7,7 @@ The config file (`splot.yml`) describes the entire mesh network. Every router in
 ## Top-level structure
 
 ```yaml
-meshNetwork: 10.0.0.0/24
+meshNetwork: 10.0.0.0/16
 nodes:
   <nodeName>: { ... }
 clients:
@@ -16,7 +16,7 @@ clients:
 
 | Field         | Type                    | Required | Description                                                                       |
 | ------------- | ----------------------- | -------- | --------------------------------------------------------------------------------- |
-| `meshNetwork` | CIDR (`x.x.x.x/prefix`) | yes      | Subnet for the WireGuard mesh substrate that connects all nodes.                  |
+| `meshNetwork` | CIDR (`x.x.x.x/prefix`) | yes      | The whole WireGuard mesh address space: every `meshIp` and every hub network.     |
 | `nodes`       | map of name → Node      | yes      | Routers participating in the mesh.                                                |
 | `clients`     | map of name → Client    | no       | Roaming devices accessible across the mesh (phones, laptops). Global, cross-node. |
 
@@ -34,8 +34,7 @@ HomeRouter:
   meshIp: 10.0.0.1
   zones:
     lan: { ... }
-  vpnInterfaces:
-    wg_admin: { ... }
+  hub: { ... }
   services: { ... }
   tags: home
 ```
@@ -47,7 +46,7 @@ HomeRouter:
 | `listenPort`    | integer                    | yes      | WireGuard listen port for the mesh interface.                                                                                                                                                                     |
 | `meshIp`        | IPv4 address               | yes      | This node's IP on the mesh WireGuard interface (within `meshNetwork`).                                                                                                                                            |
 | `zones`         | map of name → Zone         | no       | Downstream networks the router serves (LAN, VLANs).                                                                                                                                                               |
-| `vpnInterfaces` | map of name → VpnInterface | no       | Additional WireGuard interfaces hosted by this router for external clients.                                                                                                                                       |
+| `hub`           | Hub                        | no       | A network inside `meshNetwork` for devices that reach the mesh through this node alone. See [Hub](#hub).                                                                                                         |
 | `services`      | map of name → Service      | no       | Services exposed by the router itself (e.g. SSH, admin UI).                                                                                                                                                       |
 | `wanZone`       | string                     | no\*     | Name of the OpenWRT firewall zone that is WAN-facing on this router. Splot does not manage this zone; it only references it when generating port forwards. \*Required if any service uses this node in `wan.via`. |
 | `tags`          | string or list of strings  | no       | Explicit tags assigned to the node. See [Tags](#tags).                                                                                                                                                            |
@@ -101,52 +100,58 @@ Printer:
 
 ---
 
-## VPN Interface
+## Hub
 
-An additional WireGuard interface hosted by this router, used to give external clients (phones, laptops) access to the mesh. Splot **does** manage these zones in OpenWRT — it creates a firewall zone named after the interface.
+A network inside `meshNetwork` that the node sets aside for devices reaching the mesh through it alone — typically something behind NAT that offers services, like a camera on an LTE modem. Its clients are WireGuard peers on the node's mesh interface (same key, same port); splot creates no extra interface or firewall zone for them.
 
 ```yaml
-wg_admin:
-  listenPort: 51821
-  address: 10.8.5.1/24
+hub:
+  network: 10.0.10.0/24
   clients:
-    Phone: { ... }
-  tags: admin
+    lte-cam: { ... }
+  tags: cameras
 ```
 
-| Field        | Type                             | Required | Description                                                                                                |
-| ------------ | -------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `listenPort` | integer                          | yes      | WireGuard listen port for this interface. Must differ from the mesh listen port and other VPN interfaces.  |
-| `address`    | CIDR (`x.x.x.x/prefix`)          | yes      | The router's IP on this interface and its subnet. The host part is the router; the prefix defines clients. |
-| `clients`    | map of name → VpnInterfaceClient | no       | WireGuard peers allowed to connect to this interface.                                                      |
-| `tags`       | string or list of strings        | no       | Explicit tags assigned to the interface. Resolves to the interface's subnet.                               |
+| Field     | Type                      | Required | Description                                                                                                                       |
+| --------- | ------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `network` | CIDR (`x.x.x.x/prefix`)   | yes      | The hub's network. Must lie inside `meshNetwork`, must not overlap another node's hub, and must not contain any node's or global client's `meshIp`. |
+| `clients` | map of name → HubClient   | no       | The devices behind this hub. A hub may be empty.                                                                                  |
+| `tags`    | string or list of strings | no       | Explicit tags assigned to the hub. Resolve to the hub's network.                                                                  |
+
+How a hub is wired:
+
+- A hub client is a peer **on its hub node only**. (A global client with `meshIp`, by contrast, is a peer on every node.)
+- Every other node routes the **whole hub network** through the hub node — it's part of the hub node's peer `AllowedIPs` everywhere, even while the hub has no clients. Adding a client later changes only the hub node.
+- **One address, one path.** WireGuard sends a packet to the peer whose `AllowedIPs` match it most specifically, without checking whether that peer is up. So no two peers may claim the same address: the hub network belongs to the hub node alone, which is why no `meshIp` may lie inside it and hubs may not overlap.
+- Everything on a hub arrives over the mesh interface, so it's in splot's mesh zone. Firewall rules tell hub clients apart by source IP: WireGuard drops any packet whose source isn't in the sending peer's `AllowedIPs`, so the source IP identifies the client.
+- `{NodeName}.hub` refers to the hub network (see [Tags](#tags)); `hub` is a reserved name on every node.
 
 ---
 
-## VPN Interface Client
+## Hub Client
 
-A WireGuard peer connecting to a VPN interface.
+A device that reaches the mesh through its hub node.
 
 ```yaml
-Phone:
+lte-cam:
   publicKey: base64...
-  ip: 10.8.5.2
-  tags: admin
+  ip: 10.0.10.10
+  tags: cameras
   services: { ... }
 ```
 
-| Field       | Type                      | Required | Description                                                      |
-| ----------- | ------------------------- | -------- | ---------------------------------------------------------------- |
-| `publicKey` | string                    | yes      | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients).                    |
-| `ip`        | IPv4 address              | yes      | The client's IP on the interface's subnet.                       |
-| `tags`      | string or list of strings | no       | Explicit tags assigned to this client.                           |
-| `services`  | map of name → Service     | no       | Services exposed by this client and accessible through the mesh. |
+| Field       | Type                      | Required | Description                                                                                                         |
+| ----------- | ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `publicKey` | string                    | yes      | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients). |
+| `ip`        | IPv4 address              | yes      | The client's IP. Must lie inside the hub's `network` (not its network or broadcast address) and be unique in it.     |
+| `tags`      | string or list of strings | no       | Explicit tags assigned to this client.                                                                              |
+| `services`  | map of name → Service     | no       | Services exposed by this client and accessible through the mesh.                                                    |
 
 ---
 
 ## Client (global)
 
-A roaming device that can be reached across the mesh. Unlike a VPN Interface Client (which is tied to one specific interface on one node), a global client may have IPs on multiple nodes' zones and/or VPN interfaces, plus its own IP on the mesh substrate itself.
+A roaming device that can be reached across the mesh. Unlike a hub client (which reaches the mesh through one node), a global client with `meshIp` is a peer on every node, and it may also have IPs on several nodes' zones.
 
 ```yaml
 Phone:
@@ -158,7 +163,6 @@ Phone:
   ips:
     HomeRouter:
       lan: 192.168.1.30
-      wg_admin: 10.8.5.5
     WorkRouter:
       lan: 192.168.10.30
   services: { ... }
@@ -168,9 +172,9 @@ Phone:
 | Field       | Type                                                | Required | Description                                                                                                                          |
 | ----------- | --------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `meshIp`    | IPv4 address                                        | no       | The client's IP on the mesh interface (within `meshNetwork`). Set when the client connects directly to the mesh via WireGuard.       |
-| `publicKey` | string                                              | no       | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients). Required if `meshIp` or any VPN interface IP is set — otherwise the client can't be a WireGuard peer. |
+| `publicKey` | string                                              | no       | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients). Required if `meshIp` is set — otherwise the client can't be a WireGuard peer.                          |
 | `macs`      | MAC string or list                                  | no       | MAC addresses. Used to generate static DHCP leases for the client's zone IPs on each node.                                           |
-| `ips`       | map of nodeName → (map of localName → IPv4 address) | no       | The client's IPs on each node, keyed by zone or VPN interface name within that node. See [Tags](#tags) for resolution.               |
+| `ips`       | map of nodeName → (map of localName → IPv4 address) | no       | The client's IPs on each node, keyed by zone name within that node. See [Tags](#tags) for resolution.                                |
 | `services`  | map of name → Service                               | no       | Services exposed by this client.                                                                                                     |
 | `tags`      | string or list of strings                           | no       | Explicit tags assigned to this client.                                                                                               |
 
@@ -203,7 +207,7 @@ Services may be declared on:
 
 - A **node** (`node.services`) — the router itself hosts the service
 - A **zone device** (`zone.devices.<name>.services`) — the device hosts the service
-- A **VPN interface client** (`vpnInterface.clients.<name>.services`) — the client hosts the service
+- A **hub client** (`hub.clients.<name>.services`) — the client hosts the service
 - A **global client** (`client.services`) — the client hosts the service, reachable on any node where it has an IP
 
 ---
@@ -220,7 +224,7 @@ wan:
 
 | Field             | Type                                    | Required | Description                                                                                                                                                                           |
 | ----------------- | --------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `via`             | string or list of WAN targets           | yes      | Nodes whose `wanZone` should forward to this service. Each entry is either a bare node name (`HomeRouter`) or — for global client services only — a qualified `{Node}.{Network}` form (`HomeRouter.wg_admin`). Each listed node must declare `wanZone`. Special identifiers like `$node` are _not_ allowed. See [Destination IP selection](#destination-ip-selection). |
+| `via`             | string or list of WAN targets           | yes      | Nodes whose `wanZone` should forward to this service. Each entry is either a bare node name (`HomeRouter`) or — for global client services only — a qualified `{Node}.{Network}` form (`HomeRouter.lan`). Each listed node must declare `wanZone`. Special identifiers like `$node` are _not_ allowed. See [Destination IP selection](#destination-ip-selection). |
 | `sources` | CIDR string or list (e.g. `1.2.3.4/32`) | no       | Allowlist of public source CIDRs that may hit the forward. Missing or empty = publicly accessible.                                                                                    |
 
 ### Semantics
@@ -244,7 +248,7 @@ A port forward needs a single DNAT destination IP. Splot picks the target per WA
 | --- | --- | --- |
 | **Node service** (`node.services`) | The hosting node's `meshIp` | Any node with `wanZone` |
 | **Zone device service** (`zone.devices.*.services`) | The device's `ip` | Any node with `wanZone` |
-| **VPN-interface client service** (`vpnInterface.clients.*.services`) | The client's `ip` on its interface | Any node with `wanZone` |
+| **Hub client service** (`hub.clients.*.services`) | The client's `ip` | Any node with `wanZone` |
 | **Global client service** (`config.clients.*.services`) | See priority rule below | Restricted — see below |
 
 For the first three host types, the host has exactly one canonical address. The mesh routing reaches that address from every router, so any node with `wanZone` can expose them via cross-node DNAT. No restrictions.
@@ -252,35 +256,33 @@ For the first three host types, the host has exactly one canonical address. The 
 **Global client priority rule, per WAN-providing router R (bare `via` entry):**
 
 1. If the client has `meshIp` → use it.
-2. Else if the client has a zone IP on R → use it.
-3. Else if the client has **exactly one** VPN-interface IP on R → use it.
-4. Else if the client has **multiple** VPN-interface IPs on R → **validation error**: ambiguous. Use the qualified form (e.g. `R.wg_admin`) in `via` to pick one explicitly.
-5. Else → **validation error**: the client has no reachable address from R.
+2. Else if the client has a zone IP on R → use it (a client has at most one zone per node).
+3. Else → **validation error**: the client has no reachable address from R.
 
 This produces strict restrictions for global clients without `meshIp`:
 
-- **With `meshIp`**: client can be exposed via any node with `wanZone`. DNAT targets `meshIp` (or the local IP if priority 2/3 applies).
-- **Without `meshIp`**: client can only be exposed via nodes it has a local IP on (zone or VPN interface). Attempts to expose via any other node fail validation.
+- **With `meshIp`**: client can be exposed via any node with `wanZone`. DNAT targets `meshIp`.
+- **Without `meshIp`**: client can only be exposed via nodes it has a zone IP on. Attempts to expose via any other node fail validation.
 
 ### Qualified `via` form for global clients
 
-For global client services, a `via` entry may use the qualified form `{Node}.{Network}` where `{Network}` is the name of a **zone** or **VPN interface** on `{Node}`. The qualified form is **client-only** — using it on a service hosted by a node, zone device, or VPN-interface client is a validation error (those have unambiguous single-IP targets; no choice to make).
+For global client services, a `via` entry may use the qualified form `{Node}.{Network}` where `{Network}` is the name of a **zone** on `{Node}`. The qualified form is **client-only** — using it on a service hosted by a node, zone device, or hub client is a validation error (those have unambiguous single-IP targets; no choice to make).
 
 **Semantics:**
 
-- `via: [HomeRouter.wg_admin]` — target the client's IP at `ips.HomeRouter.wg_admin`. The bare-form resolution chain is **not** consulted at all.
+- `via: [HomeRouter.lan]` — target the client's IP at `ips.HomeRouter.lan`. The bare-form resolution chain is **not** consulted at all.
 - The qualified form **overrides** even `meshIp`. If the operator writes `HomeRouter.lan`, the DNAT target is the client's lan IP on HomeRouter, regardless of whether `meshIp` is set.
 - The client **must** have an IP entry at `ips.{Node}.{Network}`. If not declared, validation fails (`WanClientNotOnQualifiedNetwork`).
-- `{Network}` must be a zone or VPN interface on `{Node}`. References to other per-node entities (devices, VPN-interface clients) are rejected — they're not "networks the global client is reachable on."
+- `{Network}` must be a zone on `{Node}`. References to other per-node entities (devices, hub clients) are rejected — they're not "networks the global client is reachable on."
 
 **When to use which form:**
 
 - **Bare `{Node}`** (preferred default) — let splot pick the most stable address via the priority rule.
-- **Qualified `{Node}.{Network}`** — use when bare resolution is ambiguous (multiple VPN-interface IPs on that node), or when you need to force a specific routing leg for operational reasons (e.g., route through a VPN interface even though `meshIp` exists).
+- **Qualified `{Node}.{Network}`** — use when you need to force a specific routing leg for operational reasons (e.g., target the client's LAN IP even though `meshIp` exists).
 
 **Why `meshIp` takes precedence.** A client's `meshIp` is reachable from every node whenever the client's mesh tunnel is up — _regardless of where the client is physically located_. Even when a client is connected to a router's LAN as a wired device, an active mesh WireGuard tunnel still terminates on its `meshIp` (the WG-encapsulated traffic just travels over the LAN instead of the internet). So `meshIp` is the most stable static target.
 
-**Why local IPs are restricted to same-node exposure.** A client's zone or VPN-interface IP only addresses the client when the client is physically present on that network. Using a client's IP on node A to expose it via node B's WAN would produce a forward that only works when the client happens to be at A — a silently-broken state whenever the client is elsewhere. Splot doesn't generate such forwards statically; the operator must either declare `meshIp` (stable cross-node address) or add the client to B's networks too.
+**Why local IPs are restricted to same-node exposure.** A client's zone IP only addresses the client when the client is physically present on that network. Using a client's IP on node A to expose it via node B's WAN would produce a forward that only works when the client happens to be at A — a silently-broken state whenever the client is elsewhere. Splot doesn't generate such forwards statically; the operator must either declare `meshIp` (stable cross-node address) or add the client to B's networks too.
 
 **Stationary clients can also be zone devices.** A device with a single IP on one zone and no need to roam (a wired printer, an IoT sensor) can be modeled as a `zone.devices` entry instead of a `client`. Zone devices have one IP by structure and can be WAN-exposed from any node with no restrictions. Use the global client model when a device legitimately has presence on multiple nodes or needs to be reachable across the mesh by a stable name.
 
@@ -317,14 +319,14 @@ Tags are the sole access control abstraction. They appear in `allowFrom` on serv
 
 ### How tags are assigned
 
-Tags can be assigned explicitly via the `tags` field on any named object (node, zone, zone device, VPN interface, VPN interface client, global client). Additionally, every named object has an **implicit tag equal to its own name** — but the namespace scope depends on the kind of object.
+Tags can be assigned explicitly via the `tags` field on any named object (node, zone, zone device, hub, hub client, global client). Additionally, every named object has an **implicit tag equal to its own name** — but the namespace scope depends on the kind of object.
 
 ### Reference forms in `allowFrom`
 
 A reference is one of:
 
 - **Bare name** — resolves in the global namespace: an explicit tag, a node name, or a global client name
-- **Qualified `{NodeName}.{LocalName}`** — resolves in that node's per-node namespace: a zone, zone device, VPN interface, or VPN interface client
+- **Qualified `{NodeName}.{LocalName}`** — resolves in that node's per-node namespace: a zone, zone device, or hub client — or the hub itself, as `{NodeName}.hub`
 - **`$node`** — the current router being configured (context-dependent — resolves to a different router per node being generated)
 
 ### What a reference resolves to
@@ -334,15 +336,15 @@ Resolution always produces a set of IP addresses or subnets — never zone names
 | Reference                                         | Resolves to                                                              |
 | ------------------------------------------------- | ------------------------------------------------------------------------ |
 | Explicit tag (e.g. `admin`)                       | All IPs/subnets of things tagged with it (across the whole config)       |
-| Node name (e.g. `HomeRouter`)                     | Union of all of the node's `zones` subnets and `vpnInterfaces` subnets   |
+| Node name (e.g. `HomeRouter`)                     | Union of the node's `zones` subnets and its hub network                  |
 | Global client name (e.g. `Phone`)                 | All of the client's known IPs                                            |
 | `{Node}.{Zone}` (e.g. `HomeRouter.lan`)           | That zone's subnet                                                       |
 | `{Node}.{ZoneDevice}` (e.g. `HomeRouter.Printer`) | The device's IP                                                          |
-| `{Node}.{VpnInterface}`                           | The interface's subnet                                                   |
-| `{Node}.{VpnInterfaceClient}`                     | The client's IP                                                          |
-| `$node`                                           | Union of the router's own IPs across all its `zones` and `vpnInterfaces` |
+| `{Node}.hub` (e.g. `HomeRouter.hub`)              | The node's hub network                                                   |
+| `{Node}.{HubClient}` (e.g. `HomeRouter.lte-cam`)  | The hub client's IP                                                      |
+| `$node`                                           | Union of the router's own IPs across all its `zones`                     |
 
-A single tag can group multiple objects if they share it. `allowFrom: admin` grants access from every device, client, or interface tagged `admin` — across multiple nodes.
+A single tag can group multiple objects if they share it. `allowFrom: admin` grants access from every device, client, or hub tagged `admin` — across multiple nodes.
 
 ### Subnets vs IPs
 
@@ -354,10 +356,11 @@ Use the bare node name when you want any traffic from that node's downstream net
 
 ```yaml
 allowFrom: admin                          # everything tagged admin (cross-node)
-allowFrom: HomeRouter                     # all of the node's zone + VPN interface subnets
+allowFrom: HomeRouter                     # all of the node's zone subnets + its hub network
 allowFrom: HomeRouter.lan                 # only the node's lan zone subnet
 allowFrom: HomeRouter.Printer             # specific device's IP
-allowFrom: HomeRouter.wg_admin            # specific VPN interface's subnet
+allowFrom: HomeRouter.hub                 # the node's hub network
+allowFrom: HomeRouter.lte-cam             # a hub client's IP
 allowFrom: Phone                          # global client's IPs
 allowFrom: [admin, HomeRouter.iot]        # admin-tagged things + the node's iot zone subnet
 allowFrom: $node                          # the router's own IPs across all its interfaces
@@ -384,36 +387,39 @@ The global namespace contains exactly three kinds of names:
 Each node has its own per-node namespace, holding the names of:
 
 - The node's `zones`
-- The node's `vpnInterfaces`
 - All zone devices (`zones.<zone>.devices.<name>`)
-- All VPN interface clients (`vpnInterfaces.<iface>.clients.<name>`)
+- All hub clients (`hub.clients.<name>`)
 
-**Within a single node, names across all four categories must be unique.** A node can't have a zone named `Printer` and a device named `Printer`, for example. Names can recur freely across different nodes — two nodes can both have a `lan` zone, or both have a `Printer` device.
+**Within a single node, names across all three categories must be unique.** A node can't have a zone named `Printer` and a device named `Printer`, for example. Names can recur freely across different nodes — two nodes can both have a `lan` zone, or both have a `Printer` device.
 
 ### Cross-namespace collisions are also forbidden
 
-A name in any node's per-node namespace must not collide with any name in the global namespace. So if `HomeRouter` is a node name, no node may have a zone, device, VPN interface, or VPN interface client also named `HomeRouter`. This keeps every reference unambiguous.
+A name in any node's per-node namespace must not collide with any name in the global namespace. So if `HomeRouter` is a node name, no node may have a zone, device, or hub client also named `HomeRouter`. This keeps every reference unambiguous.
 
 ### Implicit name-tags
 
 Every named object has an implicit tag equal to its name. Where that tag lives:
 
 - **Globally-scoped implicit tags** (referenced by bare name): nodes, global clients
-- **Per-node-scoped implicit tags** (referenced as `{NodeName}.{LocalName}`): zones, zone devices, VPN interfaces, VPN interface clients
+- **Per-node-scoped implicit tags** (referenced as `{NodeName}.{LocalName}`): zones, zone devices, hub clients — and the hub itself, as `{NodeName}.hub`
 
-The qualified `{NodeName}.{LocalName}` syntax is intentionally only **two levels deep** — the per-node namespace is flat. There is no `{NodeName}.{Zone}.{Device}` form; a device is referenced as `{NodeName}.{Device}` directly. This works because per-node names across all four categories are unique.
+The qualified `{NodeName}.{LocalName}` syntax is intentionally only **two levels deep** — the per-node namespace is flat. There is no `{NodeName}.{Zone}.{Device}` form; a device is referenced as `{NodeName}.{Device}` directly. This works because per-node names across all three categories are unique.
 
 ### `$node`
 
-`$node` is a special context-dependent tag that resolves to the router currently being configured. It produces the router's own IPs across all of its `zones` and `vpnInterfaces`.
+`$node` is a special context-dependent tag that resolves to the router currently being configured. It produces the router's own IPs across all of its `zones`.
 
 ### Allowed characters
 
 Names must contain only alphanumeric characters, `-`, and `_`. Spaces, dots, and other special characters are forbidden — names are used as part of generated UCI section identifiers, and `.` is reserved as the qualified-reference separator.
 
+### Reserved names
+
+`hub` can't name a zone, zone device, or hub client on any node: `{NodeName}.hub` always refers to the node's hub network. It's reserved on nodes without a hub too, so adding a hub later can't break a config.
+
 ### Reserved prefixes for per-node-scoped names
 
-A per-node-scoped name (zone, zone device, VPN interface, VPN interface client) must not start with `{NodeName}_` where `{NodeName}` is the name of any node in the config. For example, if there is a node named `Home`, no per-node-scoped name anywhere may be `Home_printer`, `Home_lan`, etc.
+A per-node-scoped name (zone, zone device, hub client) must not start with `{NodeName}_` where `{NodeName}` is the name of any node in the config. For example, if there is a node named `Home`, no per-node-scoped name anywhere may be `Home_printer`, `Home_lan`, etc.
 
 The reason is generated UCI rule names. Splot qualifies a rule for a remote node's object by prefixing the node name with `_` (e.g. `Home_printer_ssh` for an `ssh` service on Home's `printer`). A literal name like `Home_printer` on another node would collide with that qualified form. `_` itself stays a valid character — only the specific `{NodeName}_` prefix is reserved.
 
@@ -425,7 +431,8 @@ Every subnet in the mesh must be unique and non-overlapping. This includes:
 
 - The `meshNetwork` subnet
 - Each zone's `address` subnet (when present)
-- Each VPN interface's `address` subnet
+
+Hub networks are the exception: each lies **inside** `meshNetwork`, which is the whole mesh address space. They must not overlap each other, and no node's or global client's `meshIp` may lie inside one (see [Hub](#hub)).
 
 Overlapping subnets cause ambiguous routing and may produce incorrect or conflicting firewall rules. The validator enforces this across the entire config.
 
@@ -433,12 +440,9 @@ Overlapping subnets cause ambiguous routing and may produce incorrect or conflic
 
 ## `client.ips` rules
 
-A global client's `ips` field maps each node's name to a per-node map keyed by local network name (a zone or VPN interface name on that node) and valued by the client's IP on that network.
+A global client's `ips` field maps each node's name to a per-node map keyed by zone name on that node and valued by the client's IP on that zone.
 
-Two rules apply:
-
-1. **At most one zone entry per `(client, node)`.** A client may not have IPs on multiple zones of the same node — DHCP can't generate two static leases under the same client name on the same router. A device that physically appears on only one zone at a time (the realistic case) fits this trivially. For the rare multi-NIC-on-one-router setup, model it as two separate client entries.
-2. **No limit on VPN interface entries per `(client, node)`.** A client can have IPs on multiple VPN interfaces of the same node — these are statically assigned via WireGuard config and don't go through DHCP, so no collision exists.
+**At most one zone entry per `(client, node)`.** A client may not have IPs on multiple zones of the same node — DHCP can't generate two static leases under the same client name on the same router. A device that physically appears on only one zone at a time (the realistic case) fits this trivially. For the rare multi-NIC-on-one-router setup, model it as two separate client entries.
 
 Each IP must fall within its named network's subnet. The validator enforces this — a key like `HomeRouter.lan: 10.5.5.5` is rejected if `10.5.5.5` is not in HomeRouter's `lan` zone subnet.
 
@@ -449,7 +453,7 @@ Each IP must fall within its named network's subnet. The validator enforces this
 Beyond the structural rules above, the validator flags configurations that are syntactically valid but operationally meaningless. These may be reported as **warnings** or **errors** depending on the severity of the resulting silent no-op:
 
 - **Global client with neither `meshIp` nor `ips`.** Such a client is unreachable: nothing addresses it. The client name resolves to the empty set of IPs but never matches traffic.
-- **Global client with `publicKey` but no `meshIp` and no IP on any VPN interface (`ips.<node>.<vpnInterface>`).** The public key isn't used anywhere — splot has no WireGuard interface to attach this peer to. Either remove the key or add an IP that places the client as a peer on some interface.
+- **Global client with `publicKey` but no `meshIp`.** The public key isn't used anywhere — a global client is a WireGuard peer only through its `meshIp`. Either remove the key or add a `meshIp`.
 - **Subnet-mismatched IPs in `client.ips`.** As above — the IP doesn't fall within the named network's subnet.
 - **Service with neither `allowFrom` nor `wan`.** No source can reach this service from any direction; the service declaration has no effect.
 
