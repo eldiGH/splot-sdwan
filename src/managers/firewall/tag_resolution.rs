@@ -48,6 +48,10 @@ fn add_node_tag(node_name: &Identifier, node: &Node, tags_map: &mut TagMap) {
             &ZoneRef::Named(zone_name.clone()),
         );
     }
+
+    if let Some(hub) = &node.hub {
+        add_tags(tags_map, hub.network, node_tags, &ZoneRef::Mesh);
+    }
 }
 
 fn add_client_tag(
@@ -110,6 +114,27 @@ fn add_zones_tags(node_name: &Identifier, node: &Node, tags_map: &mut TagMap) {
     }
 }
 
+/// Everything on a hub comes in over the mesh interface: it resolves under the
+/// mesh zone, on the hub's own node as on every other.
+fn add_hub_tags(node_name: &Identifier, node: &Node, tags_map: &mut TagMap) {
+    let Some(hub) = &node.hub else { return };
+
+    let hub_tags = iter::once(AllowFromRef::nested(node_name.clone(), Identifier::hub()))
+        .chain(hub.tags.iter().cloned().map(AllowFromRef::Bare));
+    add_tags(tags_map, hub.network, hub_tags, &ZoneRef::Mesh);
+
+    for (client_name, client) in &hub.clients {
+        let client_tags = iter::once(AllowFromRef::nested(node_name.clone(), client_name.clone()))
+            .chain(client.tags.iter().cloned().map(AllowFromRef::Bare));
+        add_tags(
+            tags_map,
+            Ipv4Network::host(client.ip),
+            client_tags,
+            &ZoneRef::Mesh,
+        );
+    }
+}
+
 pub fn build_tags_resolution_map(config: &Config, own_name: &Identifier) -> TagMap {
     let mut tags_map: TagMap = TagMap::new();
 
@@ -121,6 +146,7 @@ pub fn build_tags_resolution_map(config: &Config, own_name: &Identifier) -> TagM
         add_node_tag(node_name, node, &mut tags_map);
 
         add_zones_tags(node_name, node, &mut tags_map);
+        add_hub_tags(node_name, node, &mut tags_map);
     }
 
     for (client_name, client) in &config.clients {
@@ -139,11 +165,12 @@ mod tests {
 
     // Home: zone lan (192.168.1.1/24) with device printer (192.168.1.50, tag printable)
     //       zone guest (192.168.2.1/24)
+    //       hub 10.100.49.0/24 (tag cameras) with client doorcam (10.100.49.10, tag outdoor)
     //       node tags: server
     // Cabin: zone lan (192.168.3.1/24)
     // Phone: meshIp 10.100.0.100, ips.Home.lan 192.168.1.60, ips.Cabin.lan 192.168.3.10, tag mobile
     const FIXTURE: &str = "
-meshNetwork: 10.100.0.0/24
+meshNetwork: 10.100.0.0/16
 nodes:
   Home:
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
@@ -161,6 +188,14 @@ nodes:
             tags: printable
       guest:
         address: 192.168.2.1/24
+    hub:
+      network: 10.100.49.0/24
+      tags: cameras
+      clients:
+        doorcam:
+          publicKey: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFA=
+          ip: 10.100.49.10
+          tags: outdoor
   Cabin:
     publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
     endpoint: 5.6.7.8
@@ -295,6 +330,56 @@ clients:
         let m = map_for("Home");
         let nets = get(&m, &bare("printable"), &ZoneRef::Named(id("lan")));
         assert!(nets.contains(&net("192.168.1.50/32")));
+    }
+
+    // ── hub: everything on it comes in over the mesh ───────────────────────
+
+    #[test]
+    fn nested_hub_yields_hub_network_under_mesh() {
+        let m = map_for("Home");
+        let nets = get(&m, &nested("Home", "hub"), &ZoneRef::Mesh);
+        assert_eq!(nets, BTreeSet::from([net("10.100.49.0/24")]));
+    }
+
+    #[test]
+    fn hub_tag_yields_hub_network() {
+        let m = map_for("Home");
+        let nets = get(&m, &bare("cameras"), &ZoneRef::Mesh);
+        assert_eq!(nets, BTreeSet::from([net("10.100.49.0/24")]));
+    }
+
+    #[test]
+    fn node_bare_tag_includes_hub_network() {
+        let m = map_for("Home");
+        assert!(get(&m, &bare("Home"), &ZoneRef::Mesh).contains(&net("10.100.49.0/24")));
+        assert!(get(&m, &bare("server"), &ZoneRef::Mesh).contains(&net("10.100.49.0/24")));
+    }
+
+    #[test]
+    fn nested_hub_client_yields_host_ip_under_mesh() {
+        let m = map_for("Home");
+        let nets = get(&m, &nested("Home", "doorcam"), &ZoneRef::Mesh);
+        assert_eq!(nets, BTreeSet::from([net("10.100.49.10/32")]));
+    }
+
+    #[test]
+    fn hub_client_tag_maps_to_client_host() {
+        let m = map_for("Home");
+        let nets = get(&m, &bare("outdoor"), &ZoneRef::Mesh);
+        assert_eq!(nets, BTreeSet::from([net("10.100.49.10/32")]));
+    }
+
+    #[test]
+    fn hub_resolves_the_same_on_other_nodes() {
+        let m = map_for("Cabin");
+        assert_eq!(
+            get(&m, &nested("Home", "doorcam"), &ZoneRef::Mesh),
+            BTreeSet::from([net("10.100.49.10/32")])
+        );
+        assert_eq!(
+            get(&m, &nested("Home", "hub"), &ZoneRef::Mesh),
+            BTreeSet::from([net("10.100.49.0/24")])
+        );
     }
 
     // ── client tag resolution ──────────────────────────────────────────────

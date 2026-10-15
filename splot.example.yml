@@ -13,8 +13,9 @@
 #
 # Addresses below use the RFC 5737 / RFC 1918 documentation ranges.
 
-# Subnet for the WireGuard mesh substrate that connects the routers.
-meshNetwork: 10.100.0.0/24
+# The whole WireGuard mesh address space: nodes and global clients take their
+# `meshIp` from it, and each node may set aside a hub network inside it.
+meshNetwork: 10.100.0.0/16
 
 # Global clients: roaming devices (phones, laptops) reachable across the
 # whole mesh. Tags applied here are usable in any service's `allowFrom`.
@@ -75,6 +76,21 @@ nodes:
                 wan:
                   via: [Home]
                   sources: ["198.51.100.0/24"]
+
+    # Devices that reach the mesh through Home alone (e.g. behind an LTE
+    # modem's NAT): peers on Home's mesh interface only. Every other node routes
+    # the whole hub network through Home; `Home.hub` refers to it.
+    hub:
+      network: 10.100.10.0/24
+      clients:
+        lte-cam:
+          publicKey: ReplaceLteCamPublicKeyAAAAAAAAAAAAAAAAAAAAA=
+          ip: 10.100.10.10
+          services:
+            rtsp:
+              port: 554
+              proto: tcp
+              allowFrom: admin
 
   # Remote site. No WAN exposure of its own — reachable over the mesh.
   Cabin:

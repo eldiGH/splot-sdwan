@@ -21,8 +21,8 @@ use crate::{
 /// Where the protected host is, seen from the node being configured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleDirection {
-    /// A host on this node: its own services, its devices, and global clients
-    /// in its zones.
+    /// A host on this node: its own services, its devices and hub clients, and
+    /// global clients in its zones.
     Ingress,
     /// A host on another node, reached from sources local to this node.
     Egress,
@@ -169,6 +169,23 @@ pub fn get_firewall_ingress_rules(
         }
     }
 
+    for (client_name, client) in node_context.own_node.hub_clients() {
+        for (service_name, service) in &client.services {
+            // /32 dest: hub clients are routed, not bridged — hub clients reach
+            // each other through this node, so the same-network filter must keep
+            // sources from the same hub.
+            rules.extend(generate_rule_from_service(
+                RuleDirection::Ingress,
+                service_name,
+                service,
+                [Ipv4Interface::host(client.ip)],
+                client_name,
+                tags,
+                None,
+            ));
+        }
+    }
+
     for (client_name, client) in &config.clients {
         let Some(networks) = client.ips.get(node_context.own_name) else {
             continue;
@@ -248,6 +265,20 @@ pub fn get_firewall_egress_rules(
                         Some(&local_networks),
                     ))
                 }
+            }
+        }
+
+        for (client_name, client) in node.hub_clients() {
+            for (service_name, service) in &client.services {
+                rules.extend(generate_rule_from_service(
+                    RuleDirection::Egress,
+                    service_name,
+                    service,
+                    [Ipv4Interface::host(client.ip)],
+                    with_node_prefix(client_name),
+                    tags,
+                    Some(&local_networks),
+                ))
             }
         }
     }
@@ -622,5 +653,85 @@ clients:
         assert!(!ingress.contains(&laptop_out), "{ingress:?}");
         assert!(egress.contains(&laptop_out), "{egress:?}");
         assert!(!egress.contains(&laptop_in), "{egress:?}");
+    }
+
+    // Home's hub has a camera (rtsp) and a doorbell. Cabin has a pc and a web
+    // service the doorbell may use.
+    const HUB_FIXTURE: &str = "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+          services:
+            rtsp: { port: 554, proto: tcp, allowFrom: [Phone, Cabin.pc, Home.doorbell] }
+        doorbell:
+          publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+          ip: 10.100.49.11
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    zones:
+      lan:
+        address: 192.168.2.1/24
+        devices:
+          pc: { ip: 192.168.2.10, macs: AA:BB:CC:DD:EE:01 }
+    services:
+      web: { port: 80, proto: tcp, allowFrom: Home.doorbell }
+clients:
+  Phone:
+    publicKey: EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEA=
+    meshIp: 10.100.1.10
+";
+
+    fn networks(list: &[Ipv4Network]) -> Vec<String> {
+        list.iter().map(|network| network.to_string()).collect()
+    }
+
+    #[test]
+    fn hub_client_service_gets_an_ingress_rule_on_its_hub_node() {
+        let rules = ingress(HUB_FIXTURE, "Home");
+        let rule = rules
+            .iter()
+            .find(|r| r.name == "camera_rtsp")
+            .expect("ingress rule for the camera missing");
+        assert_eq!(networks(&rule.dest_ip), ["10.100.49.10/32"]);
+        let src = networks(&rule.src_ip);
+        assert!(src.contains(&"10.100.1.10/32".to_owned()), "{src:?}");
+        // Same hub, still a rule: hub clients reach each other through the node
+        // (routed, not bridged), so the same-network filter must keep them.
+        assert!(src.contains(&"10.100.49.11/32".to_owned()), "{src:?}");
+    }
+
+    #[test]
+    fn hub_client_service_gets_an_egress_rule_on_other_nodes() {
+        let rules = egress(HUB_FIXTURE, "Cabin");
+        let rule = rules
+            .iter()
+            .find(|r| r.name == "Home_camera_rtsp")
+            .expect("egress rule for the camera missing");
+        assert_eq!(networks(&rule.dest_ip), ["10.100.49.10/32"]);
+        assert_eq!(networks(&rule.src_ip), ["192.168.2.10/32"]);
+    }
+
+    #[test]
+    fn hub_clients_are_local_sources_of_their_hub_node() {
+        // The doorbell reaches Cabin's web through Home, so Home lets it out.
+        let rules = egress(HUB_FIXTURE, "Home");
+        let rule = rules
+            .iter()
+            .find(|r| r.name == "Cabin_web")
+            .expect("egress rule for Cabin's web missing");
+        assert_eq!(networks(&rule.src_ip), ["10.100.49.11/32"]);
     }
 }

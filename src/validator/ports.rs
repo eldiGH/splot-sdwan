@@ -147,7 +147,7 @@ fn check_internal_port_collisions(config: &Config, report: &mut ValidationReport
             }
         }
 
-        for (client_name, client) in node.hub.iter().flat_map(|hub| &hub.clients) {
+        for (client_name, client) in node.hub_clients() {
             let mut ports = PortRegistry::default();
 
             for (service_name, service) in &client.services {

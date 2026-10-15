@@ -111,6 +111,13 @@ impl PartialEq<&str> for Identifier {
     }
 }
 
+impl Identifier {
+    /// The name `{Node}.hub` uses for a node's hub network.
+    pub fn hub() -> Self {
+        Self(consts::HUB_NAME.to_owned())
+    }
+}
+
 impl From<Identifier> for String {
     fn from(value: Identifier) -> Self {
         value.0
@@ -196,6 +203,11 @@ mod tests {
 
     fn parse_nested(s: &str) -> Result<NestedIdentifier, ParseNestedIdentifierError> {
         s.parse::<NestedIdentifier>()
+    }
+
+    #[test]
+    fn hub_name_is_a_valid_identifier() {
+        assert_eq!(parse(consts::HUB_NAME).unwrap(), Identifier::hub());
     }
 
     #[test]

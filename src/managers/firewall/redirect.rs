@@ -117,6 +117,19 @@ impl RedirectBuilder<'_> {
                     }
                 }
             }
+
+            for (client_name, client) in node.hub_clients() {
+                for (service_name, service) in &client.services {
+                    redirects.extend(self.local_service_redirect(
+                        service_name,
+                        service,
+                        ZoneRef::Mesh,
+                        client.ip,
+                        client_name,
+                        node_name,
+                    ));
+                }
+            }
         }
     }
 
@@ -177,4 +190,58 @@ pub fn get_firewall_redirects(
     builder.client_redirects(&mut redirects);
 
     redirects
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{splot_config::SplotConfig, test_support::config};
+
+    fn redirects(yaml: &str, own: &str) -> Vec<FirewallRedirect> {
+        let cfg = config(yaml);
+        let own_name: Identifier = own.parse().unwrap();
+        let splot_config = SplotConfig::for_tests("AAAA");
+
+        get_firewall_redirects(
+            &cfg,
+            &NodeContext {
+                own_node: cfg.nodes.get(&own_name).unwrap(),
+                own_name: &own_name,
+                splot_config: &splot_config,
+            },
+        )
+    }
+
+    #[test]
+    fn hub_client_service_is_forwarded_into_the_mesh() {
+        let redirects = redirects(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+          services:
+            http: { port: '8080:80', proto: tcp, wan: { via: Home } }
+",
+            "Home",
+        );
+        let [redirect] = redirects.as_slice() else {
+            panic!("expected one redirect, got {}", redirects.len());
+        };
+        assert_eq!(redirect.name, "Home_camera_http");
+        assert_eq!(redirect.dest, ZoneRef::Mesh);
+        assert_eq!(redirect.dest_ip.to_string(), "10.100.49.10");
+        assert_eq!(redirect.src_dport.to_string(), "8080");
+        assert_eq!(redirect.dest_port.to_string(), "80");
+    }
 }

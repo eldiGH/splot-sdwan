@@ -116,8 +116,17 @@ impl Node {
         self.zones.values().map(|zone| zone.address)
     }
 
+    /// What sits behind this node: its zones and its hub. Other nodes route these
+    /// through it.
     pub fn networks(&self) -> impl Iterator<Item = Ipv4Network> {
-        self.addresses().map(|address| address.network())
+        self.addresses()
+            .map(|address| address.network())
+            .chain(self.hub.iter().map(|hub| hub.network))
+    }
+
+    /// The node's hub clients; none when it has no hub.
+    pub fn hub_clients(&self) -> impl Iterator<Item = (&Identifier, &NodeHubClient)> {
+        self.hub.iter().flat_map(|hub| &hub.clients)
     }
 
     pub fn host_interfaces(&self) -> impl Iterator<Item = Ipv4Interface> {
@@ -310,18 +319,16 @@ impl Config {
 
     fn hub_clients_services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
         self.nodes.iter().flat_map(|(node_name, node)| {
-            node.hub.iter().flat_map(move |hub| {
-                hub.clients.iter().flat_map(move |(client_name, client)| {
-                    client.services.iter().map(move |(service_name, service)| {
-                        (
-                            service,
-                            ServiceHost::HubClient {
-                                node_name,
-                                client_name,
-                                service_name,
-                            },
-                        )
-                    })
+            node.hub_clients().flat_map(move |(client_name, client)| {
+                client.services.iter().map(move |(service_name, service)| {
+                    (
+                        service,
+                        ServiceHost::HubClient {
+                            node_name,
+                            client_name,
+                            service_name,
+                        },
+                    )
                 })
             })
         })

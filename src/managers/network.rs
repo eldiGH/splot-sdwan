@@ -3,7 +3,7 @@ use std::{iter, net::Ipv4Addr};
 use log::{debug, info};
 
 use crate::{
-    config::Config,
+    config::{Config, Node},
     consts,
     managers::{
         NodeContext, UciManager, UciSection, UciSectionBuilder,
@@ -138,6 +138,22 @@ fn build_mesh_clients(config: &Config) -> Vec<WgClient> {
         .collect()
 }
 
+/// The node's own hub clients: peers on this node only. Every other node reaches
+/// them through this one, by the hub network in this node's peer entry.
+fn build_hub_clients(own_node: &Node) -> Vec<WgClient> {
+    own_node
+        .hub_clients()
+        .map(|(client_name, client)| WgClient {
+            description: client_name.to_string(),
+            public_key: client.public_key.clone(),
+            allowed_ips: vec![Ipv4Network::host(client.ip)],
+            route_allowed_ips: false,
+            endpoint_host: None,
+            endpoint_port: None,
+        })
+        .collect()
+}
+
 fn build_mesh_interface(node_context: &NodeContext, config: &Config) -> WgInterface {
     info!(
         "Generating network config for node '{}'",
@@ -151,8 +167,9 @@ fn build_mesh_interface(node_context: &NodeContext, config: &Config) -> WgInterf
             continue;
         }
 
+        // Its hub network too, even while the hub has no clients.
         let allowed_ips: Vec<Ipv4Network> = iter::once(Ipv4Network::host(node.mesh_ip))
-            .chain(node.zones.values().map(|zone| zone.address.network()))
+            .chain(node.networks())
             .collect();
 
         debug!(
@@ -174,6 +191,7 @@ fn build_mesh_interface(node_context: &NodeContext, config: &Config) -> WgInterf
     }
 
     clients.extend(build_mesh_clients(config));
+    clients.extend(build_hub_clients(node_context.own_node));
 
     info!("  Mesh interface: {} peer(s)", clients.len());
 
@@ -213,14 +231,21 @@ mod tests {
         uci::UciBatchCommand,
     };
 
+    // Home has a hub with a client; Cabin's hub is empty.
     const FIXTURE: &str = "
-meshNetwork: 10.100.0.0/24
+meshNetwork: 10.100.0.0/16
 nodes:
   Home:
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
   Cabin:
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
@@ -229,6 +254,12 @@ nodes:
     zones:
       lan:
         address: 192.168.2.1/24
+    hub:
+      network: 10.100.84.0/24
+clients:
+  Phone:
+    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+    meshIp: 10.100.1.10
 ";
 
     fn has_cmd(cmds: &[UciBatchCommand], s: &str) -> bool {
@@ -237,23 +268,26 @@ nodes:
 
     const MESH_KEY: &str = "MESH_PRIVATE_AAAA";
 
-    fn cmds_for(yaml: &str) -> Vec<UciBatchCommand> {
-        let cfg = config(yaml);
-        let own_name: Identifier = "Home".parse().unwrap();
+    fn mesh_interface_of(cfg: &Config, own: &str) -> WgInterface {
+        let own_name: Identifier = own.parse().unwrap();
         let splot_config = SplotConfig::for_tests(MESH_KEY);
 
-        NetworkManager.generate_commands(
-            &cfg,
+        build_mesh_interface(
             &NodeContext {
                 own_node: cfg.nodes.get(&own_name).unwrap(),
                 own_name: &own_name,
                 splot_config: &splot_config,
             },
+            cfg,
         )
     }
 
+    fn cmds_for(yaml: &str, own: &str) -> Vec<UciBatchCommand> {
+        interface_commands(&mesh_interface_of(&config(yaml), own))
+    }
+
     fn cmds() -> Vec<UciBatchCommand> {
-        cmds_for(FIXTURE)
+        cmds_for(FIXTURE, "Home")
     }
 
     #[test]
@@ -301,6 +335,73 @@ nodes:
     }
 
     #[test]
+    fn hub_client_is_a_peer_on_its_hub_node() {
+        let c = cmds();
+        assert!(has_cmd(
+            &c,
+            "set network.spl_wireguard_spl_mesh_camera='wireguard_spl_mesh'"
+        ));
+        assert!(has_cmd(
+            &c,
+            "add_list network.spl_wireguard_spl_mesh_camera.allowed_ips='10.100.49.10/32'"
+        ));
+    }
+
+    #[test]
+    fn hub_client_is_no_peer_on_other_nodes() {
+        assert!(!has_cmd(
+            &cmds_for(FIXTURE, "Cabin"),
+            "spl_wireguard_spl_mesh_camera"
+        ));
+    }
+
+    #[test]
+    fn other_nodes_route_the_whole_hub_network_through_its_node() {
+        assert!(has_cmd(
+            &cmds_for(FIXTURE, "Cabin"),
+            "add_list network.spl_wireguard_spl_mesh_Home.allowed_ips='10.100.49.0/24'"
+        ));
+        // Even while the hub has no clients.
+        assert!(has_cmd(
+            &cmds(),
+            "add_list network.spl_wireguard_spl_mesh_Cabin.allowed_ips='10.100.84.0/24'"
+        ));
+    }
+
+    #[test]
+    fn peer_allowed_ips_never_overlap() {
+        // One address, one path: WireGuard sends to the peer with the longest
+        // matching prefix and doesn't check whether that peer is alive, so two
+        // peers must never claim the same address.
+        let example = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/splot.example.yml"));
+        for yaml in [FIXTURE, example] {
+            let cfg = config(yaml);
+            for own in cfg.nodes.keys() {
+                let interface = mesh_interface_of(&cfg, own.as_ref());
+                let claims: Vec<(&str, Ipv4Network)> = interface
+                    .clients
+                    .iter()
+                    .flat_map(|peer| {
+                        peer.allowed_ips
+                            .iter()
+                            .map(|network| (peer.description.as_str(), *network))
+                    })
+                    .collect();
+                assert!(!claims.is_empty(), "{own}");
+
+                for (i, (peer, network)) in claims.iter().enumerate() {
+                    for (other_peer, other) in &claims[i + 1..] {
+                        assert!(
+                            !network.overlap(*other),
+                            "on {own}: {peer} {network} overlaps {other_peer} {other}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn hyphenated_peer_names_get_valid_section_names() {
         // uci rejects '-' in section names; peers of hyphenated nodes and clients
         // use the mapped name.
@@ -323,6 +424,7 @@ clients:
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     meshIp: 10.100.0.100
 ",
+            "Home",
         );
         assert!(has_cmd(
             &c,
