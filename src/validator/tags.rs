@@ -4,7 +4,9 @@ use crate::{
     config::Config,
     types::{
         allow_from_ref::AllowFromRef,
-        config_location::{ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ZoneLoc},
+        config_location::{
+            ClientLoc, ConfigLocation, DeviceLoc, HubClientLoc, HubLoc, NodeLoc, ZoneLoc,
+        },
         identifier::Identifier,
     },
     validator::types::{ValidationError, ValidationReport},
@@ -70,6 +72,21 @@ pub(super) fn validate_tags(
                     )
                 });
             }
+        }
+
+        let Some(hub) = &node.hub else { continue };
+
+        add_tags(&hub.tags, &mut tags, report, global_refs, || {
+            ConfigLocation::Node(node_name.clone(), NodeLoc::Hub(HubLoc::Tags))
+        });
+
+        for (client_name, client) in &hub.clients {
+            add_tags(&client.tags, &mut tags, report, global_refs, || {
+                ConfigLocation::Node(
+                    node_name.clone(),
+                    NodeLoc::Hub(HubLoc::Client(client_name.clone(), HubClientLoc::Tags)),
+                )
+            });
         }
     }
 

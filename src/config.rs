@@ -6,7 +6,10 @@ use crate::{
     protocol::Protocol,
     types::{
         allow_from_ref::AllowFromRef,
-        config_location::{ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ServiceLoc, ZoneLoc},
+        config_location::{
+            ClientLoc, ConfigLocation, DeviceLoc, HubClientLoc, HubLoc, NodeLoc, ServiceLoc,
+            ZoneLoc,
+        },
         identifier::{Identifier, NestedIdentifier},
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
@@ -51,6 +54,33 @@ pub struct NodeZoneDevice {
     pub services: BTreeMap<Identifier, Service>,
 }
 
+/// A device that reaches the mesh through one node: a peer on that node's mesh
+/// interface only.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NodeHubClient {
+    pub public_key: WgPublicKey,
+    pub ip: Ipv4Addr,
+
+    #[serde(default)]
+    pub tags: OneOrManyUnique<Identifier>,
+    #[serde(default)]
+    pub services: BTreeMap<Identifier, Service>,
+}
+
+/// A node's hub: a network inside the mesh space for its hub clients. Every other
+/// node routes the whole network through this node, even while it's empty.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NodeHub {
+    pub network: Ipv4Network,
+
+    #[serde(default)]
+    pub clients: BTreeMap<Identifier, NodeHubClient>,
+    #[serde(default)]
+    pub tags: OneOrManyUnique<Identifier>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeZone {
@@ -76,6 +106,7 @@ pub struct Node {
     pub services: BTreeMap<Identifier, Service>,
     #[serde(default)]
     pub zones: BTreeMap<Identifier, NodeZone>,
+    pub hub: Option<NodeHub>,
 
     pub wan_zone: Option<Identifier>,
 }
@@ -239,6 +270,7 @@ impl Config {
     pub fn services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
         self.nodes_own_services()
             .chain(self.devices_services())
+            .chain(self.hub_clients_services())
             .chain(self.clients_services())
     }
 
@@ -276,6 +308,25 @@ impl Config {
         })
     }
 
+    fn hub_clients_services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
+        self.nodes.iter().flat_map(|(node_name, node)| {
+            node.hub.iter().flat_map(move |hub| {
+                hub.clients.iter().flat_map(move |(client_name, client)| {
+                    client.services.iter().map(move |(service_name, service)| {
+                        (
+                            service,
+                            ServiceHost::HubClient {
+                                node_name,
+                                client_name,
+                                service_name,
+                            },
+                        )
+                    })
+                })
+            })
+        })
+    }
+
     fn clients_services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
         self.clients.iter().flat_map(|(client_name, client)| {
             client.services.iter().map(|(service_name, service)| {
@@ -301,6 +352,11 @@ pub enum ServiceHost<'a> {
         node_name: &'a Identifier,
         zone_name: &'a Identifier,
         device_name: &'a Identifier,
+        service_name: &'a Identifier,
+    },
+    HubClient {
+        node_name: &'a Identifier,
+        client_name: &'a Identifier,
         service_name: &'a Identifier,
     },
     Client {
@@ -334,6 +390,18 @@ impl ServiceHost<'_> {
                         DeviceLoc::Service(service_name.clone(), leaf),
                     ),
                 ),
+            ),
+
+            Self::HubClient {
+                node_name,
+                client_name,
+                service_name,
+            } => ConfigLocation::Node(
+                node_name.clone(),
+                NodeLoc::Hub(HubLoc::Client(
+                    client_name.clone(),
+                    HubClientLoc::Service(service_name.clone(), leaf),
+                )),
             ),
 
             Self::Client {
@@ -558,6 +626,58 @@ nodes:
 "
         ));
         assert!(err.contains("unknown field `macss`"), "{err}");
+    }
+
+    #[test]
+    fn misspelled_hub_keys_are_rejected() {
+        let err = parse_error(&format!(
+            "{NODE}
+    hub:
+      network: 10.100.49.0/24
+      client:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+"
+        ));
+        assert!(err.contains("unknown field `client`"), "{err}");
+
+        let err = parse_error(&format!(
+            "{NODE}
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+          tag: cameras
+"
+        ));
+        assert!(err.contains("unknown field `tag`"), "{err}");
+    }
+
+    #[test]
+    fn hub_client_services_are_services() {
+        let cfg = config(&format!(
+            "{NODE}
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+          services:
+            rtsp:
+              port: 554
+              proto: tcp
+              allowFrom: Home
+"
+        ));
+        let locations: Vec<String> = cfg
+            .services()
+            .map(|(_, host)| host.to_location(ServiceLoc::Root).to_string())
+            .collect();
+        assert_eq!(locations, ["nodes.Home.hub.clients.camera.services.rtsp"]);
     }
 
     #[test]

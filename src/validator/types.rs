@@ -30,6 +30,10 @@ pub enum ValidationError {
         prefix: String,
         at: ConfigLocation,
     },
+    ReservedName {
+        name: Identifier,
+        at: ConfigLocation,
+    },
 
     // tags
     TagWithNameCollision {
@@ -58,6 +62,16 @@ pub enum ValidationError {
     NetworkCollision {
         network: Ipv4Network,
         conflicting_with: Ipv4Network,
+        at: ConfigLocation,
+    },
+    HubOutsideMeshNetwork {
+        network: Ipv4Network,
+        mesh_network: Ipv4Network,
+        at: ConfigLocation,
+    },
+    MeshIpInHubNetwork {
+        ip: Ipv4Addr,
+        hub: ConfigLocation,
         at: ConfigLocation,
     },
     IpCollision {
@@ -166,6 +180,11 @@ impl fmt::Display for ValidationError {
             Self::InvalidPrefix { name, prefix, at } => {
                 write!(f, "{at}: name '{name}' uses reserved prefix '{prefix}'")
             }
+            Self::ReservedName { name, at } => write!(
+                f,
+                "{at}: name '{name}' is reserved on every node: splot gives it a meaning of its own (e.g. '{{Node}}.{}' is the node's hub network)",
+                consts::HUB_NAME
+            ),
             Self::TagWithNameCollision { tag, at } => {
                 write!(
                     f,
@@ -199,6 +218,18 @@ impl fmt::Display for ValidationError {
                     "{at}: subnet {network} overlaps with another subnet {conflicting_with}"
                 )
             }
+            Self::HubOutsideMeshNetwork {
+                network,
+                mesh_network,
+                at,
+            } => write!(
+                f,
+                "{at}: hub network {network} must lie inside meshNetwork {mesh_network}"
+            ),
+            Self::MeshIpInHubNetwork { ip, hub, at } => write!(
+                f,
+                "{at}: mesh IP {ip} lies inside the hub network at {hub} - a hub network is routed to its node as a whole, so it can't hold another peer's address"
+            ),
             Self::IpCollision { ip, at, with } => {
                 write!(f, "{at}: IP {ip} is already used at {with}")
             }
@@ -281,6 +312,7 @@ impl ValidationError {
         match self {
             Self::GlobalNameCollision { at, .. } => at,
             Self::InvalidPrefix { at, .. } => at,
+            Self::ReservedName { at, .. } => at,
             Self::InvalidWanVia { at, .. } => at,
             Self::IpCollision { at, .. } => at,
             Self::IpOutsideSubnet { at, .. } => at,
@@ -288,6 +320,8 @@ impl ValidationError {
             Self::LocalNameCollision { at, .. } => at,
             Self::MacMissing { at } => at,
             Self::NetworkCollision { at, .. } => at,
+            Self::HubOutsideMeshNetwork { at, .. } => at,
+            Self::MeshIpInHubNetwork { at, .. } => at,
             Self::NodeClientManyZones { at, .. } => at,
             Self::NodeMissing { at, .. } => at,
             Self::DuplicatePublicKey { at, .. } => at,

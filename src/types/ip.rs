@@ -304,6 +304,11 @@ impl Ipv4Network {
         }
     }
 
+    /// Whether `network` lies entirely inside this subnet.
+    pub fn contains_network(&self, network: Ipv4Network) -> bool {
+        self.prefix <= network.prefix && self.contains(network.addr)
+    }
+
     pub fn overlap(&self, network: Ipv4Network) -> bool {
         if self.prefix <= network.prefix {
             self.contains(network.addr)
@@ -374,6 +379,17 @@ mod tests {
         // nested overlaps both directions
         assert!(net("10.0.0.0/16").overlap(net("10.0.5.0/24")));
         assert!(net("10.0.5.0/24").overlap(net("10.0.0.0/16")));
+    }
+
+    #[test]
+    fn network_contains_network() {
+        assert!(net("10.0.0.0/16").contains_network(net("10.0.5.0/24")));
+        assert!(net("10.0.0.0/24").contains_network(net("10.0.0.0/24"))); // equal
+        // overlapping, but the other way round: the bigger one isn't inside,
+        // even when both start at the same address
+        assert!(!net("10.0.5.0/24").contains_network(net("10.0.0.0/16")));
+        assert!(!net("10.0.0.0/24").contains_network(net("10.0.0.0/16")));
+        assert!(!net("10.0.0.0/24").contains_network(net("10.0.1.0/24"))); // disjoint
     }
 
     #[test]

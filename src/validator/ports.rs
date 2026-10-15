@@ -4,7 +4,10 @@ use crate::{
     config::{Config, Service},
     protocol::Protocol,
     types::{
-        config_location::{ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ServiceLoc, ZoneLoc},
+        config_location::{
+            ClientLoc, ConfigLocation, DeviceLoc, HubClientLoc, HubLoc, NodeLoc, ServiceLoc,
+            ZoneLoc,
+        },
         identifier::Identifier,
         port::PortOrRange,
     },
@@ -141,6 +144,22 @@ fn check_internal_port_collisions(config: &Config, report: &mut ValidationReport
                         )
                     });
                 }
+            }
+        }
+
+        for (client_name, client) in node.hub.iter().flat_map(|hub| &hub.clients) {
+            let mut ports = PortRegistry::default();
+
+            for (service_name, service) in &client.services {
+                ports.try_insert(&service.proto, service.port.internal(), report, || {
+                    ConfigLocation::Node(
+                        node_name.clone(),
+                        NodeLoc::Hub(HubLoc::Client(
+                            client_name.clone(),
+                            HubClientLoc::Service(service_name.clone(), ServiceLoc::Port),
+                        )),
+                    )
+                });
             }
         }
 

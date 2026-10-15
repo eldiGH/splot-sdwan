@@ -29,6 +29,7 @@ pub enum NodeLoc {
     Tags,
     WanZone,
     Zone(Identifier, ZoneLoc),
+    Hub(HubLoc),
     Service(Identifier, ServiceLoc),
 }
 
@@ -43,6 +44,7 @@ impl Display for NodeLoc {
             Self::Tags => write!(f, ".tags"),
             Self::WanZone => write!(f, ".wanZone"),
             Self::Zone(zone_id, zone_loc) => write!(f, ".zones.{zone_id}{zone_loc}"),
+            Self::Hub(hub_loc) => write!(f, ".hub{hub_loc}"),
             Self::Service(service_id, service_loc) => {
                 write!(f, ".services.{service_id}{service_loc}")
             }
@@ -122,6 +124,48 @@ impl Display for DeviceLoc {
             Self::Root => write!(f, ""),
             Self::Ip => write!(f, ".ip"),
             Self::Macs => write!(f, ".macs"),
+            Self::Tags => write!(f, ".tags"),
+            Self::Service(service_id, service_loc) => {
+                write!(f, ".services.{service_id}{service_loc}")
+            }
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum HubLoc {
+    Root,
+    Network,
+    Tags,
+    Client(Identifier, HubClientLoc),
+}
+
+impl Display for HubLoc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Root => write!(f, ""),
+            Self::Network => write!(f, ".network"),
+            Self::Tags => write!(f, ".tags"),
+            Self::Client(client_id, client_loc) => write!(f, ".clients.{client_id}{client_loc}"),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum HubClientLoc {
+    Root,
+    PublicKey,
+    Ip,
+    Tags,
+    Service(Identifier, ServiceLoc),
+}
+
+impl Display for HubClientLoc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Root => write!(f, ""),
+            Self::PublicKey => write!(f, ".publicKey"),
+            Self::Ip => write!(f, ".ip"),
             Self::Tags => write!(f, ".tags"),
             Self::Service(service_id, service_loc) => {
                 write!(f, ".services.{service_id}{service_loc}")
@@ -241,6 +285,33 @@ mod tests {
         assert_eq!(
             loc.to_string(),
             "nodes.Home.zones.lan.devices.printer.services.ssh.port"
+        );
+    }
+
+    #[test]
+    fn hub_paths() {
+        assert_eq!(
+            ConfigLocation::Node(id("Home"), NodeLoc::Hub(HubLoc::Network)).to_string(),
+            "nodes.Home.hub.network"
+        );
+        assert_eq!(
+            ConfigLocation::Node(
+                id("Home"),
+                NodeLoc::Hub(HubLoc::Client(
+                    id("camera"),
+                    HubClientLoc::Service(id("rtsp"), ServiceLoc::Port)
+                ))
+            )
+            .to_string(),
+            "nodes.Home.hub.clients.camera.services.rtsp.port"
+        );
+        assert_eq!(
+            ConfigLocation::Node(
+                id("Home"),
+                NodeLoc::Hub(HubLoc::Client(id("camera"), HubClientLoc::Root))
+            )
+            .to_string(),
+            "nodes.Home.hub.clients.camera"
         );
     }
 

@@ -2,9 +2,12 @@ use std::collections::HashSet;
 
 use crate::{
     config::Config,
+    consts,
     types::{
         allow_from_ref::AllowFromRef,
-        config_location::{ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ZoneLoc},
+        config_location::{
+            ClientLoc, ConfigLocation, DeviceLoc, HubClientLoc, HubLoc, NodeLoc, ZoneLoc,
+        },
         identifier::Identifier,
     },
     validator::types::{ValidationError, ValidationReport},
@@ -19,6 +22,14 @@ fn add_name(
     report: &mut ValidationReport,
     locate: impl FnOnce() -> ConfigLocation,
 ) {
+    if node_name.is_some() && consts::RESERVED_LOCAL_NAMES.contains(&name.as_ref()) {
+        report.errors.push(ValidationError::ReservedName {
+            name: name.clone(),
+            at: locate(),
+        });
+        return;
+    }
+
     if let Some(node_prefixes) = node_prefixes {
         for node_prefix in node_prefixes {
             if name.as_ref().starts_with(node_prefix) {
@@ -97,7 +108,7 @@ pub(super) fn validate_names(
         });
     }
 
-    // Pass 2: each node's local names (zones and devices).
+    // Pass 2: each node's local names (zones, devices and hub clients).
     for (node_name, node) in &config.nodes {
         let mut node_identifiers = HashSet::new();
         node_identifiers.insert(node_name.clone());
@@ -137,6 +148,33 @@ pub(super) fn validate_names(
                     },
                 )
             }
+        }
+
+        let Some(hub) = &node.hub else { continue };
+
+        // The hub itself, by its reserved name.
+        refs.insert(AllowFromRef::nested(
+            node_name.clone(),
+            consts::HUB_NAME
+                .parse()
+                .expect("the hub's name is a valid identifier"),
+        ));
+
+        for client_name in hub.clients.keys() {
+            add_name(
+                client_name,
+                Some(node_name),
+                &mut refs,
+                Some(&mut node_identifiers),
+                Some(&node_prefixes),
+                report,
+                || {
+                    ConfigLocation::Node(
+                        node_name.clone(),
+                        NodeLoc::Hub(HubLoc::Client(client_name.clone(), HubClientLoc::Root)),
+                    )
+                },
+            )
         }
     }
 

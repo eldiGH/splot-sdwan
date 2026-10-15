@@ -6,7 +6,10 @@ use std::{
 use crate::{
     config::Config,
     types::{
-        config_location::{ClientIpLoc, ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ZoneLoc},
+        config_location::{
+            ClientIpLoc, ClientLoc, ConfigLocation, DeviceLoc, HubClientLoc, HubLoc, NodeLoc,
+            ZoneLoc,
+        },
         identifier::Identifier,
         ip::Ipv4Network,
     },
@@ -108,6 +111,75 @@ fn check_zones_ips(
                             ZoneLoc::Device(device_name.clone(), DeviceLoc::Ip),
                         ),
                     )
+                });
+            }
+        }
+    }
+}
+
+/// A hub network lies inside the mesh space and overlaps no other hub; its
+/// clients' IPs lie inside it. (Zones can't overlap the mesh space, so a hub can't
+/// overlap a zone.)
+fn check_hubs_ips(config: &Config, report: &mut ValidationReport) {
+    let mut hub_networks = Vec::new();
+
+    for (node_name, node) in &config.nodes {
+        let Some(hub) = &node.hub else { continue };
+        let at = || ConfigLocation::Node(node_name.clone(), NodeLoc::Hub(HubLoc::Network));
+
+        if config.mesh_network.contains_network(hub.network) {
+            add_network(hub.network, &mut hub_networks, report, at);
+        } else {
+            report.errors.push(ValidationError::HubOutsideMeshNetwork {
+                network: hub.network,
+                mesh_network: config.mesh_network,
+                at: at(),
+            });
+        }
+
+        for (client_name, client) in &hub.clients {
+            check_host_ip(client.ip, hub.network, report, || {
+                ConfigLocation::Node(
+                    node_name.clone(),
+                    NodeLoc::Hub(HubLoc::Client(client_name.clone(), HubClientLoc::Ip)),
+                )
+            });
+        }
+    }
+}
+
+/// One address, one path: every other node routes a hub network to its node as a
+/// whole, so no node or global client can have its mesh IP inside one.
+fn check_mesh_ips_outside_hubs(config: &Config, report: &mut ValidationReport) {
+    let hubs: Vec<(Ipv4Network, ConfigLocation)> = config
+        .nodes
+        .iter()
+        .filter_map(|(node_name, node)| {
+            let hub = node.hub.as_ref()?;
+            let at = ConfigLocation::Node(node_name.clone(), NodeLoc::Hub(HubLoc::Network));
+
+            Some((hub.network, at))
+        })
+        .collect();
+
+    let nodes_mesh_ips = config.nodes.iter().map(|(node_name, node)| {
+        let at = ConfigLocation::Node(node_name.clone(), NodeLoc::MeshIp);
+
+        (node.mesh_ip, at)
+    });
+    let clients_mesh_ips = config.clients.iter().filter_map(|(client_name, client)| {
+        let at = ConfigLocation::Client(client_name.clone(), ClientLoc::MeshIp);
+
+        Some((client.mesh_ip?, at))
+    });
+
+    for (ip, at) in nodes_mesh_ips.chain(clients_mesh_ips) {
+        for (network, hub) in &hubs {
+            if network.contains(ip) {
+                report.errors.push(ValidationError::MeshIpInHubNetwork {
+                    ip,
+                    hub: hub.clone(),
+                    at: at.clone(),
                 });
             }
         }
@@ -242,6 +314,25 @@ fn check_zone_ip_uniqueness(config: &Config, report: &mut ValidationReport) {
     }
 }
 
+fn check_hub_ip_uniqueness(config: &Config, report: &mut ValidationReport) {
+    for (node_name, node) in &config.nodes {
+        let Some(hub) = &node.hub else { continue };
+        let mut hub_ips: HashMap<Ipv4Addr, ConfigLocation> = HashMap::new();
+
+        for (client_name, client) in &hub.clients {
+            try_insert_ip(
+                &mut hub_ips,
+                client.ip,
+                report,
+                ConfigLocation::Node(
+                    node_name.clone(),
+                    NodeLoc::Hub(HubLoc::Client(client_name.clone(), HubClientLoc::Ip)),
+                ),
+            );
+        }
+    }
+}
+
 fn check_client_zones(config: &Config, report: &mut ValidationReport) {
     for (client_name, client) in &config.clients {
         for (node_name, networks) in &client.ips {
@@ -280,10 +371,13 @@ pub(super) fn check_networks(config: &Config, report: &mut ValidationReport) {
     let mut networks = Vec::new();
     check_mesh_ips(config, report, &mut networks);
     check_zones_ips(config, report, &mut networks);
+    check_hubs_ips(config, report);
+    check_mesh_ips_outside_hubs(config, report);
 
     check_clients_ips(config, report);
     check_mesh_ip_uniqueness(config, report);
     check_zone_ip_uniqueness(config, report);
+    check_hub_ip_uniqueness(config, report);
 
     check_client_zones(config, report);
 }

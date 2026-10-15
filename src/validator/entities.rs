@@ -3,7 +3,7 @@ use std::collections::{HashMap, hash_map::Entry};
 use crate::{
     config::{Client, Config},
     types::{
-        config_location::{ClientIpLoc, ClientLoc, ConfigLocation, NodeLoc},
+        config_location::{ClientIpLoc, ClientLoc, ConfigLocation, HubClientLoc, HubLoc, NodeLoc},
         wg_key::WgPublicKey,
     },
     validator::types::{ValidationError, ValidationReport, ValidationWarning},
@@ -113,7 +113,7 @@ fn note_public_key<'a>(
     }
 }
 
-/// Every node and global client needs its own public key. Two nodes
+/// Every node, hub client and global client needs its own public key. Two nodes
 /// sharing one make "which node am I" ambiguous, and WireGuard can't hold two
 /// peers with the same key on one interface.
 fn check_public_key_uniqueness(config: &Config, report: &mut ValidationReport) {
@@ -126,6 +126,22 @@ fn check_public_key_uniqueness(config: &Config, report: &mut ValidationReport) {
             &mut seen,
             report,
         );
+    }
+
+    for (node_name, node) in &config.nodes {
+        let Some(hub) = &node.hub else { continue };
+
+        for (client_name, client) in &hub.clients {
+            note_public_key(
+                &client.public_key,
+                ConfigLocation::Node(
+                    node_name.clone(),
+                    NodeLoc::Hub(HubLoc::Client(client_name.clone(), HubClientLoc::PublicKey)),
+                ),
+                &mut seen,
+                report,
+            );
+        }
     }
 
     for (client_name, client) in &config.clients {
