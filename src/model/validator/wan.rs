@@ -3,12 +3,12 @@ use std::collections::{BTreeMap, HashSet};
 use crate::{
     config::{Client, Config, Node, ServiceHost, ServiceWan, WanResolveError},
     consts,
+    model::validator::types::{ValidationError, ValidationReport, ValidationWarning},
     types::{
         config_location::{ConfigLocation, NodeLoc, ServiceLoc, WanLoc, ZoneLoc},
         identifier::Identifier,
         wan_via_target::WanViaTarget,
     },
-    validator::types::{ValidationError, ValidationReport, ValidationWarning},
 };
 
 fn validate_service_wan<'a>(

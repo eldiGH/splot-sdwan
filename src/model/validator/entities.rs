@@ -2,11 +2,11 @@ use std::collections::{HashMap, hash_map::Entry};
 
 use crate::{
     config::{Client, Config},
+    model::validator::types::{ValidationError, ValidationReport, ValidationWarning},
     types::{
         config_location::{ClientIpLoc, ClientLoc, ConfigLocation, HubClientLoc, HubLoc, NodeLoc},
         wg_key::WgPublicKey,
     },
-    validator::types::{ValidationError, ValidationReport, ValidationWarning},
 };
 
 fn client_is_in_any_zone(client: &Client, config: &Config) -> bool {

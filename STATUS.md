@@ -23,7 +23,7 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 - A stored key is validated on load; a corrupt key is a hard error, never silently regenerated (regeneration would orphan the node's peers).
 - Designed to grow as more local-only state is needed (e.g., last-applied config snapshot for distributed-reload rollback — see IDEAS.md).
 
-### Config validator (`src/validator/`)
+### Config validator (`src/model/validator/`)
 
 Multi-pass validator that checks `splot.yml` before any UCI commands are generated. Several passes, the first few producing data the next consumes:
 
@@ -104,7 +104,7 @@ The validator runs in `main.rs` before any UCI generation — validation errors 
 
 ### Tests (`cargo test`)
 
-Unit-test suite over the deterministic core (~280 tests). Covers: type parsers (`src/types/`), WAN/config resolution (`src/config.rs`), all validator passes (`src/validator/`), the tag-resolution map, the UCI generators (firewall redirects/rules/zones, network, dhcp), UCI command/builder rendering, the uci not-found classification and dry-run redaction, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, pipeline) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
+Unit-test suite over the deterministic core (~280 tests). Covers: type parsers (`src/types/`), WAN/config resolution (`src/config.rs`), all validator passes (`src/model/validator/`), the tag-resolution map, the UCI generators (firewall redirects/rules/zones, network, dhcp), UCI command/builder rendering, the uci not-found classification and dry-run redaction, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, pipeline) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
 
 ---
 

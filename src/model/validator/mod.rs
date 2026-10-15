@@ -11,12 +11,12 @@ use std::collections::HashSet;
 
 use crate::{
     config::Config,
-    types::allow_from_ref::AllowFromRef,
-    validator::{
+    model::validator::{
         entities::check_entities, names::validate_names, networks::check_networks,
         ports::check_ports, references::check_references_resolution, tags::validate_tags,
         types::ValidationReport, wan::check_wan,
     },
+    types::allow_from_ref::AllowFromRef,
 };
 
 pub fn validate_config(config: &Config) -> ValidationReport {
@@ -46,9 +46,9 @@ pub fn validate_config(config: &Config) -> ValidationReport {
 #[cfg(test)]
 mod tests {
     use crate::{
+        model::validator::types::{ValidationError, ValidationReport, ValidationWarning},
         test_support::{error_at, has_error, has_warning, report, warning_at},
         types::ip::ReservedAddress,
-        validator::types::{ValidationError, ValidationReport, ValidationWarning},
     };
 
     #[test]

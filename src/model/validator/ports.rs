@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     config::{Config, Service},
+    model::validator::types::{ValidationError, ValidationReport},
     protocol::Protocol,
     types::{
         config_location::{
@@ -11,7 +12,6 @@ use crate::{
         identifier::Identifier,
         port::PortOrRange,
     },
-    validator::types::{ValidationError, ValidationReport},
 };
 
 #[derive(Default)]

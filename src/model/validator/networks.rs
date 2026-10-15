@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     config::Config,
+    model::validator::types::{ValidationError, ValidationReport},
     types::{
         config_location::{
             ClientIpLoc, ClientLoc, ConfigLocation, DeviceLoc, HubClientLoc, HubLoc, NodeLoc,
@@ -13,7 +14,6 @@ use crate::{
         identifier::Identifier,
         ip::Ipv4Network,
     },
-    validator::types::{ValidationError, ValidationReport},
 };
 
 fn add_network(

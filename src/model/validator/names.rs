@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::{
     config::Config,
     consts,
+    model::validator::types::{ValidationError, ValidationReport},
     types::{
         allow_from_ref::AllowFromRef,
         config_location::{
@@ -10,7 +11,6 @@ use crate::{
         },
         identifier::Identifier,
     },
-    validator::types::{ValidationError, ValidationReport},
 };
 
 fn add_name(

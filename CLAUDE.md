@@ -163,7 +163,7 @@ A hub is a network inside `meshNetwork` that a node sets aside for devices reach
 
 ### Scope
 
-Tests cover the **deterministic core**: type parsers (`src/types/`), WAN/config resolution (`src/config.rs`), all validator passes (`src/validator/`), the tag-resolution map, the UCI generators (firewall redirects/rules/zones, network, dhcp), and UCI command/builder rendering. The process/IO layer (`uci` executor, `wg`, `splot_config`, `env`, `pipeline`, `main`) is **out of scope** for now — it shells out and touches the filesystem; revisit as integration tests later.
+Tests cover the **deterministic core**: type parsers (`src/types/`), WAN/config resolution (`src/config.rs`), all validator passes (`src/model/validator/`), the tag-resolution map, the UCI generators (firewall redirects/rules/zones, network, dhcp), and UCI command/builder rendering. The process/IO layer (`uci` executor, `wg`, `splot_config`, `env`, `pipeline`, `main`) is **out of scope** for now — it shells out and touches the filesystem; revisit as integration tests later.
 
 ### Placement
 

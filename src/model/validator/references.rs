@@ -2,11 +2,11 @@ use std::collections::HashSet;
 
 use crate::{
     config::{Config, Service},
+    model::validator::types::{ValidationError, ValidationReport, ValidationWarning},
     types::{
         allow_from_ref::AllowFromRef,
         config_location::{ConfigLocation, ServiceLoc},
     },
-    validator::types::{ValidationError, ValidationReport, ValidationWarning},
 };
 
 fn check_service(

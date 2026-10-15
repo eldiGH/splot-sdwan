@@ -15,6 +15,7 @@ pub mod config;
 pub mod consts;
 pub mod env;
 pub mod managers;
+pub mod model;
 pub mod pipeline;
 pub mod protocol;
 pub mod splot_config;
@@ -22,7 +23,6 @@ pub mod splot_config;
 pub(crate) mod test_support;
 pub mod types;
 pub mod uci;
-pub mod validator;
 pub mod wg;
 
 fn main() -> anyhow::Result<()> {
@@ -84,7 +84,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn report_issues(config: &Config) -> bool {
-    let report = validator::validate_config(config);
+    let report = model::validator::validate_config(config);
 
     for error in &report.errors {
         eprintln!("error: {error}");

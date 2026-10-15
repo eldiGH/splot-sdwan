@@ -1,6 +1,6 @@
 use crate::{
     config::Config,
-    validator::{
+    model::validator::{
         self,
         types::{ValidationError, ValidationReport, ValidationWarning},
     },
