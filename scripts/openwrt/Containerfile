@@ -1,0 +1,7 @@
+# Test router for scripts/openwrt-check.sh: an OpenWrt rootfs, booted with procd
+# so that ubus, netifd, fw4 and dnsmasq run as on a router.
+ARG OPENWRT_VERSION
+FROM docker.io/openwrt/rootfs:x86-64-${OPENWRT_VERSION}
+COPY prepare.sh /tmp/prepare.sh
+RUN sh /tmp/prepare.sh && rm /tmp/prepare.sh
+CMD ["/sbin/init"]
