@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, iter};
 
 use crate::{
     config::{Config, Node},
@@ -28,6 +28,34 @@ pub struct NodeContext<'a> {
     pub own_name: &'a Identifier,
     pub own_node: &'a Node,
     pub splot_config: &'a SplotConfig,
+}
+
+/// A generated struct as one uci section. Its section name follows from what it
+/// is: `spl_<section type>_<id>`.
+trait UciSection {
+    /// The uci file the section lives in.
+    const FILE: &'static str;
+
+    /// The uci section type (`rule`, `redirect`, `host`, …). It also leads the
+    /// section name: uci has one namespace per file, and the type keeps sections
+    /// of different types apart.
+    fn section_type(&self) -> &str;
+
+    /// What tells this section apart from other sections of the same type.
+    fn id(&self) -> impl IntoIterator<Item = &str>;
+
+    /// Everything after the line that creates the section.
+    fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder;
+
+    fn section_name(&self) -> UciSectionName {
+        UciSectionName::new(iter::once(self.section_type()).chain(self.id()))
+    }
+
+    fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
+        let section = UciSectionBuilder::new(Self::FILE, &self.section_name(), self.section_type());
+
+        self.options(section).build()
+    }
 }
 
 struct UciSectionBuilder {
@@ -151,6 +179,58 @@ mod tests {
 
             insta::assert_snapshot!(format!("example_{node_name}"), output);
         }
+    }
+
+    struct Example {
+        section_type: &'static str,
+        id: Vec<String>,
+    }
+
+    impl UciSection for Example {
+        const FILE: &'static str = "firewall";
+
+        fn section_type(&self) -> &str {
+            self.section_type
+        }
+
+        fn id(&self) -> impl IntoIterator<Item = &str> {
+            self.id.iter().map(String::as_str)
+        }
+
+        fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
+            section.set("target", "ACCEPT")
+        }
+    }
+
+    fn example(section_type: &'static str, id: &[&str]) -> Example {
+        Example {
+            section_type,
+            id: id.iter().map(|part| part.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn section_is_named_after_its_type_and_id() {
+        let cmds = example("rule", &["in", "my-printer_ipp"]).to_uci_commands();
+        assert_eq!(cmds.len(), 2);
+        assert_eq!(
+            render(&cmds[0]),
+            "set firewall.spl_rule_in_my_printer_ipp='rule'"
+        );
+        assert_eq!(
+            render(&cmds[1]),
+            "set firewall.spl_rule_in_my_printer_ipp.target='ACCEPT'"
+        );
+    }
+
+    #[test]
+    fn same_id_under_another_type_is_another_section() {
+        // A rule and a redirect for the same service share their id; the type in
+        // the name keeps uci from merging them.
+        assert_ne!(
+            example("rule", &["Home_ssh"]).section_name(),
+            example("redirect", &["Home_ssh"]).section_name()
+        );
     }
 
     fn builder() -> UciSectionBuilder {

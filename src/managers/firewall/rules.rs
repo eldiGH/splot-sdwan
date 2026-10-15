@@ -3,12 +3,12 @@ use std::{fmt, net::Ipv4Addr};
 use crate::{
     config::{Config, Service, ZoneOrVpnInterface},
     managers::{
-        NodeContext, UciSectionBuilder,
+        NodeContext, UciSection, UciSectionBuilder,
         firewall::{
             consts::FIREWALL_FILE_NAME,
             types::{FirewallAction, TagMap},
         },
-        naming::{self, SectionKind, UciSectionName},
+        naming,
     },
     protocol::Protocols,
     types::{
@@ -16,7 +16,6 @@ use crate::{
         ip::{Ipv4Interface, Ipv4Network},
         port::PortOrRange,
     },
-    uci::UciBatchCommand,
 };
 
 /// Where the protected host is, seen from the node being configured.
@@ -39,15 +38,26 @@ pub struct FirewallRule {
     pub target: FirewallAction,
 }
 
-impl FirewallRule {
-    pub fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
-        let kind = match self.direction {
-            RuleDirection::Ingress => SectionKind::RuleIn,
-            RuleDirection::Egress => SectionKind::RuleOut,
-        };
-        let section = UciSectionName::tagged(kind, [&self.name]);
+impl UciSection for FirewallRule {
+    const FILE: &'static str = FIREWALL_FILE_NAME;
 
-        UciSectionBuilder::new(FIREWALL_FILE_NAME, &section, "rule")
+    fn section_type(&self) -> &str {
+        "rule"
+    }
+
+    /// The direction is part of the id: one service can need an ingress and an
+    /// egress rule on the same node (a global client with IPs on two nodes).
+    fn id(&self) -> impl IntoIterator<Item = &str> {
+        let direction = match self.direction {
+            RuleDirection::Ingress => "in",
+            RuleDirection::Egress => "out",
+        };
+
+        [direction, self.name.as_str()]
+    }
+
+    fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
+        section
             .set("name", naming::name_prefixed(&self.name))
             .set("src", "*")
             .set("dest", "*")
@@ -56,7 +66,6 @@ impl FirewallRule {
             .extend_list("dest_ip", self.dest_ip.iter())
             .extend_list("src_ip", self.src_ip.iter())
             .extend_list("proto", self.proto.iter())
-            .build()
     }
 }
 
@@ -648,8 +657,8 @@ clients:
         let ingress = sections(ingress(yaml, "Home"));
         let egress = sections(egress(yaml, "Home"));
 
-        let laptop_in = "set firewall.spl_in_Laptop_ssh='rule'".to_owned();
-        let laptop_out = "set firewall.spl_out_Laptop_ssh='rule'".to_owned();
+        let laptop_in = "set firewall.spl_rule_in_Laptop_ssh='rule'".to_owned();
+        let laptop_out = "set firewall.spl_rule_out_Laptop_ssh='rule'".to_owned();
         assert!(ingress.contains(&laptop_in), "{ingress:?}");
         assert!(!ingress.contains(&laptop_out), "{ingress:?}");
         assert!(egress.contains(&laptop_out), "{egress:?}");

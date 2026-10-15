@@ -82,12 +82,12 @@ The validator runs in `main.rs` before any UCI generation — validation errors 
 - Validates stored private keys structurally (`validate_private_key` — length, base64 charset, padding).
 - Used during `splot_config` initialization and to identify the current node by matching the local pubkey against `node.publicKey` in the config.
 
-### UCI section naming (`src/managers/naming.rs`)
+### UCI section naming (`managers/mod.rs` `UciSection`, `managers/naming.rs`)
 
-- Section names are a uci concern: the generated structs (`FirewallRule`, `FirewallRedirect`, …) carry what an object is (its name, a rule's `direction`), and `to_uci_commands()` turns that into a section name. Other backends will name things their own way.
-- Every generated section name, and every reference to one, is built by `UciSectionName`: the `spl_` prefix (declared in `consts.rs`) keeps splot-managed sections apart from operator-managed ones, parts are joined with `_`, and `-` is mapped to `_` by `uci::name` (uci rejects `-` in section and option names).
-- Where a uci file mixes kinds, the name carries a kind tag, so different kinds can't collide: WireGuard peers `spl_peer_<interface>_<name>`, firewall rules `spl_in_…` (traffic to this node's hosts) / `spl_out_…` (from local sources to other nodes), port forwards `spl_dnat_…`. Interfaces, zones and DHCP hosts keep `spl_<name>`, because other config refers to them by name.
-- Cross-node rules are namespaced by node name (e.g. `spl_out_Home_printer_ssh`).
+- Section names are a uci concern. Every generated struct (`WgInterface`, `FirewallZone`, `FirewallRule`, `FirewallRedirect`, `DhcpStaticLease`, and peers via `PeerSection`) implements `UciSection`: its file, its uci section type, an id (what tells it apart from other sections of the same type), and its options. Other backends will name things their own way.
+- The section name is derived from that, the same way for every type: `spl_<section type>_<id>`, e.g. `spl_rule_in_Home_ssh`, `spl_redirect_Home_nas_https`, `spl_zone_mesh`, `spl_host_printer`, `spl_wireguard_spl_mesh_Phone`. uci has one namespace per file; the type keeps sections of different types apart. A rule's id includes its direction (`in`: traffic to this node's hosts; `out`: from local sources to other nodes); cross-node rules are namespaced by node name (`spl_rule_out_Home_printer_ssh`).
+- Exception: an interface's section name is the interface name (`spl_mesh`). Zone `network` lists and peer section types refer to it, and netifd names the WireGuard device after it (at most 15 characters).
+- `UciSectionName` does the mechanics: the `spl_` prefix (declared in `consts.rs`) keeps splot-managed sections apart from operator-managed ones, parts are joined with `_`, and `-` is mapped to `_` by `uci::name` (uci rejects `-` in section and option names).
 - Safety net: the pipeline refuses a batch that creates the same section twice (`find_duplicate_sections`), instead of letting uci merge the two into one. It runs before splot touches uci at all.
 
 ### Tests (`cargo test`)

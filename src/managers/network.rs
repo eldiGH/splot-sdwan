@@ -6,8 +6,8 @@ use crate::{
     config::{Config, NodeVpnInterface},
     consts,
     managers::{
-        NodeContext, UciManager, UciSectionBuilder,
-        naming::{self, SectionKind, UciSectionName},
+        NodeContext, UciManager, UciSection, UciSectionBuilder,
+        naming::{self, UciSectionName},
     },
     types::{
         identifier::Identifier,
@@ -29,23 +29,30 @@ struct WgInterface {
     clients: Vec<WgClient>,
 }
 
-impl WgInterface {
-    fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
-        let mut commands =
-            UciSectionBuilder::new(FILE_NAME, &naming::interface(&self.name), "interface")
-                .set("proto", "wireguard")
-                .set("private_key", &self.private_key)
-                .set("listen_port", self.listen_port.to_string())
-                .extend_list("address", &self.addresses)
-                .build();
+impl UciSection for WgInterface {
+    const FILE: &'static str = FILE_NAME;
 
-        commands.extend(
-            self.clients
-                .iter()
-                .flat_map(|c| c.to_uci_commands(&self.name)),
-        );
+    fn section_type(&self) -> &str {
+        "interface"
+    }
 
-        commands
+    fn id(&self) -> impl IntoIterator<Item = &str> {
+        [self.name.as_str()]
+    }
+
+    /// Not `spl_interface_<name>`: an interface's section name is the interface
+    /// name itself. Zones and peer section types refer to it, and netifd names the
+    /// WireGuard device after it (at most 15 characters).
+    fn section_name(&self) -> UciSectionName {
+        naming::interface(&self.name)
+    }
+
+    fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
+        section
+            .set("proto", "wireguard")
+            .set("private_key", &self.private_key)
+            .set("listen_port", self.listen_port.to_string())
+            .extend_list("address", &self.addresses)
     }
 }
 
@@ -58,28 +65,58 @@ struct WgClient {
     endpoint_port: Option<Port>,
 }
 
-impl WgClient {
-    fn to_uci_commands(&self, interface_name: &str) -> Vec<UciBatchCommand> {
-        UciSectionBuilder::new(
-            FILE_NAME,
-            &UciSectionName::tagged(SectionKind::Peer, [interface_name, &self.description]),
-            &format!("wireguard_{}", naming::interface(interface_name)),
-        )
-        .set("description", naming::name_prefixed(&self.description))
-        .set("public_key", self.public_key.as_str())
-        .set(
-            "route_allowed_ips",
-            if self.route_allowed_ips { "1" } else { "0" },
-        )
-        .set("persistent_keepalive", "25")
-        .set_if_some(
-            "endpoint_host",
-            self.endpoint_host.map(|host| host.to_string()),
-        )
-        .set_if_some("endpoint_port", self.endpoint_port.map(|p| p.to_string()))
-        .extend_list("allowed_ips", &self.allowed_ips)
-        .build()
+/// A client as a uci peer section. Its section type names the interface it
+/// belongs to (`wireguard_<interface>`), which the client itself doesn't know.
+struct PeerSection<'a> {
+    section_type: &'a str,
+    client: &'a WgClient,
+}
+
+impl UciSection for PeerSection<'_> {
+    const FILE: &'static str = FILE_NAME;
+
+    fn section_type(&self) -> &str {
+        self.section_type
     }
+
+    fn id(&self) -> impl IntoIterator<Item = &str> {
+        [self.client.description.as_str()]
+    }
+
+    fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
+        let client = self.client;
+
+        section
+            .set("description", naming::name_prefixed(&client.description))
+            .set("public_key", client.public_key.as_str())
+            .set(
+                "route_allowed_ips",
+                if client.route_allowed_ips { "1" } else { "0" },
+            )
+            .set("persistent_keepalive", "25")
+            .set_if_some(
+                "endpoint_host",
+                client.endpoint_host.map(|host| host.to_string()),
+            )
+            .set_if_some("endpoint_port", client.endpoint_port.map(|p| p.to_string()))
+            .extend_list("allowed_ips", &client.allowed_ips)
+    }
+}
+
+/// An interface's section, followed by one section per peer.
+fn interface_commands(interface: &WgInterface) -> Vec<UciBatchCommand> {
+    let peer_type = format!("wireguard_{}", interface.section_name());
+
+    let mut commands = interface.to_uci_commands();
+    for client in &interface.clients {
+        let peer = PeerSection {
+            section_type: &peer_type,
+            client,
+        };
+        commands.extend(peer.to_uci_commands());
+    }
+
+    commands
 }
 
 fn build_vpn_interface(
@@ -231,9 +268,7 @@ impl UciManager for NetworkManager {
     ) -> Vec<UciBatchCommand> {
         let interfaces = build_node_interfaces(node_context, config);
 
-        let commands = interfaces.iter().flat_map(|i| i.to_uci_commands());
-
-        commands.collect()
+        interfaces.iter().flat_map(interface_commands).collect()
     }
 
     fn config_file(&self) -> &'static str {
@@ -304,10 +339,10 @@ nodes:
     #[test]
     fn remote_node_peer_section_present() {
         // Cabin is a remote mesh peer → peer section on the mesh interface, with
-        // wireguard_spl_mesh type.
+        // wireguard_spl_mesh type, which also leads its name.
         assert!(has_cmd(
             &cmds(),
-            "network.spl_peer_mesh_Cabin='wireguard_spl_mesh'"
+            "network.spl_wireguard_spl_mesh_Cabin='wireguard_spl_mesh'"
         ));
     }
 
@@ -380,11 +415,11 @@ clients:
         );
         assert!(has_cmd(
             &c,
-            "set network.spl_peer_mesh_Phone='wireguard_spl_mesh'"
+            "set network.spl_wireguard_spl_mesh_Phone='wireguard_spl_mesh'"
         ));
         assert!(has_cmd(
             &c,
-            "set network.spl_peer_guests_Phone='wireguard_spl_guests'"
+            "set network.spl_wireguard_spl_guests_Phone='wireguard_spl_guests'"
         ));
         assert!(!has_cmd(&c, "set network.spl_Phone="));
         assert!(crate::pipeline::find_duplicate_sections(&c).is_empty());
@@ -417,7 +452,7 @@ nodes:
         assert!(has_cmd(&c, "set network.spl_guest_wifi='interface'"));
         assert!(has_cmd(
             &c,
-            "set network.spl_peer_guest_wifi_old_laptop='wireguard_spl_guest_wifi'"
+            "set network.spl_wireguard_spl_guest_wifi_old_laptop='wireguard_spl_guest_wifi'"
         ));
         // No section or section type anywhere contains a hyphen.
         for command in &c {

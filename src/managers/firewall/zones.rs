@@ -2,11 +2,10 @@ use crate::{
     config::Node,
     consts,
     managers::{
-        UciSectionBuilder,
+        UciSection, UciSectionBuilder,
         firewall::{consts::FIREWALL_FILE_NAME, types::FirewallAction},
         naming,
     },
-    uci::UciBatchCommand,
 };
 
 pub struct FirewallZone {
@@ -29,15 +28,24 @@ impl Default for FirewallZone {
     }
 }
 
-impl FirewallZone {
-    pub fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
-        UciSectionBuilder::new(FIREWALL_FILE_NAME, &naming::interface(&self.name), "zone")
+impl UciSection for FirewallZone {
+    const FILE: &'static str = FIREWALL_FILE_NAME;
+
+    fn section_type(&self) -> &str {
+        "zone"
+    }
+
+    fn id(&self) -> impl IntoIterator<Item = &str> {
+        [self.name.as_str()]
+    }
+
+    fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
+        section
             .set("name", naming::name_prefixed(&self.name))
             .set("input", self.input.to_string())
             .set("output", self.output.to_string())
             .set("forward", self.forward.to_string())
             .extend_list("network", &self.network)
-            .build()
     }
 }
 
@@ -155,10 +163,9 @@ nodes:
             .flat_map(|zone| zone.to_uci_commands())
             .map(|command| command.to_string())
             .collect();
-        assert!(rendered.contains(&"set firewall.spl_guest_wifi='zone'".to_owned()));
-        assert!(
-            rendered
-                .contains(&"add_list firewall.spl_guest_wifi.network='spl_guest_wifi'".to_owned())
-        );
+        assert!(rendered.contains(&"set firewall.spl_zone_guest_wifi='zone'".to_owned()));
+        assert!(rendered.contains(
+            &"add_list firewall.spl_zone_guest_wifi.network='spl_guest_wifi'".to_owned()
+        ));
     }
 }

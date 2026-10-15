@@ -4,10 +4,7 @@ use log::{Level, debug, info, log_enabled};
 
 use crate::{
     config::{Config, Node, NodeZoneDevice, ZoneOrVpnInterface},
-    managers::{
-        NodeContext, UciManager, UciSectionBuilder,
-        naming::{self, UciSectionName},
-    },
+    managers::{NodeContext, UciManager, UciSection, UciSectionBuilder, naming},
     types::{identifier::Identifier, mac::MacAddress},
     uci::UciBatchCommand,
 };
@@ -22,13 +19,22 @@ struct DhcpStaticLease {
     ip: Ipv4Addr,
 }
 
-impl DhcpStaticLease {
-    fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
-        UciSectionBuilder::new(FILE_NAME, &UciSectionName::new([&self.name]), "host")
+impl UciSection for DhcpStaticLease {
+    const FILE: &'static str = FILE_NAME;
+
+    fn section_type(&self) -> &str {
+        "host"
+    }
+
+    fn id(&self) -> impl IntoIterator<Item = &str> {
+        [self.name.as_str()]
+    }
+
+    fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
+        section
             .set("name", naming::name_prefixed(&self.name))
             .set("ip", self.ip.to_string())
             .extend_list("mac", &self.macs)
-            .build()
     }
 }
 
@@ -185,31 +191,34 @@ clients:
     #[test]
     fn zone_device_with_macs_gets_lease() {
         let c = cmds();
-        assert!(has_cmd(&c, "dhcp.spl_printer"), "printer section missing");
+        assert!(
+            has_cmd(&c, "dhcp.spl_host_printer"),
+            "printer section missing"
+        );
         assert!(has_cmd(&c, "ip='192.168.1.50'"), "printer IP missing");
         assert!(has_cmd(&c, "aa:bb:cc:dd:ee:ff"), "printer MAC missing");
     }
 
     #[test]
     fn zone_device_without_macs_no_lease() {
-        assert!(!has_cmd(&cmds(), "spl_macless"));
+        assert!(!has_cmd(&cmds(), "spl_host_macless"));
     }
 
     #[test]
     fn global_client_with_macs_and_zone_ip_gets_lease() {
         let c = cmds();
-        assert!(has_cmd(&c, "dhcp.spl_Phone"), "Phone section missing");
+        assert!(has_cmd(&c, "dhcp.spl_host_Phone"), "Phone section missing");
         assert!(has_cmd(&c, "ip='192.168.1.60'"), "Phone IP missing");
     }
 
     #[test]
     fn global_client_vpn_only_no_dhcp_lease() {
         // VPN clients don't get DHCP leases — only zone clients do.
-        assert!(!has_cmd(&cmds(), "spl_VpnOnly"));
+        assert!(!has_cmd(&cmds(), "spl_host_VpnOnly"));
     }
 
     #[test]
     fn global_client_no_zone_ip_no_lease() {
-        assert!(!has_cmd(&cmds(), "spl_MeshOnly"));
+        assert!(!has_cmd(&cmds(), "spl_host_MeshOnly"));
     }
 }

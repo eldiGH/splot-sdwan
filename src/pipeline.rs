@@ -161,9 +161,9 @@ mod tests {
     #[test]
     fn distinct_sections_pass() {
         let commands = [
-            set("firewall.spl_in_Home_ssh", "rule"),
-            set("firewall.spl_out_Home_ssh", "rule"),
-            set("network.spl_in_Home_ssh", "interface"), // same name, other file
+            set("firewall.spl_rule_in_Home_ssh", "rule"),
+            set("firewall.spl_rule_out_Home_ssh", "rule"),
+            set("network.spl_rule_in_Home_ssh", "interface"), // same name, other file
         ];
         assert!(find_duplicate_sections(&commands).is_empty());
     }
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn hyphen_and_underscore_names_clash_in_real_output() {
         // `my-printer` and `my_printer` are distinct identifiers, but both map to
-        // the uci section `spl_my_printer`. The guard must catch what the
+        // the uci section `spl_host_my_printer`. The guard must catch what the
         // generators produce, not just hand-built commands.
         let cfg = config(
             "
@@ -227,6 +227,9 @@ nodes:
                 splot_config: &splot_config,
             },
         );
-        assert_eq!(find_duplicate_sections(&commands), ["dhcp.spl_my_printer"]);
+        assert_eq!(
+            find_duplicate_sections(&commands),
+            ["dhcp.spl_host_my_printer"]
+        );
     }
 }

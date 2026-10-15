@@ -3,16 +3,13 @@ use std::net::Ipv4Addr;
 use crate::{
     config::{Config, Service},
     managers::{
-        NodeContext, UciSectionBuilder,
-        firewall::consts::FIREWALL_FILE_NAME,
-        naming::{self, SectionKind, UciSectionName},
+        NodeContext, UciSection, UciSectionBuilder, firewall::consts::FIREWALL_FILE_NAME, naming,
     },
     protocol::Protocols,
     types::{
         identifier::Identifier, ip::Ipv4Network, port::PortOrRange, wan_via_target::WanViaTarget,
         zone_ref::ZoneRef,
     },
-    uci::UciBatchCommand,
 };
 
 pub struct FirewallRedirect {
@@ -26,11 +23,19 @@ pub struct FirewallRedirect {
     pub dest: ZoneRef,
 }
 
-impl FirewallRedirect {
-    pub fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
-        let section = UciSectionName::tagged(SectionKind::Dnat, [&self.name]);
+impl UciSection for FirewallRedirect {
+    const FILE: &'static str = FIREWALL_FILE_NAME;
 
-        UciSectionBuilder::new(FIREWALL_FILE_NAME, &section, "redirect")
+    fn section_type(&self) -> &str {
+        "redirect"
+    }
+
+    fn id(&self) -> impl IntoIterator<Item = &str> {
+        [self.name.as_str()]
+    }
+
+    fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
+        section
             .set("name", naming::name_prefixed(&self.name))
             .set("target", "DNAT")
             .set("src", self.src.to_string())
@@ -40,7 +45,6 @@ impl FirewallRedirect {
             .set("dest_ip", self.dest_ip.to_string())
             .set("dest_port", self.dest_port.to_string())
             .extend_list("proto", &self.proto)
-            .build()
     }
 }
 

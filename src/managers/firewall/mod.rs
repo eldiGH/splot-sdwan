@@ -10,7 +10,7 @@ use log::{Level, debug, info, log_enabled};
 use crate::{
     config::Config,
     managers::{
-        NodeContext, UciManager,
+        NodeContext, UciManager, UciSection,
         firewall::{
             consts::FIREWALL_FILE_NAME,
             redirect::get_firewall_redirects,
