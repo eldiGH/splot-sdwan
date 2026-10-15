@@ -63,9 +63,10 @@ The validator runs in `main.rs` before any UCI generation — validation errors 
 ### Batch UCI command execution (`src/uci.rs`, `src/pipeline.rs`)
 
 - `UciPipeline` runs registered managers in sequence on each apply.
-- Generated UCI commands are accumulated into a batch and applied via `uci batch`, then committed atomically per affected config file (`network`, `dhcp`, `firewall`).
-- Reduces overhead vs invoking `uci` once per setting; gives all-or-nothing semantics per config file.
-- The uci module exposes plain functions (`get`, `show`, `batch`) over a shared `run()` helper with typed errors (`uci::Error`): spawn failures, I/O errors, and non-zero exits are distinguished, and uci's exact `Entry not found` message is classified as legitimate absence (`Ok(None)`) rather than failure.
+- Apply refuses to start while `network`, `firewall` or `dhcp` has uncommitted uci changes. uci keeps staged changes in one place per file, shared by every uci user on the router, so splot would commit (or revert) someone else's changes together with its own.
+- It then stages everything (deleting splot's old sections, creating the new ones) in one `uci batch` without commits. `uci batch` exits 0 even when it rejects a line — it prints the error to stderr and carries on — so any stderr output counts as failure: splot reverts its staged changes and commits nothing.
+- Only then does it commit, file by file. Commits across files aren't atomic: if one fails (e.g. a full flash), the files before it keep the new config, and the error says which.
+- The uci module exposes plain functions (`get`, `show`, `has_changes`, `batch`, `commit`, `revert`) over a shared `run()` helper with typed errors (`uci::Error`): spawn failures, I/O errors, non-zero exits and rejected input (stderr output) are distinguished, and uci's exact `Entry not found` message is classified as legitimate absence (`Ok(None)`) rather than failure.
 - Dry-run output redacts private-key values (`UciBatchCommand::redacted()`); the real batch input is never redacted.
 
 ### CLI (`src/cli.rs`, `src/main.rs`)

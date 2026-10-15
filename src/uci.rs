@@ -73,7 +73,13 @@ impl std::fmt::Display for UciBatchCommand {
     }
 }
 
-fn run(args: &[&str], stdin: Option<&str>) -> Result<String, Error> {
+/// What a successful uci call printed.
+struct Output {
+    stdout: String,
+    stderr: String,
+}
+
+fn run(args: &[&str], stdin: Option<&str>) -> Result<Output, Error> {
     let mut command = Command::new("uci");
 
     if let Some(uci_config_dir) = env::uci_config_dir() {
@@ -101,18 +107,22 @@ fn run(args: &[&str], stdin: Option<&str>) -> Result<String, Error> {
         None => command.output().map_err(Error::Spawn)?,
     };
 
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .trim_end()
+        .to_owned();
+
     if !output.status.success() {
         return Err(Error::Failed {
             code: output.status.code(),
-            stderr: String::from_utf8_lossy(&output.stderr)
-                .trim_end()
-                .to_owned(),
+            stderr,
         });
     }
 
-    String::from_utf8(output.stdout)
+    let stdout = String::from_utf8(output.stdout)
         .map(|s| s.trim_end().to_owned())
-        .map_err(|_| Error::NonUtf8)
+        .map_err(|_| Error::NonUtf8)?;
+
+    Ok(Output { stdout, stderr })
 }
 
 // uci exits 1 with exactly this message whether the file, section or option is missing (verified
@@ -127,23 +137,62 @@ fn optional(result: Result<String, Error>) -> Result<Option<String>, Error> {
     }
 }
 
+/// `uci batch` exits 0 even when a line fails: it prints the error to stderr,
+/// skips the line and carries on — a parse error even swallows the lines after it
+/// (verified with uci-git r590.g74f6277-1). It prints nothing on success, so any
+/// stderr output means uci did not apply what it was sent.
+fn reject_on_stderr(stderr: &str) -> Result<(), Error> {
+    if stderr.trim().is_empty() {
+        Ok(())
+    } else {
+        Err(Error::Rejected {
+            stderr: stderr.to_owned(),
+        })
+    }
+}
+
+/// Runs `commands` in one `uci batch`. Fails if uci rejected any line; the lines it
+/// did accept stay staged (or committed, if the batch contained a commit).
 pub fn batch(commands: &[UciBatchCommand]) -> Result<(), Error> {
     let input = commands
         .iter()
         .map(|cmd| format!("{cmd}\n"))
         .collect::<String>();
 
-    run(&["batch"], Some(&input))?;
+    let output = run(&["batch"], Some(&input))?;
 
-    Ok(())
+    reject_on_stderr(&output.stderr)
+}
+
+/// Writes the staged changes of `file` to the config file.
+pub fn commit(file: &str) -> Result<(), Error> {
+    let output = run(&["commit", file], None)?;
+
+    reject_on_stderr(&output.stderr)
+}
+
+/// Drops the staged changes of `file`. A file uci doesn't know has nothing staged:
+/// its "Entry not found" counts as done.
+pub fn revert(file: &str) -> Result<(), Error> {
+    match optional(run(&["revert", file], None).map(|output| output.stderr))? {
+        Some(stderr) => reject_on_stderr(&stderr),
+        None => Ok(()),
+    }
+}
+
+/// Whether `file` has staged changes that aren't committed yet (`uci changes`).
+pub fn has_changes(file: &str) -> Result<bool, Error> {
+    let changes = optional(run(&["changes", file], None).map(|output| output.stdout))?;
+
+    Ok(changes.is_some_and(|changes| !changes.is_empty()))
 }
 
 pub fn show(file: &str) -> Result<Option<String>, Error> {
-    optional(run(&["show", file], None))
+    optional(run(&["show", file], None).map(|output| output.stdout))
 }
 
 pub fn get(path: &str) -> Result<Option<String>, Error> {
-    optional(run(&["get", path], None))
+    optional(run(&["get", path], None).map(|output| output.stdout))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -156,6 +205,8 @@ pub enum Error {
     NonUtf8,
     #[error("uci failed (exit code {code:?}): {stderr}")]
     Failed { code: Option<i32>, stderr: String },
+    #[error("uci rejected part of the input: {stderr}")]
+    Rejected { stderr: String },
 }
 
 #[cfg(test)]
@@ -226,6 +277,28 @@ mod tests {
         // uci rejects '-' in section and option names ("uci: Invalid argument").
         assert_eq!(name("a-b-c"), "a_b_c");
         assert_eq!(name("plain_name"), "plain_name");
+    }
+
+    #[test]
+    fn silent_batch_is_accepted() {
+        assert!(reject_on_stderr("").is_ok());
+        assert!(reject_on_stderr("\n").is_ok());
+    }
+
+    #[test]
+    fn any_stderr_output_rejects_the_batch() {
+        // `uci batch` exits 0 in all of these; stderr is the only signal.
+        for stderr in [
+            "uci: Invalid argument",
+            "uci: Entry not found",
+            "uci: Parse error (EOF with unterminated ') at line 2, byte 43",
+        ] {
+            let result = reject_on_stderr(stderr);
+            assert!(
+                matches!(&result, Err(Error::Rejected { stderr: s }) if s == stderr),
+                "{stderr:?} → {result:?}"
+            );
+        }
     }
 
     #[test]
