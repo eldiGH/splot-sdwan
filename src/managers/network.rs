@@ -51,7 +51,8 @@ impl UciSection for WgInterface {
             .set("proto", "wireguard")
             .set("private_key", &self.private_key)
             .set("listen_port", self.listen_port.to_string())
-            .extend_list("address", &self.addresses)
+            // Not `address`: OpenWrt's WireGuard handler reads `addresses`.
+            .extend_list("addresses", &self.addresses)
     }
 }
 
@@ -324,6 +325,18 @@ clients:
             &cmds(),
             "network.spl_wireguard_spl_mesh_Cabin='wireguard_spl_mesh'"
         ));
+    }
+
+    #[test]
+    fn mesh_interface_address_is_in_addresses() {
+        // OpenWrt's WireGuard handler reads `addresses`; with `address` the
+        // interface came up without an IP.
+        let c = cmds();
+        assert!(has_cmd(
+            &c,
+            "add_list network.spl_mesh.addresses='10.100.0.1/16'"
+        ));
+        assert!(!has_cmd(&c, "spl_mesh.address="));
     }
 
     #[test]

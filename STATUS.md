@@ -51,7 +51,7 @@ The validator runs in `main.rs` before any UCI generation — validation errors 
   - each remote node, with `AllowedIPs` = its `meshIp`, its zones and its hub network (even while the hub is empty);
   - each global client with `meshIp`;
   - this node's own hub clients (peers on their hub node only).
-- Includes WireGuard-specific knobs: `listen_port`, `private_key`, `public_key`, `endpoint_host`, `endpoint_port`, `allowed_ips`, `persistent_keepalive`.
+- Includes WireGuard-specific knobs: `listen_port`, `private_key`, `addresses` (the option OpenWrt's WireGuard handler reads; not `address`), `public_key`, `endpoint_host`, `endpoint_port`, `allowed_ips`, `persistent_keepalive`.
 
 ### DHCP config generation (`src/managers/dhcp.rs`)
 

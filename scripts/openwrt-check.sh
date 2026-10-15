@@ -139,7 +139,7 @@ check_version() {
 			want=$(uci show network | grep -c "=wireguard_$i\$")
 			have=$(wg show $i peers 2>/dev/null | wc -l)
 			[ "$want" = "$have" ] || problems="$problems $have of $want peers;"
-			address=$(uci -q get network.$i.addresses || uci -q get network.$i.address)
+			address=$(uci -q get network.$i.addresses)
 			ip -4 -o addr show dev $i | grep -q " ${address%% *} " || problems="$problems no address ${address:-?};"
 			echo "$problems"')
 		if [ -z "$output" ]; then
