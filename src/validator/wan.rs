@@ -4,7 +4,7 @@ use crate::{
     config::{Client, Config, Node, ServiceHost, ServiceWan, WanResolveError},
     consts,
     types::{
-        config_location::{ConfigLocation, NodeLoc, ServiceLoc, VpnLoc, WanLoc, ZoneLoc},
+        config_location::{ConfigLocation, NodeLoc, ServiceLoc, WanLoc, ZoneLoc},
         identifier::Identifier,
         wan_via_target::WanViaTarget,
     },
@@ -45,14 +45,6 @@ fn validate_service_wan<'a>(
         if let Some(client) = client {
             if let Err(err) = client.resolve_wan_target(via, node) {
                 let report_err = match err {
-                    WanResolveError::AmbiguousVpn { candidates } => {
-                        ValidationError::WanViaAmbiguous {
-                            node: node_name.clone(),
-                            candidates,
-                            at: locate(),
-                        }
-                    }
-
                     WanResolveError::QualifiedNetworkMissing { network } => {
                         ValidationError::WanViaNetworkMissing {
                             node: node_name.clone(),
@@ -135,17 +127,6 @@ fn check_wan_zone(config: &Config, report: &mut ValidationReport) {
                 with: ConfigLocation::Node(
                     node_name.clone(),
                     NodeLoc::Zone(wan_zone.clone(), ZoneLoc::Root),
-                ),
-                at: at(),
-            });
-        }
-
-        if node.vpn_interfaces.contains_key(wan_zone) {
-            report.errors.push(ValidationError::WanZoneNameCollision {
-                wan_zone: wan_zone.clone(),
-                with: ConfigLocation::Node(
-                    node_name.clone(),
-                    NodeLoc::VpnInterface(wan_zone.clone(), VpnLoc::Root),
                 ),
                 at: at(),
             });

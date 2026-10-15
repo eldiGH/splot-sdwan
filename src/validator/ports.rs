@@ -4,10 +4,7 @@ use crate::{
     config::{Config, Service},
     protocol::Protocol,
     types::{
-        config_location::{
-            ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ServiceLoc, VpnClientLoc, VpnLoc,
-            ZoneLoc,
-        },
+        config_location::{ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ServiceLoc, ZoneLoc},
         identifier::Identifier,
         port::PortOrRange,
     },
@@ -95,15 +92,6 @@ fn check_external_port_collisions(config: &Config, report: &mut ValidationReport
                 ConfigLocation::Node(node_name.clone(), NodeLoc::ListenPort)
             });
 
-            for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-                ports.insert(&WG_PROTOCOLS, vpn_interface.listen_port.into(), || {
-                    ConfigLocation::Node(
-                        node_name.clone(),
-                        NodeLoc::VpnInterface(vpn_interface_name.clone(), VpnLoc::ListenPort),
-                    )
-                });
-            }
-
             Some((node_name.clone(), ports))
         })
         .collect();
@@ -148,39 +136,6 @@ fn check_internal_port_collisions(config: &Config, report: &mut ValidationReport
                                 ZoneLoc::Device(
                                     device_name.clone(),
                                     DeviceLoc::Service(service_name.clone(), ServiceLoc::Port),
-                                ),
-                            ),
-                        )
-                    });
-                }
-            }
-        }
-
-        for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-            node_ports.try_insert(
-                &WG_PROTOCOLS,
-                vpn_interface.listen_port.into(),
-                report,
-                || {
-                    ConfigLocation::Node(
-                        node_name.clone(),
-                        NodeLoc::VpnInterface(vpn_interface_name.clone(), VpnLoc::ListenPort),
-                    )
-                },
-            );
-
-            for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
-                let mut ports = PortRegistry::default();
-
-                for (service_name, service) in &vpn_interface_client.services {
-                    ports.try_insert(&service.proto, service.port.internal(), report, || {
-                        ConfigLocation::Node(
-                            node_name.clone(),
-                            NodeLoc::VpnInterface(
-                                vpn_interface_name.clone(),
-                                VpnLoc::Client(
-                                    vpn_interface_client_name.clone(),
-                                    VpnClientLoc::Service(service_name.clone(), ServiceLoc::Port),
                                 ),
                             ),
                         )

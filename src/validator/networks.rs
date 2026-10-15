@@ -4,12 +4,9 @@ use std::{
 };
 
 use crate::{
-    config::{Config, ZoneOrVpnInterface},
+    config::Config,
     types::{
-        config_location::{
-            ClientIpLoc, ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, VpnClientLoc, VpnLoc,
-            ZoneLoc,
-        },
+        config_location::{ClientIpLoc, ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ZoneLoc},
         identifier::Identifier,
         ip::Ipv4Network,
     },
@@ -117,66 +114,22 @@ fn check_zones_ips(
     }
 }
 
-fn check_vpn_interfaces_ips(
-    config: &Config,
-    report: &mut ValidationReport,
-    networks: &mut Vec<Ipv4Network>,
-) {
-    for (node_name, node) in &config.nodes {
-        for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-            let vpn_interface_network = vpn_interface.address.network();
-
-            if !add_network(vpn_interface_network, networks, report, || {
-                ConfigLocation::Node(
-                    node_name.clone(),
-                    NodeLoc::VpnInterface(vpn_interface_name.clone(), VpnLoc::Address),
-                )
-            }) {
-                continue;
-            }
-
-            for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
-                check_host_ip(
-                    vpn_interface_client.ip,
-                    vpn_interface_network,
-                    report,
-                    || {
-                        ConfigLocation::Node(
-                            node_name.clone(),
-                            NodeLoc::VpnInterface(
-                                vpn_interface_name.clone(),
-                                VpnLoc::Client(vpn_interface_client_name.clone(), VpnClientLoc::Ip),
-                            ),
-                        )
-                    },
-                );
-            }
-        }
-    }
-}
-
 fn check_clients_ips(config: &Config, report: &mut ValidationReport) {
     for (client_name, client) in &config.clients {
-        for (node_name, node_networks) in &client.ips {
+        for (node_name, client_zones) in &client.ips {
             let Some(node) = config.nodes.get(node_name) else {
                 continue;
             };
 
-            for (node_network_name, ip) in node_networks {
-                let Some(node_network) = node
-                    .network_by_name(node_network_name)
-                    .map(|interface| interface.address().network())
-                else {
+            for (zone_name, ip) in client_zones {
+                let Some(zone) = node.zones.get(zone_name) else {
                     continue;
                 };
 
-                check_host_ip(*ip, node_network, report, || {
+                check_host_ip(*ip, zone.address.network(), report, || {
                     ConfigLocation::Client(
                         client_name.clone(),
-                        ClientLoc::Ip(
-                            node_name.clone(),
-                            ClientIpLoc::Network(node_network_name.clone()),
-                        ),
+                        ClientLoc::Ip(node_name.clone(), ClientIpLoc::Network(zone_name.clone())),
                     )
                 });
             }
@@ -205,28 +158,25 @@ fn try_insert_ip(
     }
 }
 
-fn check_client_in_node_network_uniqueness(
+fn check_client_in_zone_uniqueness(
     config: &Config,
     report: &mut ValidationReport,
     node_name: &Identifier,
-    network_name: &Identifier,
-    network_ips: &mut HashMap<Ipv4Addr, ConfigLocation>,
+    zone_name: &Identifier,
+    zone_ips: &mut HashMap<Ipv4Addr, ConfigLocation>,
 ) {
     for (client_name, client) in &config.clients {
-        let Some(ip) = client.network_by_name(node_name, network_name) else {
+        let Some(ip) = client.ip_in_zone(node_name, zone_name) else {
             continue;
         };
 
         try_insert_ip(
-            network_ips,
+            zone_ips,
             ip,
             report,
             ConfigLocation::Client(
                 client_name.clone(),
-                ClientLoc::Ip(
-                    node_name.clone(),
-                    ClientIpLoc::Network(network_name.clone()),
-                ),
+                ClientLoc::Ip(node_name.clone(), ClientIpLoc::Network(zone_name.clone())),
             ),
         );
     }
@@ -287,53 +237,7 @@ fn check_zone_ip_uniqueness(config: &Config, report: &mut ValidationReport) {
                 );
             }
 
-            check_client_in_node_network_uniqueness(
-                config,
-                report,
-                node_name,
-                zone_name,
-                &mut zone_ips,
-            );
-        }
-    }
-}
-
-fn check_vpn_interface_ip_uniqueness(config: &Config, report: &mut ValidationReport) {
-    for (node_name, node) in &config.nodes {
-        for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-            let vpn_interface_ip = vpn_interface.address.ip();
-
-            let mut vpn_interface_ips: HashMap<Ipv4Addr, ConfigLocation> = HashMap::new();
-            vpn_interface_ips.insert(
-                vpn_interface_ip,
-                ConfigLocation::Node(
-                    node_name.clone(),
-                    NodeLoc::VpnInterface(vpn_interface_name.clone(), VpnLoc::Address),
-                ),
-            );
-
-            for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
-                try_insert_ip(
-                    &mut vpn_interface_ips,
-                    vpn_interface_client.ip,
-                    report,
-                    ConfigLocation::Node(
-                        node_name.clone(),
-                        NodeLoc::VpnInterface(
-                            vpn_interface_name.clone(),
-                            VpnLoc::Client(vpn_interface_client_name.clone(), VpnClientLoc::Ip),
-                        ),
-                    ),
-                );
-            }
-
-            check_client_in_node_network_uniqueness(
-                config,
-                report,
-                node_name,
-                vpn_interface_name,
-                &mut vpn_interface_ips,
-            );
+            check_client_in_zone_uniqueness(config, report, node_name, zone_name, &mut zone_ips);
         }
     }
 }
@@ -348,7 +252,7 @@ fn check_client_zones(config: &Config, report: &mut ValidationReport) {
             let mut existing_zone: Option<ConfigLocation> = None;
 
             for network_name in networks.keys() {
-                if let Some(ZoneOrVpnInterface::Zone(_)) = node.network_by_name(network_name) {
+                if node.zones.contains_key(network_name) {
                     let at = ConfigLocation::Client(
                         client_name.clone(),
                         ClientLoc::Ip(
@@ -376,12 +280,10 @@ pub(super) fn check_networks(config: &Config, report: &mut ValidationReport) {
     let mut networks = Vec::new();
     check_mesh_ips(config, report, &mut networks);
     check_zones_ips(config, report, &mut networks);
-    check_vpn_interfaces_ips(config, report, &mut networks);
 
     check_clients_ips(config, report);
     check_mesh_ip_uniqueness(config, report);
     check_zone_ip_uniqueness(config, report);
-    check_vpn_interface_ip_uniqueness(config, report);
 
     check_client_zones(config, report);
 }

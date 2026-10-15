@@ -191,42 +191,6 @@ nodes:
     }
 
     #[test]
-    fn names_vpn_client_collision_location() {
-        // A zone and a VPN-interface client share the local name "shared". Zones
-        // are processed before VPN interfaces, so the VPN client is the one
-        // flagged — and its location must be the deep
-        // vpnInterfaces.*.clients.* path, not a bare top-level `clients.*`
-        // (the copy-paste trap from the global-client form).
-        let r = report(
-            "
-meshNetwork: 10.100.0.0/24
-nodes:
-  Home:
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    listenPort: 51820
-    meshIp: 10.100.0.1
-    zones:
-      shared:
-        address: 192.168.1.1/24
-    vpnInterfaces:
-      vpn:
-        listenPort: 51821
-        address: 10.8.1.1/24
-        clients:
-          shared:
-            publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
-            ip: 10.8.1.10
-",
-        );
-        assert!(error_at(
-            &r,
-            "nodes.Home.vpnInterfaces.vpn.clients.shared",
-            |e| matches!(e, ValidationError::LocalNameCollision { name, .. } if name == "shared")
-        ));
-    }
-
-    #[test]
     fn names_local_shadows_global() {
         // Global client "Phone"; a device in Home is also named "Phone".
         let r = report(
@@ -613,16 +577,13 @@ clients:
         );
         assert!(has_error(&r, |e| matches!(
             e,
-            ValidationError::PublicKeyMissing {
-                required_for_mesh: true,
-                ..
-            }
+            ValidationError::PublicKeyMissing { .. }
         )));
     }
 
     #[test]
     fn entities_unused_public_key_warning() {
-        // Client with publicKey but no meshIp and no VPN IPs.
+        // Client with publicKey but no meshIp.
         let r = report(
             "
 meshNetwork: 10.100.0.0/24
@@ -717,7 +678,7 @@ clients:
         ));
     }
 
-    // Every node, VPN client and global client needs its own public key: two nodes
+    // Every node and global client needs its own public key: two nodes
     // sharing one make "which node am I" ambiguous, and WireGuard can't have two
     // peers with the same key on one interface. The later occurrence is flagged.
 
@@ -747,7 +708,7 @@ nodes:
     }
 
     #[test]
-    fn entities_duplicate_public_key_vpn_client_and_global_client() {
+    fn entities_duplicate_public_key_node_and_global_client() {
         let r = report(
             "
 meshNetwork: 10.100.0.0/24
@@ -757,24 +718,16 @@ nodes:
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
-    vpnInterfaces:
-      guests:
-        listenPort: 51821
-        address: 10.8.0.1/24
-        clients:
-          laptop:
-            publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
-            ip: 10.8.0.2
 clients:
   Phone:
-    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     meshIp: 10.100.0.100
 ",
         );
         assert!(error_at(&r, "clients.Phone.publicKey", |e| matches!(
             e,
             ValidationError::DuplicatePublicKey { with, .. }
-                if with.to_string() == "nodes.Home.vpnInterfaces.guests.clients.laptop.publicKey"
+                if with.to_string() == "nodes.Home.publicKey"
         )));
     }
 
@@ -790,14 +743,6 @@ nodes:
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
-    vpnInterfaces:
-      guests:
-        listenPort: 51821
-        address: 10.8.0.1/24
-        clients:
-          laptop:
-            publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
-            ip: 10.8.0.2
 clients:
   Phone:
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
@@ -972,14 +917,13 @@ clients:
 
     // A host IP must not be its subnet's network or broadcast address. Such an IP
     // used to pass validation and then panic in the generators. The fixture puts
-    // all five kinds of host IP on reserved addresses; the two tests swap which
+    // all four kinds of host IP on reserved addresses; the two tests swap which
     // ones get the network address and which the broadcast address.
 
     fn reserved_fixture(
         node_mesh_ip: &str,
         client_mesh_ip: &str,
         device_ip: &str,
-        vpn_client_ip: &str,
         client_zone_ip: &str,
     ) -> String {
         format!(
@@ -1000,14 +944,6 @@ nodes:
             macs: AA:BB:CC:DD:EE:01
       iot:
         address: 192.168.2.1/24
-    vpnInterfaces:
-      guests:
-        listenPort: 51821
-        address: 10.8.0.1/24
-        clients:
-          laptop:
-            publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
-            ip: {vpn_client_ip}
 clients:
   Phone:
     publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
@@ -1031,7 +967,6 @@ clients:
     const NODE_MESH_IP: &str = "nodes.Home.meshIp";
     const CLIENT_MESH_IP: &str = "clients.Phone.meshIp";
     const DEVICE_IP: &str = "nodes.Home.zones.lan.devices.printer.ip";
-    const VPN_CLIENT_IP: &str = "nodes.Home.vpnInterfaces.guests.clients.laptop.ip";
     const CLIENT_ZONE_IP: &str = "clients.Phone.ips.Home.iot";
 
     #[test]
@@ -1040,13 +975,11 @@ clients:
             "10.100.0.0",
             "10.100.0.255",
             "192.168.1.0",
-            "10.8.0.0",
             "192.168.2.0",
         ));
         assert!(reserved_at(&r, NODE_MESH_IP, ReservedAddress::Network));
         assert!(reserved_at(&r, CLIENT_MESH_IP, ReservedAddress::Broadcast));
         assert!(reserved_at(&r, DEVICE_IP, ReservedAddress::Network));
-        assert!(reserved_at(&r, VPN_CLIENT_IP, ReservedAddress::Network));
         assert!(reserved_at(&r, CLIENT_ZONE_IP, ReservedAddress::Network));
     }
 
@@ -1056,13 +989,11 @@ clients:
             "10.100.0.255",
             "10.100.0.0",
             "192.168.1.255",
-            "10.8.0.255",
             "192.168.2.255",
         ));
         assert!(reserved_at(&r, NODE_MESH_IP, ReservedAddress::Broadcast));
         assert!(reserved_at(&r, CLIENT_MESH_IP, ReservedAddress::Network));
         assert!(reserved_at(&r, DEVICE_IP, ReservedAddress::Broadcast));
-        assert!(reserved_at(&r, VPN_CLIENT_IP, ReservedAddress::Broadcast));
         assert!(reserved_at(&r, CLIENT_ZONE_IP, ReservedAddress::Broadcast));
     }
 
@@ -1073,7 +1004,6 @@ clients:
             "10.100.0.1",
             "10.100.0.100",
             "192.168.1.50",
-            "10.8.0.2",
             "192.168.2.60",
         ));
         assert!(!has_error(&r, |e| matches!(
@@ -1344,7 +1274,7 @@ clients:
 
     #[test]
     fn wan_via_client_not_on_network() {
-        // Phone has an IP on "lan" but the service requests "vpn_a" (qualified form).
+        // Phone has an IP on "lan" but the service requests "iot" (qualified form).
         let r = report(
             "
 meshNetwork: 10.100.0.0/24
@@ -1358,14 +1288,10 @@ nodes:
     zones:
       lan:
         address: 192.168.1.1/24
-    vpnInterfaces:
-      vpn_a:
-        listenPort: 51821
-        address: 10.8.1.1/24
-        clients: {}
+      iot:
+        address: 192.168.3.1/24
 clients:
   Phone:
-    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     macs: AA:BB:CC:DD:EE:FF
     ips:
       Home:
@@ -1375,56 +1301,13 @@ clients:
         port: 80
         proto: tcp
         wan:
-          via: Home.vpn_a
+          via: Home.iot
 ",
         );
         assert!(has_error(
             &r,
-            |e| matches!(e, ValidationError::WanViaClientNotOnNetwork { network, .. } if network == "vpn_a")
+            |e| matches!(e, ValidationError::WanViaClientNotOnNetwork { network, .. } if network == "iot")
         ));
-    }
-
-    #[test]
-    fn wan_via_ambiguous_vpn() {
-        // Phone has IPs on two VPN interfaces of Home; bare via can't pick one.
-        let r = report(
-            "
-meshNetwork: 10.100.0.0/24
-nodes:
-  Home:
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    listenPort: 51820
-    meshIp: 10.100.0.1
-    wanZone: wan
-    vpnInterfaces:
-      vpn_a:
-        listenPort: 51821
-        address: 10.8.1.1/24
-        clients: {}
-      vpn_b:
-        listenPort: 51822
-        address: 10.8.2.1/24
-        clients: {}
-clients:
-  Phone:
-    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
-    ips:
-      Home:
-        vpn_a: 10.8.1.10
-        vpn_b: 10.8.2.10
-    services:
-      http:
-        port: 80
-        proto: tcp
-        wan:
-          via: Home
-",
-        );
-        assert!(has_error(&r, |e| matches!(
-            e,
-            ValidationError::WanViaAmbiguous { .. }
-        )));
     }
 
     #[test]
@@ -1499,40 +1382,10 @@ nodes:
     }
 
     #[test]
-    fn wan_zone_collides_with_vpn_interface() {
-        // wanZone "vpn" collides with a VPN interface named "vpn" on the same
-        // node — `with` must point at the VPN interface, not a zone.
-        let r = report(
-            "
-meshNetwork: 10.100.0.0/24
-nodes:
-  Home:
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    listenPort: 51820
-    meshIp: 10.100.0.1
-    wanZone: vpn
-    vpnInterfaces:
-      vpn:
-        listenPort: 51821
-        address: 10.8.1.1/24
-        clients: {}
-",
-        );
-        assert!(has_error(&r, |e| matches!(
-            e,
-            ValidationError::WanZoneNameCollision { wan_zone, with, at }
-                if wan_zone == "vpn"
-                    && with.to_string() == "nodes.Home.vpnInterfaces.vpn"
-                    && at.to_string() == "nodes.Home.wanZone"
-        )));
-    }
-
-    #[test]
     fn wan_zone_reserved_mesh_name() {
         // wanZone "mesh" collides with the splot-managed mesh interface name — a
         // reserved-name error (no config location to point `with` at), distinct
-        // from a collision with the operator's own zone or VPN interface.
+        // from a collision with the operator's own zone.
         let r = report(
             "
 meshNetwork: 10.100.0.0/24

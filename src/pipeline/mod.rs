@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use crate::{
     config::Config,
     consts,
-    managers::{NodeContext, UciManager, network},
+    managers::{NodeContext, UciManager, naming},
     uci::{self, UciBatchCommand},
 };
 use reload::Reload;
@@ -118,11 +118,9 @@ impl UciPipeline {
         let after = snapshot(&files)?;
         let changed = changed_files(&before, &after);
 
-        if let Some(reload) = Reload::new(
-            &changed,
-            network::wireguard_interfaces(node_context.own_node),
-            peer_update,
-        ) {
+        if let Some(reload) =
+            Reload::new(&changed, naming::mesh_interface().to_string(), peer_update)
+        {
             reload.run()?;
         }
 
@@ -141,8 +139,8 @@ impl UciPipeline {
         }
 
         // As comments, so the output stays a valid `uci batch` script.
-        let wireguard_interfaces = network::wireguard_interfaces(node_context.own_node);
-        if let Some(reload) = Reload::new(&files, wireguard_interfaces, peer_update) {
+        if let Some(reload) = Reload::new(&files, naming::mesh_interface().to_string(), peer_update)
+        {
             println!("# Then, if anything changed, splot reloads the services;");
             println!("# the network and WireGuard lines only if network changed:");
             for command in reload.commands() {
@@ -432,13 +430,8 @@ network.spl_wireguard_spl_mesh_Cabin=wireguard_spl_mesh"
             .register(NetworkManager)
             .register(FirewallManager)
             .register(DhcpManager);
+        let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY");
         for (node_name, node) in &cfg.nodes {
-            let vpn_keys: Vec<(&str, &str)> = node
-                .vpn_interfaces
-                .keys()
-                .map(|name| (name.as_ref(), "FAKE_VPN_KEY"))
-                .collect();
-            let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY", &vpn_keys);
             let generated = pipeline.generate(
                 &cfg,
                 &NodeContext {
@@ -517,7 +510,7 @@ nodes:
 ",
         );
         let own_name: Identifier = "Home".parse().unwrap();
-        let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY", &[]);
+        let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY");
         let commands = DhcpManager.generate_commands(
             &cfg,
             &NodeContext {

@@ -4,9 +4,7 @@ use crate::{
     config::Config,
     types::{
         allow_from_ref::AllowFromRef,
-        config_location::{
-            ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, VpnClientLoc, VpnLoc, ZoneLoc,
-        },
+        config_location::{ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ZoneLoc},
         identifier::Identifier,
     },
     validator::types::{ValidationError, ValidationReport},
@@ -71,36 +69,6 @@ pub(super) fn validate_tags(
                         ),
                     )
                 });
-            }
-        }
-
-        for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-            add_tags(&vpn_interface.tags, &mut tags, report, global_refs, || {
-                ConfigLocation::Node(
-                    node_name.clone(),
-                    NodeLoc::VpnInterface(vpn_interface_name.clone(), VpnLoc::Tags),
-                )
-            });
-
-            for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
-                add_tags(
-                    &vpn_interface_client.tags,
-                    &mut tags,
-                    report,
-                    global_refs,
-                    || {
-                        ConfigLocation::Node(
-                            node_name.clone(),
-                            NodeLoc::VpnInterface(
-                                vpn_interface_name.clone(),
-                                VpnLoc::Client(
-                                    vpn_interface_client_name.clone(),
-                                    VpnClientLoc::Tags,
-                                ),
-                            ),
-                        )
-                    },
-                );
             }
         }
     }

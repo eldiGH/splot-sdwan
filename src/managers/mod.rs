@@ -151,18 +151,9 @@ mod tests {
             ("dhcp", &dhcp::DhcpManager),
         ];
 
-        for (node_name, node) in &config.nodes {
-            let vpn_keys: Vec<(String, String)> = node
-                .vpn_interfaces
-                .keys()
-                .map(|name| (name.to_string(), format!("FAKE_VPN_KEY_{name}")))
-                .collect();
-            let vpn_keys: Vec<(&str, &str)> = vpn_keys
-                .iter()
-                .map(|(name, key)| (name.as_str(), key.as_str()))
-                .collect();
-            let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY", &vpn_keys);
+        let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY");
 
+        for (node_name, node) in &config.nodes {
             let context = NodeContext {
                 own_name: node_name,
                 own_node: node,

@@ -42,7 +42,7 @@ impl UciManager for FirewallManager {
         let tags = build_tags_resolution_map(config, node_context.own_name);
         debug!("  Resolved {} tag(s)", tags.len());
 
-        let zones = get_firewall_zones(node_context.own_node);
+        let zones = get_firewall_zones();
         let mut rules = get_firewall_ingress_rules(config, node_context, &tags);
         rules.extend(get_firewall_egress_rules(
             config,

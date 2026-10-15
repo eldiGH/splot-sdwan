@@ -1,5 +1,4 @@
 use crate::{
-    config::Node,
     consts,
     managers::{
         UciSection, UciSectionBuilder,
@@ -49,123 +48,42 @@ impl UciSection for FirewallZone {
     }
 }
 
-pub fn get_firewall_zones(own_node: &Node) -> Vec<FirewallZone> {
-    let mut zones = vec![FirewallZone {
+/// splot's zones: the mesh is the only one. The operator's zones (`lan`, …)
+/// aren't splot's to create.
+pub fn get_firewall_zones() -> Vec<FirewallZone> {
+    vec![FirewallZone {
         name: consts::MESH_INTERFACE_NAME.to_owned(),
         network: vec![naming::mesh_interface().to_string()],
 
         ..Default::default()
-    }];
-
-    zones.extend(own_node.vpn_interfaces.keys().map(|name| FirewallZone {
-        name: name.to_string(),
-        network: vec![naming::interface(name).to_string()],
-        ..Default::default()
-    }));
-
-    zones
+    }]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::config;
-
-    const FIXTURE: &str = "
-meshNetwork: 10.100.0.0/24
-nodes:
-  Home:
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    listenPort: 51820
-    meshIp: 10.100.0.1
-    zones:
-      lan:
-        address: 192.168.1.1/24
-    vpnInterfaces:
-      vpn_a:
-        listenPort: 51821
-        address: 10.8.1.1/24
-        clients: {}
-";
-
-    fn zones() -> Vec<FirewallZone> {
-        let cfg = config(FIXTURE);
-        let own_name: crate::types::identifier::Identifier = "Home".parse().unwrap();
-        get_firewall_zones(cfg.nodes.get(&own_name).unwrap())
-    }
 
     #[test]
-    fn mesh_zone_always_present() {
-        assert!(zones().iter().any(|z| z.name == "mesh"));
+    fn mesh_is_the_only_zone() {
+        let names: Vec<String> = get_firewall_zones().into_iter().map(|z| z.name).collect();
+        assert_eq!(names, ["mesh"]);
     }
 
     #[test]
     fn mesh_zone_network_is_spl_mesh() {
-        let z = zones();
+        let z = get_firewall_zones();
         let mesh = z.iter().find(|z| z.name == "mesh").unwrap();
         assert_eq!(mesh.network, vec!["spl_mesh"]);
-    }
-
-    #[test]
-    fn vpn_interface_produces_zone() {
-        assert!(zones().iter().any(|z| z.name == "vpn_a"));
-    }
-
-    #[test]
-    fn vpn_zone_network_is_spl_interface_name() {
-        let z = zones();
-        let vpn = z.iter().find(|z| z.name == "vpn_a").unwrap();
-        assert_eq!(vpn.network, vec!["spl_vpn_a"]);
     }
 
     #[test]
     fn default_policy_drop_in_drop_fwd_accept_out() {
         // Zero-trust default: drop unsolicited input and transit, allow the router's
         // own egress. Access is granted only via explicit service rules.
-        for zone in zones() {
+        for zone in get_firewall_zones() {
             assert!(matches!(zone.input, FirewallAction::Drop));
             assert!(matches!(zone.forward, FirewallAction::Drop));
             assert!(matches!(zone.output, FirewallAction::Accept));
         }
-    }
-
-    #[test]
-    fn operator_managed_zones_not_included() {
-        // "lan" is operator-managed; splot must not create a firewall zone for it.
-        assert!(!zones().iter().any(|z| z.name == "lan"));
-    }
-
-    #[test]
-    fn hyphenated_vpn_interface_zone_points_at_the_mapped_interface() {
-        // The zone's `network` list must name the interface exactly as the network
-        // generator created it (`spl_guest_wifi`), or the zone covers nothing.
-        let cfg = config(
-            "
-meshNetwork: 10.100.0.0/24
-nodes:
-  Home:
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    listenPort: 51820
-    meshIp: 10.100.0.1
-    vpnInterfaces:
-      guest-wifi:
-        listenPort: 51821
-        address: 10.8.0.1/24
-        clients: {}
-",
-        );
-        let own_name: crate::types::identifier::Identifier = "Home".parse().unwrap();
-        let zones = get_firewall_zones(cfg.nodes.get(&own_name).unwrap());
-        let rendered: Vec<String> = zones
-            .iter()
-            .flat_map(|zone| zone.to_uci_commands())
-            .map(|command| command.to_string())
-            .collect();
-        assert!(rendered.contains(&"set firewall.spl_zone_guest_wifi='zone'".to_owned()));
-        assert!(rendered.contains(
-            &"add_list firewall.spl_zone_guest_wifi.network='spl_guest_wifi'".to_owned()
-        ));
     }
 }

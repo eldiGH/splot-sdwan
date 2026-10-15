@@ -1,37 +1,30 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use crate::{
-    config::{Client, Config, ZoneOrVpnInterface},
+    config::{Client, Config},
     types::{
-        config_location::{ClientIpLoc, ClientLoc, ConfigLocation, NodeLoc, VpnClientLoc, VpnLoc},
+        config_location::{ClientIpLoc, ClientLoc, ConfigLocation, NodeLoc},
         wg_key::WgPublicKey,
     },
     validator::types::{ValidationError, ValidationReport, ValidationWarning},
 };
 
-fn client_has_ips_of_type(
-    client: &Client,
-    config: &Config,
-    predicate: impl Fn(&ZoneOrVpnInterface) -> bool,
-) -> bool {
-    client.ips.iter().any(|(node_name, node_networks)| {
-        node_networks.keys().any(|network_name| {
-            config
-                .nodes
-                .get(node_name)
-                .and_then(|node| node.network_by_name(network_name))
-                .is_some_and(|network| predicate(&network))
+fn client_is_in_any_zone(client: &Client, config: &Config) -> bool {
+    client.ips.iter().any(|(node_name, client_zones)| {
+        config.nodes.get(node_name).is_some_and(|node| {
+            client_zones
+                .keys()
+                .any(|zone| node.zones.contains_key(zone))
         })
     })
 }
 
 fn check_clients_macs(config: &Config, report: &mut ValidationReport) {
     for (client_name, client) in &config.clients {
-        let is_in_any_zone_network = client_has_ips_of_type(client, config, |network| {
-            matches!(network, ZoneOrVpnInterface::Zone(_))
-        });
-
-        match (is_in_any_zone_network, client.macs.is_empty()) {
+        match (
+            client_is_in_any_zone(client, config),
+            client.macs.is_empty(),
+        ) {
             (true, true) => report.errors.push(ValidationError::MacMissing {
                 at: ConfigLocation::Client(client_name.clone(), ClientLoc::Macs),
             }),
@@ -43,28 +36,18 @@ fn check_clients_macs(config: &Config, report: &mut ValidationReport) {
     }
 }
 
+/// A client is a WireGuard peer exactly when it has a mesh IP.
 fn check_clients_public_key(config: &Config, report: &mut ValidationReport) {
     for (client_name, client) in &config.clients {
-        let is_in_any_vpn_interface_network = client_has_ips_of_type(client, config, |network| {
-            matches!(network, ZoneOrVpnInterface::VpnInterface(_))
-        });
-        let mesh_ip_present = client.mesh_ip.is_some();
+        let at = || ConfigLocation::Client(client_name.clone(), ClientLoc::PublicKey);
 
-        match (
-            is_in_any_vpn_interface_network,
-            client.public_key.is_some(),
-            mesh_ip_present,
-        ) {
-            (true, false, _) | (_, false, true) => {
-                report.errors.push(ValidationError::PublicKeyMissing {
-                    required_for_mesh: mesh_ip_present,
-                    required_for_vpn_interface: is_in_any_vpn_interface_network,
-                    at: ConfigLocation::Client(client_name.clone(), ClientLoc::PublicKey),
-                })
-            }
-            (false, true, false) => report.warnings.push(ValidationWarning::UnusedPublicKey {
-                at: ConfigLocation::Client(client_name.clone(), ClientLoc::PublicKey),
-            }),
+        match (client.mesh_ip.is_some(), client.public_key.is_some()) {
+            (true, false) => report
+                .errors
+                .push(ValidationError::PublicKeyMissing { at: at() }),
+            (false, true) => report
+                .warnings
+                .push(ValidationWarning::UnusedPublicKey { at: at() }),
             _ => {}
         }
     }
@@ -85,7 +68,7 @@ fn check_client_networks(config: &Config, report: &mut ValidationReport) {
             };
 
             for network_name in networks.keys() {
-                if node.network_by_name(network_name).is_none() {
+                if !node.zones.contains_key(network_name) {
                     report.errors.push(ValidationError::NodeNetworkMissing {
                         node_name: node_name.clone(),
                         network_name: network_name.clone(),
@@ -130,7 +113,7 @@ fn note_public_key<'a>(
     }
 }
 
-/// Every node, VPN client and global client needs its own public key. Two nodes
+/// Every node and global client needs its own public key. Two nodes
 /// sharing one make "which node am I" ambiguous, and WireGuard can't hold two
 /// peers with the same key on one interface.
 fn check_public_key_uniqueness(config: &Config, report: &mut ValidationReport) {
@@ -143,25 +126,6 @@ fn check_public_key_uniqueness(config: &Config, report: &mut ValidationReport) {
             &mut seen,
             report,
         );
-    }
-
-    for (node_name, node) in &config.nodes {
-        for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-            for (client_name, client) in &vpn_interface.clients {
-                note_public_key(
-                    &client.public_key,
-                    ConfigLocation::Node(
-                        node_name.clone(),
-                        NodeLoc::VpnInterface(
-                            vpn_interface_name.clone(),
-                            VpnLoc::Client(client_name.clone(), VpnClientLoc::PublicKey),
-                        ),
-                    ),
-                    &mut seen,
-                    report,
-                );
-            }
-        }
     }
 
     for (client_name, client) in &config.clients {

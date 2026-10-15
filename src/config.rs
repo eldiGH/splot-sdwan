@@ -6,10 +6,7 @@ use crate::{
     protocol::Protocol,
     types::{
         allow_from_ref::AllowFromRef,
-        config_location::{
-            ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ServiceLoc, VpnClientLoc, VpnLoc,
-            ZoneLoc,
-        },
+        config_location::{ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ServiceLoc, ZoneLoc},
         identifier::{Identifier, NestedIdentifier},
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
@@ -54,29 +51,6 @@ pub struct NodeZoneDevice {
     pub services: BTreeMap<Identifier, Service>,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NodeVpnInterfaceClient {
-    pub public_key: WgPublicKey,
-    pub ip: Ipv4Addr,
-
-    #[serde(default)]
-    pub tags: OneOrManyUnique<Identifier>,
-    #[serde(default)]
-    pub services: BTreeMap<Identifier, Service>,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NodeVpnInterface {
-    pub listen_port: Port,
-    pub address: Ipv4Interface,
-    pub clients: BTreeMap<Identifier, NodeVpnInterfaceClient>,
-
-    #[serde(default)]
-    pub tags: OneOrManyUnique<Identifier>,
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeZone {
@@ -97,8 +71,6 @@ pub struct Node {
     pub mesh_ip: Ipv4Addr,
 
     #[serde(default)]
-    pub vpn_interfaces: BTreeMap<Identifier, NodeVpnInterface>,
-    #[serde(default)]
     pub tags: OneOrManyUnique<Identifier>,
     #[serde(default)]
     pub services: BTreeMap<Identifier, Service>,
@@ -108,55 +80,9 @@ pub struct Node {
     pub wan_zone: Option<Identifier>,
 }
 
-pub enum ZoneOrVpnInterface<'a> {
-    Zone(&'a NodeZone),
-    VpnInterface(&'a NodeVpnInterface),
-}
-
-impl ZoneOrVpnInterface<'_> {
-    pub fn address(&self) -> Ipv4Interface {
-        match self {
-            Self::VpnInterface(vpn_interface) => vpn_interface.address,
-            Self::Zone(zone) => zone.address,
-        }
-    }
-}
-
 impl Node {
-    pub fn network_for_ip(&self, ip: Ipv4Addr) -> Option<(&Identifier, Ipv4Interface)> {
-        self.zones
-            .iter()
-            .map(|(zone_name, zone)| (zone_name, zone.address))
-            .chain(
-                self.vpn_interfaces
-                    .iter()
-                    .map(|(vpn_interface_name, vpn_interface)| {
-                        (vpn_interface_name, vpn_interface.address)
-                    }),
-            )
-            .find(|(_, address)| address.is_in_same_network(ip))
-    }
-
-    pub fn network_by_name(&self, name: &Identifier) -> Option<ZoneOrVpnInterface<'_>> {
-        self.zones
-            .get(name)
-            .map(ZoneOrVpnInterface::Zone)
-            .or_else(|| {
-                self.vpn_interfaces
-                    .get(name)
-                    .map(ZoneOrVpnInterface::VpnInterface)
-            })
-    }
-
     pub fn addresses(&self) -> impl Iterator<Item = Ipv4Interface> {
-        let zone_networks = self.zones.values().map(|zone| zone.address);
-
-        let vpn_interfaces_networks = self
-            .vpn_interfaces
-            .values()
-            .map(|vpn_interface| vpn_interface.address);
-
-        zone_networks.chain(vpn_interfaces_networks)
+        self.zones.values().map(|zone| zone.address)
     }
 
     pub fn networks(&self) -> impl Iterator<Item = Ipv4Network> {
@@ -187,7 +113,6 @@ pub struct Client {
 
 #[derive(Debug)]
 pub enum WanResolveError {
-    AmbiguousVpn { candidates: Vec<Identifier> },
     Unreachable,
     QualifiedNetworkMissing { network: Identifier },
     QualifiedClientNotOnNetwork { network: Identifier },
@@ -200,12 +125,8 @@ pub struct WanResolution {
 }
 
 impl Client {
-    pub fn network_by_name(
-        &self,
-        node_name: &Identifier,
-        network_name: &Identifier,
-    ) -> Option<Ipv4Addr> {
-        self.ips.get(node_name)?.get(network_name).copied()
+    pub fn ip_in_zone(&self, node_name: &Identifier, zone_name: &Identifier) -> Option<Ipv4Addr> {
+        self.ips.get(node_name)?.get(zone_name).copied()
     }
 
     fn resolve_wan(
@@ -220,44 +141,17 @@ impl Client {
             });
         }
 
-        let Some(node_networks) = self.ips.get(node_name) else {
-            return Err(WanResolveError::Unreachable);
-        };
-
-        let mut zone_ip: Option<(&Identifier, Ipv4Addr)> = None;
-        let mut vpn_interface_candidates: Vec<(&Identifier, Ipv4Addr)> = Vec::new();
-
-        for (network_name, ip) in node_networks {
-            match node.network_by_name(network_name) {
-                Some(ZoneOrVpnInterface::Zone(_)) => zone_ip = Some((network_name, *ip)),
-                Some(ZoneOrVpnInterface::VpnInterface(_)) => {
-                    vpn_interface_candidates.push((network_name, *ip))
-                }
-
-                None => {}
-            }
-        }
-
-        if let Some((zone_name, zone_ip)) = zone_ip {
-            return Ok(WanResolution {
-                dest_ip: zone_ip,
-                dest_zone: ZoneRef::Named(zone_name.clone()),
-            });
-        }
-
-        match vpn_interface_candidates.as_slice() {
-            [] => Err(WanResolveError::Unreachable),
-            [(vpn_interface_name, ip)] => Ok(WanResolution {
-                dest_zone: ZoneRef::Named((*vpn_interface_name).clone()),
+        // A client is in at most one zone per node (validated).
+        self.ips
+            .get(node_name)
+            .into_iter()
+            .flatten()
+            .find(|(zone_name, _)| node.zones.contains_key(*zone_name))
+            .map(|(zone_name, ip)| WanResolution {
                 dest_ip: *ip,
-            }),
-            _ => Err(WanResolveError::AmbiguousVpn {
-                candidates: vpn_interface_candidates
-                    .iter()
-                    .map(|(vpn_interface_name, _)| (*vpn_interface_name).clone())
-                    .collect(),
-            }),
-        }
+                dest_zone: ZoneRef::Named(zone_name.clone()),
+            })
+            .ok_or(WanResolveError::Unreachable)
     }
 
     fn resolve_wan_qualified(
@@ -266,7 +160,7 @@ impl Client {
         local_name: &Identifier,
         node: &Node,
     ) -> Result<WanResolution, WanResolveError> {
-        if node.network_by_name(local_name).is_none() {
+        if !node.zones.contains_key(local_name) {
             return Err(WanResolveError::QualifiedNetworkMissing {
                 network: local_name.clone(),
             });
@@ -344,7 +238,6 @@ impl Config {
 
     pub fn services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
         self.nodes_own_services()
-            .chain(self.vpn_interfaces_clients_services())
             .chain(self.devices_services())
             .chain(self.clients_services())
     }
@@ -383,35 +276,6 @@ impl Config {
         })
     }
 
-    fn vpn_interfaces_clients_services<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
-        self.nodes.iter().flat_map(|(node_name, node)| {
-            node.vpn_interfaces
-                .iter()
-                .flat_map(|(vpn_interface_name, vpn_interface)| {
-                    vpn_interface.clients.iter().flat_map(
-                        |(vpn_interface_client_name, vpn_interface_client)| {
-                            vpn_interface_client
-                                .services
-                                .iter()
-                                .map(|(service_name, service)| {
-                                    (
-                                        service,
-                                        ServiceHost::VpnInterfaceClient {
-                                            node_name,
-                                            vpn_interface_name,
-                                            vpn_interface_client_name,
-                                            service_name,
-                                        },
-                                    )
-                                })
-                        },
-                    )
-                })
-        })
-    }
-
     fn clients_services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {
         self.clients.iter().flat_map(|(client_name, client)| {
             client.services.iter().map(|(service_name, service)| {
@@ -437,12 +301,6 @@ pub enum ServiceHost<'a> {
         node_name: &'a Identifier,
         zone_name: &'a Identifier,
         device_name: &'a Identifier,
-        service_name: &'a Identifier,
-    },
-    VpnInterfaceClient {
-        node_name: &'a Identifier,
-        vpn_interface_name: &'a Identifier,
-        vpn_interface_client_name: &'a Identifier,
         service_name: &'a Identifier,
     },
     Client {
@@ -478,22 +336,6 @@ impl ServiceHost<'_> {
                 ),
             ),
 
-            Self::VpnInterfaceClient {
-                node_name,
-                vpn_interface_name,
-                vpn_interface_client_name,
-                service_name,
-            } => ConfigLocation::Node(
-                node_name.clone(),
-                NodeLoc::VpnInterface(
-                    vpn_interface_name.clone(),
-                    VpnLoc::Client(
-                        vpn_interface_client_name.clone(),
-                        VpnClientLoc::Service(service_name.clone(), leaf),
-                    ),
-                ),
-            ),
-
             Self::Client {
                 client_name,
                 service_name,
@@ -510,8 +352,8 @@ mod tests {
     use super::*;
     use crate::test_support::config;
 
-    // One node with a zone and two VPN interfaces.
-    // Five clients cover every branch of resolve_wan + qualified variants.
+    // One node with two zones. The clients cover every branch of resolve_wan and
+    // its qualified variant.
     const FIXTURE: &str = "
 meshNetwork: 10.100.0.0/24
 nodes:
@@ -523,15 +365,8 @@ nodes:
     zones:
       lan:
         address: 192.168.1.1/24
-    vpnInterfaces:
-      vpn_a:
-        listenPort: 51821
-        address: 10.8.1.1/24
-        clients: {}
-      vpn_b:
-        listenPort: 51822
-        address: 10.8.2.1/24
-        clients: {}
+      iot:
+        address: 192.168.3.1/24
 clients:
   # has meshIp AND a zone IP; mesh must win
   PhoneWithMesh:
@@ -544,17 +379,6 @@ clients:
     ips:
       Home:
         lan: 192.168.1.60
-  # no meshIp, single VPN interface IP
-  VpnSingle:
-    ips:
-      Home:
-        vpn_a: 10.8.1.10
-  # no meshIp, IPs on two VPN interfaces — ambiguous
-  VpnAmbig:
-    ips:
-      Home:
-        vpn_a: 10.8.1.20
-        vpn_b: 10.8.2.20
   # no meshIp, no IPs on Home at all
   Nowhere: {}
 ";
@@ -575,8 +399,6 @@ clients:
         home: Node,
         phone: Client,
         zone_only: Client,
-        vpn_single: Client,
-        vpn_ambig: Client,
         nowhere: Client,
     }
 
@@ -589,8 +411,6 @@ clients:
                 home: nodes.remove(&id("Home")).unwrap(),
                 phone: clients.remove(&id("PhoneWithMesh")).unwrap(),
                 zone_only: clients.remove(&id("ZoneOnly")).unwrap(),
-                vpn_single: clients.remove(&id("VpnSingle")).unwrap(),
-                vpn_ambig: clients.remove(&id("VpnAmbig")).unwrap(),
                 nowhere: clients.remove(&id("Nowhere")).unwrap(),
             }
         }
@@ -618,29 +438,6 @@ clients:
     }
 
     #[test]
-    fn bare_single_vpn_ip_when_no_mesh_no_zone() {
-        let f = Fixture::load();
-        let res = f
-            .vpn_single
-            .resolve_wan_target(&bare("Home"), &f.home)
-            .unwrap();
-        assert_eq!(res.dest_ip.to_string(), "10.8.1.10");
-        assert_eq!(res.dest_zone, ZoneRef::Named(id("vpn_a")));
-    }
-
-    #[test]
-    fn bare_ambiguous_vpn_returns_error() {
-        let f = Fixture::load();
-        let err = f
-            .vpn_ambig
-            .resolve_wan_target(&bare("Home"), &f.home)
-            .unwrap_err();
-        assert!(
-            matches!(err, WanResolveError::AmbiguousVpn { candidates } if candidates.len() == 2)
-        );
-    }
-
-    #[test]
     fn bare_unreachable_when_no_ips_on_node() {
         let f = Fixture::load();
         let err = f
@@ -664,15 +461,6 @@ clients:
     }
 
     #[test]
-    fn qualified_vpn_network_resolves() {
-        let f = Fixture::load();
-        let via = qualified("Home", "vpn_a");
-        let res = f.vpn_ambig.resolve_wan_target(&via, &f.home).unwrap();
-        assert_eq!(res.dest_ip.to_string(), "10.8.1.20");
-        assert_eq!(res.dest_zone, ZoneRef::Named(id("vpn_a")));
-    }
-
-    #[test]
     fn qualified_missing_network_on_node() {
         let f = Fixture::load();
         let err = f
@@ -688,60 +476,31 @@ clients:
     #[test]
     fn qualified_client_not_on_network() {
         let f = Fixture::load();
-        // ZoneOnly has no vpn_a IP, but vpn_a exists on Home
+        // ZoneOnly has no iot IP, but iot exists on Home
         let err = f
             .zone_only
-            .resolve_wan_target(&qualified("Home", "vpn_a"), &f.home)
+            .resolve_wan_target(&qualified("Home", "iot"), &f.home)
             .unwrap_err();
         assert!(matches!(
             err,
-            WanResolveError::QualifiedClientNotOnNetwork { network } if network == id("vpn_a")
+            WanResolveError::QualifiedClientNotOnNetwork { network } if network == id("iot")
         ));
-    }
-
-    // --- Node helpers ---
-
-    #[test]
-    fn node_network_by_name_zone() {
-        let f = Fixture::load();
-        assert!(matches!(
-            f.home.network_by_name(&id("lan")),
-            Some(ZoneOrVpnInterface::Zone(_))
-        ));
-    }
-
-    #[test]
-    fn node_network_by_name_vpn() {
-        let f = Fixture::load();
-        assert!(matches!(
-            f.home.network_by_name(&id("vpn_a")),
-            Some(ZoneOrVpnInterface::VpnInterface(_))
-        ));
-    }
-
-    #[test]
-    fn node_network_by_name_missing() {
-        let f = Fixture::load();
-        assert!(f.home.network_by_name(&id("nonexistent")).is_none());
     }
 
     // --- Client helper ---
 
     #[test]
-    fn client_network_by_name_hit() {
+    fn client_ip_in_zone_hit() {
         let f = Fixture::load();
-        let ip = f
-            .zone_only
-            .network_by_name(&id("Home"), &id("lan"))
-            .unwrap();
+        let ip = f.zone_only.ip_in_zone(&id("Home"), &id("lan")).unwrap();
         assert_eq!(ip.to_string(), "192.168.1.60");
     }
 
     #[test]
-    fn client_network_by_name_miss() {
+    fn client_ip_in_zone_miss() {
         let f = Fixture::load();
         // Nowhere has no ips entry at all
-        assert!(f.nowhere.network_by_name(&id("Home"), &id("lan")).is_none());
+        assert!(f.nowhere.ip_in_zone(&id("Home"), &id("lan")).is_none());
     }
 
     // --- Unknown keys are rejected at every level ---
@@ -799,6 +558,22 @@ nodes:
 "
         ));
         assert!(err.contains("unknown field `macss`"), "{err}");
+    }
+
+    #[test]
+    fn vpn_interfaces_are_rejected() {
+        // Replaced by hubs (T18). A config written for the old shape must fail
+        // loudly instead of silently dropping its VPN clients.
+        let err = parse_error(&format!(
+            "{NODE}
+    vpnInterfaces:
+      guests:
+        listenPort: 51821
+        address: 10.8.0.1/24
+        clients: {{}}
+"
+        ));
+        assert!(err.contains("unknown field `vpnInterfaces`"), "{err}");
     }
 
     #[test]

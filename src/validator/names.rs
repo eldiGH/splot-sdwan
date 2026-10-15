@@ -4,9 +4,7 @@ use crate::{
     config::Config,
     types::{
         allow_from_ref::AllowFromRef,
-        config_location::{
-            ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, VpnClientLoc, VpnLoc, ZoneLoc,
-        },
+        config_location::{ClientLoc, ConfigLocation, DeviceLoc, NodeLoc, ZoneLoc},
         identifier::Identifier,
     },
     validator::types::{ValidationError, ValidationReport},
@@ -99,7 +97,7 @@ pub(super) fn validate_names(
         });
     }
 
-    // Pass 2: each node's local names (zones, devices, VPN interfaces and clients).
+    // Pass 2: each node's local names (zones and devices).
     for (node_name, node) in &config.nodes {
         let mut node_identifiers = HashSet::new();
         node_identifiers.insert(node_name.clone());
@@ -134,43 +132,6 @@ pub(super) fn validate_names(
                             NodeLoc::Zone(
                                 zone_name.clone(),
                                 ZoneLoc::Device(device_name.clone(), DeviceLoc::Root),
-                            ),
-                        )
-                    },
-                )
-            }
-        }
-
-        for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-            add_name(
-                vpn_interface_name,
-                Some(node_name),
-                &mut refs,
-                Some(&mut node_identifiers),
-                Some(&node_prefixes),
-                report,
-                || {
-                    ConfigLocation::Node(
-                        node_name.clone(),
-                        NodeLoc::VpnInterface(vpn_interface_name.clone(), VpnLoc::Root),
-                    )
-                },
-            );
-
-            for client_name in vpn_interface.clients.keys() {
-                add_name(
-                    client_name,
-                    Some(node_name),
-                    &mut refs,
-                    Some(&mut node_identifiers),
-                    Some(&node_prefixes),
-                    report,
-                    || {
-                        ConfigLocation::Node(
-                            node_name.clone(),
-                            NodeLoc::VpnInterface(
-                                vpn_interface_name.clone(),
-                                VpnLoc::Client(client_name.clone(), VpnClientLoc::Root),
                             ),
                         )
                     },

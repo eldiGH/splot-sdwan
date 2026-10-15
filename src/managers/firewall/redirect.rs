@@ -117,21 +117,6 @@ impl RedirectBuilder<'_> {
                     }
                 }
             }
-
-            for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-                for (client_name, client) in &vpn_interface.clients {
-                    for (service_name, service) in &client.services {
-                        redirects.extend(self.local_service_redirect(
-                            service_name,
-                            service,
-                            ZoneRef::Named(vpn_interface_name.clone()),
-                            client.ip,
-                            client_name,
-                            node_name,
-                        ))
-                    }
-                }
-            }
         }
     }
 

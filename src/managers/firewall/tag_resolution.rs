@@ -33,15 +33,6 @@ fn add_current_node_identifier_tag(node: &Node, tags_map: &mut TagMap) {
             &ZoneRef::Named(zone_name.clone()),
         );
     }
-
-    for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-        add_tags(
-            tags_map,
-            Ipv4Network::host(vpn_interface.address.ip()),
-            [AllowFromRef::SelfNode],
-            &ZoneRef::Named(vpn_interface_name.clone()),
-        );
-    }
 }
 
 fn add_node_tag(node_name: &Identifier, node: &Node, tags_map: &mut TagMap) {
@@ -56,15 +47,6 @@ fn add_node_tag(node_name: &Identifier, node: &Node, tags_map: &mut TagMap) {
             node_tags.clone(),
             &ZoneRef::Named(zone_name.clone()),
         );
-    }
-
-    for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-        add_tags(
-            tags_map,
-            vpn_interface.address.network(),
-            node_tags.clone(),
-            &ZoneRef::Named(vpn_interface_name.clone()),
-        )
     }
 }
 
@@ -128,45 +110,6 @@ fn add_zones_tags(node_name: &Identifier, node: &Node, tags_map: &mut TagMap) {
     }
 }
 
-fn add_vpn_interfaces_tags(node_name: &Identifier, node: &Node, tags_map: &mut TagMap) {
-    for (vpn_interface_name, vpn_interface) in &node.vpn_interfaces {
-        let zone_ref = ZoneRef::Named(vpn_interface_name.clone());
-        let vpn_interface_tags = iter::once(AllowFromRef::nested(
-            node_name.clone(),
-            vpn_interface_name.clone(),
-        ))
-        .chain(vpn_interface.tags.iter().cloned().map(AllowFromRef::Bare));
-
-        add_tags(
-            tags_map,
-            vpn_interface.address.network(),
-            vpn_interface_tags,
-            &zone_ref,
-        );
-
-        for (vpn_interface_client_name, vpn_interface_client) in &vpn_interface.clients {
-            let vpn_interface_client_tags = iter::once(AllowFromRef::nested(
-                node_name.clone(),
-                vpn_interface_client_name.clone(),
-            ))
-            .chain(
-                vpn_interface_client
-                    .tags
-                    .iter()
-                    .cloned()
-                    .map(AllowFromRef::Bare),
-            );
-
-            add_tags(
-                tags_map,
-                Ipv4Network::host(vpn_interface_client.ip),
-                vpn_interface_client_tags,
-                &zone_ref,
-            );
-        }
-    }
-}
-
 pub fn build_tags_resolution_map(config: &Config, own_name: &Identifier) -> TagMap {
     let mut tags_map: TagMap = TagMap::new();
 
@@ -178,7 +121,6 @@ pub fn build_tags_resolution_map(config: &Config, own_name: &Identifier) -> TagM
         add_node_tag(node_name, node, &mut tags_map);
 
         add_zones_tags(node_name, node, &mut tags_map);
-        add_vpn_interfaces_tags(node_name, node, &mut tags_map);
     }
 
     for (client_name, client) in &config.clients {
@@ -197,7 +139,6 @@ mod tests {
 
     // Home: zone lan (192.168.1.1/24) with device printer (192.168.1.50, tag printable)
     //       zone guest (192.168.2.1/24)
-    //       vpnInterface vpn_a (10.8.1.1/24) with client alice (10.8.1.10, tag staff)
     //       node tags: server
     // Cabin: zone lan (192.168.3.1/24)
     // Phone: meshIp 10.100.0.100, ips.Home.lan 192.168.1.60, ips.Cabin.lan 192.168.3.10, tag mobile
@@ -220,15 +161,6 @@ nodes:
             tags: printable
       guest:
         address: 192.168.2.1/24
-    vpnInterfaces:
-      vpn_a:
-        listenPort: 51821
-        address: 10.8.1.1/24
-        clients:
-          alice:
-            publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
-            ip: 10.8.1.10
-            tags: staff
   Cabin:
     publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
     endpoint: 5.6.7.8
@@ -288,7 +220,6 @@ clients:
         assert!(
             get(&m, &bare("Home"), &ZoneRef::Named(id("guest"))).contains(&net("192.168.2.0/24"))
         );
-        assert!(get(&m, &bare("Home"), &ZoneRef::Named(id("vpn_a"))).contains(&net("10.8.1.0/24")));
     }
 
     #[test]
@@ -310,11 +241,10 @@ clients:
     }
 
     #[test]
-    fn self_node_covers_all_own_zones_and_vpns() {
+    fn self_node_covers_all_own_zones() {
         let m = map_for("Home");
         assert!(!get(&m, &AllowFromRef::SelfNode, &ZoneRef::Named(id("lan"))).is_empty());
         assert!(!get(&m, &AllowFromRef::SelfNode, &ZoneRef::Named(id("guest"))).is_empty());
-        assert!(!get(&m, &AllowFromRef::SelfNode, &ZoneRef::Named(id("vpn_a"))).is_empty());
     }
 
     #[test]
@@ -349,21 +279,6 @@ clients:
         assert!(!nets.contains(&net("192.168.1.0/24")));
     }
 
-    #[test]
-    fn nested_vpn_interface_yields_vpn_subnet() {
-        let m = map_for("Home");
-        let nets = get(&m, &nested("Home", "vpn_a"), &ZoneRef::Named(id("vpn_a")));
-        assert!(nets.contains(&net("10.8.1.0/24")));
-    }
-
-    #[test]
-    fn nested_vpn_client_yields_host_ip() {
-        let m = map_for("Home");
-        let nets = get(&m, &nested("Home", "alice"), &ZoneRef::Named(id("vpn_a")));
-        assert!(nets.contains(&net("10.8.1.10/32")));
-        assert!(!nets.contains(&net("10.8.1.0/24")));
-    }
-
     // ── explicit tags ──────────────────────────────────────────────────────
 
     #[test]
@@ -380,13 +295,6 @@ clients:
         let m = map_for("Home");
         let nets = get(&m, &bare("printable"), &ZoneRef::Named(id("lan")));
         assert!(nets.contains(&net("192.168.1.50/32")));
-    }
-
-    #[test]
-    fn explicit_vpn_client_tag_maps_to_client_host() {
-        let m = map_for("Home");
-        let nets = get(&m, &bare("staff"), &ZoneRef::Named(id("vpn_a")));
-        assert!(nets.contains(&net("10.8.1.10/32")));
     }
 
     // ── client tag resolution ──────────────────────────────────────────────

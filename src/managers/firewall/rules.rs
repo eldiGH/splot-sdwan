@@ -1,7 +1,7 @@
 use std::{fmt, net::Ipv4Addr};
 
 use crate::{
-    config::{Config, Service, ZoneOrVpnInterface},
+    config::{Config, NodeZone, Service},
     managers::{
         NodeContext, UciSection, UciSectionBuilder,
         firewall::{
@@ -21,8 +21,8 @@ use crate::{
 /// Where the protected host is, seen from the node being configured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleDirection {
-    /// A host on this node: its own services, its devices and VPN clients, and
-    /// global clients on its networks.
+    /// A host on this node: its own services, its devices, and global clients
+    /// in its zones.
     Ingress,
     /// A host on another node, reached from sources local to this node.
     Egress,
@@ -128,12 +128,9 @@ fn generate_rule_from_service(
     })
 }
 
-fn client_address_on_network(ip: Ipv4Addr, network: ZoneOrVpnInterface<'_>) -> Ipv4Interface {
-    match network {
-        ZoneOrVpnInterface::VpnInterface(_) => Ipv4Interface::host(ip),
-        ZoneOrVpnInterface::Zone(zone) => Ipv4Interface::from_ip(ip, zone.address.prefix())
-            .expect("ip and prefix should be validated at this point."),
-    }
+fn client_address_in_zone(ip: Ipv4Addr, zone: &NodeZone) -> Ipv4Interface {
+    Ipv4Interface::from_ip(ip, zone.address.prefix())
+        .expect("ip and prefix should be validated at this point.")
 }
 
 pub fn get_firewall_ingress_rules(
@@ -172,25 +169,6 @@ pub fn get_firewall_ingress_rules(
         }
     }
 
-    for vpn_interface in node_context.own_node.vpn_interfaces.values() {
-        for (client_name, client) in &vpn_interface.clients {
-            for (service_name, service) in &client.services {
-                // /32 dest: VPN interfaces are routed, not L2-bridged — peers on the same
-                // interface traverse the firewall, so the same-network filter must keep
-                // same-subnet sources rather than treating them as no-ops.
-                rules.extend(generate_rule_from_service(
-                    RuleDirection::Ingress,
-                    service_name,
-                    service,
-                    [Ipv4Interface::host(client.ip)],
-                    client_name,
-                    tags,
-                    None,
-                ));
-            }
-        }
-    }
-
     for (client_name, client) in &config.clients {
         let Some(networks) = client.ips.get(node_context.own_name) else {
             continue;
@@ -198,10 +176,10 @@ pub fn get_firewall_ingress_rules(
 
         let ips: Vec<Ipv4Interface> = networks
             .iter()
-            .filter_map(|(network_name, ip)| {
-                let network = node_context.own_node.network_by_name(network_name)?;
+            .filter_map(|(zone_name, ip)| {
+                let zone = node_context.own_node.zones.get(zone_name)?;
 
-                Some(client_address_on_network(*ip, network))
+                Some(client_address_in_zone(*ip, zone))
             })
             .collect();
 
@@ -272,25 +250,6 @@ pub fn get_firewall_egress_rules(
                 }
             }
         }
-
-        for vpn_interface in node.vpn_interfaces.values() {
-            for (client_name, client) in &vpn_interface.clients {
-                for (service_name, service) in &client.services {
-                    // /32 dest: VPN interfaces are routed, not L2-bridged — peers on the same
-                    // interface traverse the firewall, so the same-network filter must keep
-                    // same-subnet sources rather than treating them as no-ops.
-                    rules.extend(generate_rule_from_service(
-                        RuleDirection::Egress,
-                        service_name,
-                        service,
-                        [Ipv4Interface::host(client.ip)],
-                        with_node_prefix(client_name),
-                        tags,
-                        Some(&local_networks),
-                    ))
-                }
-            }
-        }
     }
 
     for (client_name, client) in &config.clients {
@@ -303,10 +262,10 @@ pub fn get_firewall_egress_rules(
                 }
                 let node = config.nodes.get(node_name)?;
 
-                Some(networks.iter().filter_map(|(network_name, ip)| {
-                    let network = node.network_by_name(network_name)?;
+                Some(networks.iter().filter_map(|(zone_name, ip)| {
+                    let zone = node.zones.get(zone_name)?;
 
-                    Some(client_address_on_network(*ip, network))
+                    Some(client_address_in_zone(*ip, zone))
                 }))
             })
             .flatten()
@@ -344,7 +303,7 @@ mod tests {
         let cfg = config(yaml);
         let own_name = id(own);
         let tags = build_tags_resolution_map(&cfg, &own_name);
-        let splot_config = SplotConfig::for_tests("AAAA", &[]);
+        let splot_config = SplotConfig::for_tests("AAAA");
 
         get_firewall_ingress_rules(
             &cfg,

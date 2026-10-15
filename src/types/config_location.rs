@@ -29,7 +29,6 @@ pub enum NodeLoc {
     Tags,
     WanZone,
     Zone(Identifier, ZoneLoc),
-    VpnInterface(Identifier, VpnLoc),
     Service(Identifier, ServiceLoc),
 }
 
@@ -44,9 +43,6 @@ impl Display for NodeLoc {
             Self::Tags => write!(f, ".tags"),
             Self::WanZone => write!(f, ".wanZone"),
             Self::Zone(zone_id, zone_loc) => write!(f, ".zones.{zone_id}{zone_loc}"),
-            Self::VpnInterface(vpn_int_id, vpn_int_loc) => {
-                write!(f, ".vpnInterfaces.{vpn_int_id}{vpn_int_loc}")
-            }
             Self::Service(service_id, service_loc) => {
                 write!(f, ".services.{service_id}{service_loc}")
             }
@@ -126,50 +122,6 @@ impl Display for DeviceLoc {
             Self::Root => write!(f, ""),
             Self::Ip => write!(f, ".ip"),
             Self::Macs => write!(f, ".macs"),
-            Self::Tags => write!(f, ".tags"),
-            Self::Service(service_id, service_loc) => {
-                write!(f, ".services.{service_id}{service_loc}")
-            }
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum VpnLoc {
-    Root,
-    ListenPort,
-    Address,
-    Tags,
-    Client(Identifier, VpnClientLoc),
-}
-
-impl Display for VpnLoc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Root => write!(f, ""),
-            Self::ListenPort => write!(f, ".listenPort"),
-            Self::Address => write!(f, ".address"),
-            Self::Tags => write!(f, ".tags"),
-            Self::Client(client_id, client_loc) => write!(f, ".clients.{client_id}{client_loc}"),
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum VpnClientLoc {
-    Root,
-    PublicKey,
-    Ip,
-    Tags,
-    Service(Identifier, ServiceLoc),
-}
-
-impl Display for VpnClientLoc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Root => write!(f, ""),
-            Self::PublicKey => write!(f, ".publicKey"),
-            Self::Ip => write!(f, ".ip"),
             Self::Tags => write!(f, ".tags"),
             Self::Service(service_id, service_loc) => {
                 write!(f, ".services.{service_id}{service_loc}")
@@ -273,22 +225,22 @@ mod tests {
     }
 
     #[test]
-    fn vpn_interface_client_service_path() {
+    fn device_service_path() {
         // The deepest path in the tree — the shape most prone to a copy-paste slip
-        // when hand-writing the nested variants (cf. the names.rs vpn-client bug).
+        // when hand-writing the nested variants.
         let loc = ConfigLocation::Node(
             id("Home"),
-            NodeLoc::VpnInterface(
-                id("vpn"),
-                VpnLoc::Client(
-                    id("Phone"),
-                    VpnClientLoc::Service(id("ssh"), ServiceLoc::Port),
+            NodeLoc::Zone(
+                id("lan"),
+                ZoneLoc::Device(
+                    id("printer"),
+                    DeviceLoc::Service(id("ssh"), ServiceLoc::Port),
                 ),
             ),
         );
         assert_eq!(
             loc.to_string(),
-            "nodes.Home.vpnInterfaces.vpn.clients.Phone.services.ssh.port"
+            "nodes.Home.zones.lan.devices.printer.services.ssh.port"
         );
     }
 
@@ -324,14 +276,6 @@ mod tests {
             )
             .to_string(),
             "nodes.Home.zones.lan.devices.printer"
-        );
-        assert_eq!(
-            ConfigLocation::Node(
-                id("Home"),
-                NodeLoc::VpnInterface(id("vpn"), VpnLoc::Client(id("Phone"), VpnClientLoc::Root))
-            )
-            .to_string(),
-            "nodes.Home.vpnInterfaces.vpn.clients.Phone"
         );
     }
 }

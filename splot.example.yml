@@ -41,7 +41,7 @@ nodes:
 
     services:
       # SSH to the router itself, reachable from anything tagged `admin`
-      # (the phone, the VPN laptop) anywhere on the mesh.
+      # (the phone) anywhere on the mesh.
       ssh:
         port: 22
         proto: tcp
@@ -75,18 +75,6 @@ nodes:
                 wan:
                   via: [Home]
                   sources: ["198.51.100.0/24"]
-
-    vpnInterfaces:
-      # An extra WireGuard interface for an external device, fully managed by
-      # splot (created in OpenWRT, named after the interface).
-      guests:
-        listenPort: 51821
-        address: 10.8.0.1/24
-        clients:
-          laptop:
-            publicKey: ReplaceLaptopPublicKeyAAAAAAAAAAAAAAAAAAAAA=
-            ip: 10.8.0.2
-            tags: admin
 
   # Remote site. No WAN exposure of its own — reachable over the mesh.
   Cabin:

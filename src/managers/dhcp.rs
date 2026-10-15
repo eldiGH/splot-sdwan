@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, net::Ipv4Addr};
 use log::{Level, debug, info, log_enabled};
 
 use crate::{
-    config::{Config, Node, NodeZoneDevice, ZoneOrVpnInterface},
+    config::{Config, Node, NodeZoneDevice},
     managers::{NodeContext, UciManager, UciSection, UciSectionBuilder, naming},
     types::{identifier::Identifier, mac::MacAddress},
     uci::UciBatchCommand,
@@ -69,16 +69,14 @@ fn get_client_static_leases(config: &Config, node_context: &NodeContext) -> Vec<
             };
             let networks = client.ips.get(node_context.own_name)?;
 
-            let leases = networks.iter().filter_map(|(network_name, ip)| {
-                match node_context.own_node.network_by_name(network_name)? {
-                    ZoneOrVpnInterface::VpnInterface(_) => None,
-                    ZoneOrVpnInterface::Zone(_) => Some(DhcpStaticLease {
-                        macs: client.macs.clone().into(),
-                        ip: *ip,
-                        name: client_name.to_string(),
-                    }),
-                }
-            });
+            let leases = networks
+                .iter()
+                .filter(|(zone_name, _)| node_context.own_node.zones.contains_key(*zone_name))
+                .map(|(_, ip)| DhcpStaticLease {
+                    macs: client.macs.clone().into(),
+                    ip: *ip,
+                    name: client_name.to_string(),
+                });
 
             Some(leases.collect::<Vec<_>>())
         })
@@ -148,22 +146,12 @@ nodes:
           macless:
             ip: 192.168.1.51
             macs: []
-    vpnInterfaces:
-      vpn_a:
-        listenPort: 51821
-        address: 10.8.1.1/24
-        clients: {}
 clients:
   Phone:
     macs: BB:CC:DD:EE:FF:00
     ips:
       Home:
         lan: 192.168.1.60
-  VpnOnly:
-    macs: CC:DD:EE:FF:00:11
-    ips:
-      Home:
-        vpn_a: 10.8.1.10
   MeshOnly:
     publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
     meshIp: 10.100.0.100
@@ -176,7 +164,7 @@ clients:
     fn cmds() -> Vec<UciBatchCommand> {
         let cfg = config(FIXTURE);
         let own_name: Identifier = "Home".parse().unwrap();
-        let splot_config = SplotConfig::for_tests("AAAA", &[]);
+        let splot_config = SplotConfig::for_tests("AAAA");
 
         DhcpManager.generate_commands(
             &cfg,
@@ -209,12 +197,6 @@ clients:
         let c = cmds();
         assert!(has_cmd(&c, "dhcp.spl_host_Phone"), "Phone section missing");
         assert!(has_cmd(&c, "ip='192.168.1.60'"), "Phone IP missing");
-    }
-
-    #[test]
-    fn global_client_vpn_only_no_dhcp_lease() {
-        // VPN clients don't get DHCP leases — only zone clients do.
-        assert!(!has_cmd(&cmds(), "spl_host_VpnOnly"));
     }
 
     #[test]
