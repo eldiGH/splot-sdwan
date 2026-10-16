@@ -150,7 +150,7 @@ fn host_rules(
 
         let owner = owner_name(host.id(), direction);
 
-        for (service_name, service) in host.services() {
+        for (service_name, service) in network.services_of(host) {
             rules.extend(generate_rule_from_service(
                 direction,
                 service_name,

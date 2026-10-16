@@ -78,7 +78,7 @@ pub fn get_firewall_redirects(
     let mut redirects = Vec::new();
 
     for host in network.hosts() {
-        for (service_name, service) in host.services() {
+        for (service_name, service) in network.services_of(host) {
             let Some(wan) = service.wan() else { continue };
             let Some(target) = wan.target(node_context.own_name) else {
                 continue;

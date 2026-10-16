@@ -6,8 +6,8 @@ use std::{
 use crate::{
     config::{self, Client, Config, Node},
     model::{
-        host::{HostRef, Place},
-        service::{Service, Source, Sources},
+        host::Place,
+        service::{Source, Sources},
         validator::types::{ValidationError, ValidationReport, ValidationWarning},
     },
     types::{
@@ -21,7 +21,7 @@ use crate::{
 
 /// What each reference names, and where it lives.
 #[derive(Default)]
-struct Resolution {
+pub(super) struct Resolution {
     /// Every reference but `$node`. A known reference with nothing behind it (a
     /// node with no zones and no hub) has no entry.
     sources: BTreeMap<AllowFromRef, BTreeSet<Source>>,
@@ -30,7 +30,7 @@ struct Resolution {
 }
 
 impl Resolution {
-    fn of(config: &Config) -> Self {
+    pub(super) fn of(config: &Config) -> Self {
         let mut resolution = Self::default();
 
         for (node_name, node) in &config.nodes {
@@ -148,7 +148,7 @@ impl Resolution {
 
 /// Resolves the service's `allowFrom`. An unknown reference is reported and left
 /// out.
-fn resolve_sources(
+pub(super) fn resolve_sources(
     service: &config::Service,
     known_references: &HashSet<AllowFromRef>,
     resolution: &Resolution,
@@ -182,40 +182,13 @@ fn resolve_sources(
     sources
 }
 
-/// Every service, by its host, with its `allowFrom` resolved to sources.
-pub(super) fn check_references(
-    config: &Config,
-    known_references: &HashSet<AllowFromRef>,
-    report: &mut ValidationReport,
-) -> BTreeMap<HostRef, BTreeMap<Identifier, Service>> {
-    let resolution = Resolution::of(config);
-    let mut services: BTreeMap<HostRef, BTreeMap<Identifier, Service>> = BTreeMap::new();
-
-    for (service, host) in config.services() {
-        let sources = resolve_sources(service, known_references, &resolution, report, |loc| {
-            host.to_location(loc)
-        });
-        let (host, name) = HostRef::of_service(host);
-
-        services.entry(host).or_default().insert(
-            name.clone(),
-            Service {
-                port: service.port,
-                proto: service.proto.clone().into(),
-                sources,
-                // The WAN pass fills it in.
-                wan: None,
-            },
-        );
-    }
-
-    services
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{checked, config};
+    use crate::{
+        model::host::HostRef,
+        test_support::{checked, config},
+    };
 
     // Home: zone lan (192.168.1.1/24) with device printer (192.168.1.50, tag printable)
     //       zone guest (192.168.2.1/24)
@@ -355,12 +328,7 @@ clients:
     #[test]
     fn a_service_from_this_node_resolves_on_each_node() {
         let (_, network) = checked(FIXTURE);
-        let home = network
-            .hosts()
-            .iter()
-            .find(|host| *host.id() == HostRef::Node(id("Home")))
-            .unwrap();
-        let sources = home.services()[&id("dns")].sources();
+        let sources = network.services[&HostRef::Node(id("Home"))][&id("dns")].sources();
         let on = |node: &str| -> Vec<String> {
             sources
                 .on(&id(node))

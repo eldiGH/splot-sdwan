@@ -1,13 +1,9 @@
 //! Hosts: everything in the network that has an address.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    net::Ipv4Addr,
-};
+use std::{collections::BTreeSet, net::Ipv4Addr};
 
 use crate::{
     config::ServiceHost,
-    model::service::Service,
     types::{identifier::Identifier, ip::Ipv4Interface, mac::MacAddress},
 };
 
@@ -121,7 +117,6 @@ pub struct Host {
     pub(super) id: HostRef,
     pub(super) addresses: Vec<HostAddress>,
     pub(super) macs: BTreeSet<MacAddress>,
-    pub(super) services: BTreeMap<Identifier, Service>,
 }
 
 impl Host {
@@ -160,10 +155,6 @@ impl Host {
     /// them.
     pub fn macs(&self) -> &BTreeSet<MacAddress> {
         &self.macs
-    }
-
-    pub fn services(&self) -> &BTreeMap<Identifier, Service> {
-        &self.services
     }
 }
 
@@ -223,7 +214,6 @@ mod tests {
             id,
             addresses,
             macs: BTreeSet::new(),
-            services: BTreeMap::new(),
         }
     }
 

@@ -3,29 +3,32 @@ mod names;
 mod networks;
 mod ports;
 mod references;
+mod services;
 mod tags;
 pub mod types;
 mod wan;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::{
     config::Config,
     model::{
-        host::Host,
+        host::{Host, HostRef},
+        service::Service,
         validator::{
             entities::check_entities, names::validate_names, networks::check_networks,
-            ports::check_ports, references::check_references, tags::validate_tags,
-            types::ValidationReport, wan::check_wan,
+            ports::check_ports, services::check_services, tags::validate_tags,
+            types::ValidationReport, wan::check_wan_zones,
         },
     },
-    types::allow_from_ref::AllowFromRef,
+    types::{allow_from_ref::AllowFromRef, identifier::Identifier},
 };
 
 /// What the passes built from a config, out of the parts that passed their
 /// checks, and what they found.
 pub(super) struct Checked {
     pub(super) hosts: Vec<Host>,
+    pub(super) services: BTreeMap<HostRef, BTreeMap<Identifier, Service>>,
     pub(super) report: ValidationReport,
 }
 
@@ -36,26 +39,26 @@ pub(super) fn check(config: &Config) -> Checked {
     let names = validate_names(config, &mut report);
     let tags = validate_tags(config, &mut report, &names);
     let refs: HashSet<AllowFromRef> = names.into_iter().chain(tags).collect();
-    let mut services = check_references(config, &refs, &mut report);
 
     check_entities(config, &mut report);
 
-    let mut hosts = check_networks(config, &mut report);
+    let hosts = check_networks(config, &mut report);
 
     check_ports(config, &mut report);
 
-    check_wan(config, &hosts, &mut services, &mut report);
-
-    for host in &mut hosts {
-        host.services = services.remove(&host.id).unwrap_or_default();
-    }
+    let services = check_services(config, &hosts, &refs, &mut report);
+    check_wan_zones(config, &mut report);
 
     // Canonical order for every consumer: by config location, so the output reads
     // top to bottom like the config instead of pass by pass. Stable sort — several
     // diagnostics at one location keep the order their passes produced them in.
     report.sort();
 
-    Checked { hosts, report }
+    Checked {
+        hosts,
+        services,
+        report,
+    }
 }
 
 #[cfg(test)]

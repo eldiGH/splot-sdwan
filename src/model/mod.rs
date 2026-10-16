@@ -4,8 +4,11 @@ pub mod host;
 pub mod service;
 pub mod validator;
 
-use crate::config::Config;
-use host::Host;
+use std::collections::BTreeMap;
+
+use crate::{config::Config, types::identifier::Identifier};
+use host::{Host, HostRef};
+use service::Service;
 use validator::{
     Checked,
     types::{ValidationReport, ValidationWarning},
@@ -15,6 +18,7 @@ use validator::{
 /// makes one, so everything that reads it can rely on what validation checked.
 pub struct Network {
     hosts: Vec<Host>,
+    services: BTreeMap<HostRef, BTreeMap<Identifier, Service>>,
 }
 
 impl Network {
@@ -22,6 +26,11 @@ impl Network {
     /// clients, then the global clients.
     pub fn hosts(&self) -> &[Host] {
         &self.hosts
+    }
+
+    /// The services `host` offers, by name.
+    pub fn services_of(&self, host: &Host) -> impl Iterator<Item = (&Identifier, &Service)> {
+        self.services.get(host.id()).into_iter().flatten()
     }
 }
 
@@ -34,11 +43,15 @@ pub struct Validated {
 /// Turns `config` into a [`Network`] if it has no errors. Every problem is
 /// reported, not just the first.
 pub fn validate(config: &Config) -> Result<Validated, ValidationReport> {
-    let Checked { hosts, report } = validator::check(config);
+    let Checked {
+        hosts,
+        services,
+        report,
+    } = validator::check(config);
 
     if report.errors.is_empty() {
         Ok(Validated {
-            network: Network { hosts },
+            network: Network { hosts, services },
             warnings: report.warnings,
         })
     } else {
@@ -199,13 +212,21 @@ clients:
     }
 
     #[test]
-    fn a_host_carries_its_macs_and_services() {
+    fn a_host_carries_its_macs_and_the_network_its_services() {
         let (_, network) = checked(HOSTS);
         let [_, home, printer, camera, phone] = network.hosts() else {
             panic!("expected five hosts");
         };
 
-        assert!(printer.services().contains_key(&id("ipp")));
+        let services = |host| -> Vec<String> {
+            network
+                .services_of(host)
+                .map(|(name, _)| name.to_string())
+                .collect()
+        };
+        assert_eq!(services(printer), ["ipp"]);
+        assert!(services(camera).is_empty());
+
         assert_eq!(printer.macs().len(), 1);
         assert_eq!(phone.macs().len(), 1);
         // Nodes and hub clients get no leases.

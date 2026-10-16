@@ -4,8 +4,7 @@ use crate::{
     config::{Client, Config, Node, ServiceHost, ServiceWan},
     consts,
     model::{
-        host::{Host, HostAddress, HostRef, Place},
-        service::{Service, Wan},
+        host::{Host, HostAddress, Place},
         validator::types::{ValidationError, ValidationReport, ValidationWarning},
     },
     types::{
@@ -111,7 +110,7 @@ fn target_place(host: ServiceHost, via: &WanViaTarget, node: &Node) -> Result<Pl
 /// Checks every `wan.via` node of a service, and finds what each one forwards it
 /// to: one of the host's addresses. A target that fails a check is left out, and
 /// so is one whose address failed its own (already reported).
-fn check_targets<'a>(
+pub(super) fn check_targets<'a>(
     config: &'a Config,
     wan: &'a ServiceWan,
     host: ServiceHost,
@@ -165,41 +164,12 @@ fn check_targets<'a>(
     targets
 }
 
-/// Gives every service its WAN exposure, from the hosts' checked addresses.
-fn check_services_wan(
+/// A `wanZone` no service is exposed through is a warning.
+pub(super) fn warn_unused_wan_zones(
     config: &Config,
-    hosts: &[Host],
-    services: &mut BTreeMap<HostRef, BTreeMap<Identifier, Service>>,
+    wan_nodes_used: &HashSet<&Identifier>,
     report: &mut ValidationReport,
 ) {
-    let hosts: BTreeMap<&HostRef, &Host> = hosts.iter().map(|host| (host.id(), host)).collect();
-    let mut wan_nodes_used = HashSet::new();
-
-    for (service, host) in config.services() {
-        let Some(wan) = &service.wan else { continue };
-        let (host_ref, service_name) = HostRef::of_service(host);
-
-        let targets = check_targets(
-            config,
-            wan,
-            host,
-            hosts.get(&host_ref).copied(),
-            &mut wan_nodes_used,
-            report,
-        );
-
-        let built = services
-            .get_mut(&host_ref)
-            .and_then(|services| services.get_mut(service_name));
-
-        if let Some(built) = built {
-            built.wan = Some(Wan {
-                targets,
-                sources: wan.sources.clone().into(),
-            });
-        }
-    }
-
     for (node_name, node) in &config.nodes {
         if node.wan_zone.is_some() && !wan_nodes_used.contains(node_name) {
             report.warnings.push(ValidationWarning::UnusedWanZone {
@@ -209,7 +179,8 @@ fn check_services_wan(
     }
 }
 
-fn check_wan_zone(config: &Config, report: &mut ValidationReport) {
+/// A `wanZone` must not reuse a zone's name or the mesh interface's.
+pub(super) fn check_wan_zones(config: &Config, report: &mut ValidationReport) {
     for (node_name, node) in &config.nodes {
         let Some(wan_zone) = &node.wan_zone else {
             continue;
@@ -238,24 +209,14 @@ fn check_wan_zone(config: &Config, report: &mut ValidationReport) {
     }
 }
 
-/// Checks every service's WAN exposure and `wanZone`, and gives each service
-/// what its `wan.via` nodes forward it to.
-pub(super) fn check_wan(
-    config: &Config,
-    hosts: &[Host],
-    services: &mut BTreeMap<HostRef, BTreeMap<Identifier, Service>>,
-    report: &mut ValidationReport,
-) {
-    check_services_wan(config, hosts, services, report);
-    check_wan_zone(config, report);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         model::{
             Network,
+            host::HostRef,
+            service::Wan,
             validator::{Checked, check},
         },
         test_support::{checked, config},
@@ -403,11 +364,8 @@ clients:
 ";
 
     fn exposure<'a>(network: &'a Network, host: &HostRef, service: &str) -> &'a Wan {
-        network
-            .hosts()
-            .iter()
-            .find(|h| h.id() == host)
-            .and_then(|h| h.services()[&id(service)].wan())
+        network.services[host][&id(service)]
+            .wan()
             .expect("service is exposed")
     }
 
@@ -448,17 +406,17 @@ clients:
         // Phone's lan IP lies outside lan: that's the one error. Its WAN target is
         // left out, not reported as unreachable.
         let yaml = EXPOSED.replace("lan: 192.168.1.50", "lan: 192.168.9.50");
-        let Checked { hosts, report } = check(&config(&yaml));
+        let Checked {
+            services, report, ..
+        } = check(&config(&yaml));
 
         let errors: Vec<String> = report.errors.iter().map(ToString::to_string).collect();
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(errors[0].contains("outside subnet"), "{errors:?}");
 
-        let phone = hosts
-            .iter()
-            .find(|host| *host.id() == HostRef::Client(id("Phone")))
+        let wan = services[&HostRef::Client(id("Phone"))][&id("web")]
+            .wan()
             .unwrap();
-        let wan = phone.services()[&id("web")].wan().unwrap();
         assert!(wan.target(&id("Home")).is_none());
     }
 }

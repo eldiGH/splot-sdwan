@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, hash_map::Entry},
+    collections::{BTreeSet, HashMap, hash_map::Entry},
     iter,
     net::Ipv4Addr,
 };
@@ -76,8 +76,7 @@ fn host_address(
 
 /// Builds every host while it checks their addresses, in config order: each node,
 /// its devices zone by zone and its hub clients, then the global clients. What
-/// fails a check is left out of the hosts. Their services come from the
-/// references pass.
+/// fails a check is left out of the hosts.
 fn build_hosts(config: &Config, report: &mut ValidationReport) -> Vec<Host> {
     // The mesh space and every zone: none may overlap another.
     let mut networks = vec![config.mesh_network];
@@ -163,7 +162,6 @@ fn node_hosts(
                 },
                 addresses: address.into_iter().collect(),
                 macs: device.macs.clone().into(),
-                services: BTreeMap::new(),
             });
         }
     }
@@ -172,7 +170,6 @@ fn node_hosts(
         id: HostRef::Node(node_name.clone()),
         addresses,
         macs: BTreeSet::new(),
-        services: BTreeMap::new(),
     };
 
     iter::once(node_host)
@@ -232,7 +229,6 @@ fn hub_client_hosts(
             },
             addresses: address.into_iter().collect(),
             macs: BTreeSet::new(),
-            services: BTreeMap::new(),
         });
     }
 
@@ -292,7 +288,6 @@ fn client_host(
         id: HostRef::Client(client_name.clone()),
         addresses,
         macs: client.macs.clone().into(),
-        services: BTreeMap::new(),
     }
 }
 
