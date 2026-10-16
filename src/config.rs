@@ -491,7 +491,7 @@ nodes:
 
     #[test]
     fn vpn_interfaces_are_rejected() {
-        // Replaced by hubs (T18). A config written for the old shape must fail
+        // Replaced by hubs. A config written for the old shape must fail
         // loudly instead of silently dropping its VPN clients.
         let err = parse_error(&format!(
             "{NODE}
