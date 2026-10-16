@@ -4,8 +4,9 @@ use std::collections::HashSet;
 
 use crate::{
     consts,
-    managers::{NodeContext, UciManager, naming},
-    model::Network,
+    managers::{UciManager, naming},
+    plan::NodePlan,
+    splot_config::SplotConfig,
     uci::{self, UciBatchCommand},
 };
 use reload::Reload;
@@ -93,8 +94,8 @@ impl UciPipeline {
     /// reloads the services whose config changed. Returns the changed files.
     pub fn run(
         &self,
-        network: &Network,
-        node_context: &NodeContext,
+        plan: &NodePlan,
+        splot_config: &SplotConfig,
     ) -> Result<Vec<&'static str>, PipelineError> {
         // uci keeps uncommitted changes in one place per file, shared by every uci
         // user on the router: committing or reverting ours would commit or revert
@@ -114,7 +115,7 @@ impl UciPipeline {
 
         let files = self.files();
         let before = snapshot(&files)?;
-        self.changeset(network, node_context, &before)?.apply()?;
+        self.changeset(plan, splot_config, &before)?.apply()?;
         let after = snapshot(&files)?;
         let changed = changed_files(&before, &after);
 
@@ -128,17 +129,13 @@ impl UciPipeline {
     }
 
     /// Prints what `run` would send to uci, and the reload after it.
-    pub fn print(
-        &self,
-        network: &Network,
-        node_context: &NodeContext,
-    ) -> Result<(), PipelineError> {
+    pub fn print(&self, plan: &NodePlan, splot_config: &SplotConfig) -> Result<(), PipelineError> {
         let peer_update = reload::peer_update().map_err(PipelineError::Netifd)?;
 
         let files = self.files();
         let current = snapshot(&files)?;
 
-        for command in self.changeset(network, node_context, &current)?.commands() {
+        for command in self.changeset(plan, splot_config, &current)?.commands() {
             println!("{}", command.redacted());
         }
 
@@ -155,21 +152,21 @@ impl UciPipeline {
         Ok(())
     }
 
-    fn generate(&self, network: &Network, node_context: &NodeContext) -> Vec<UciBatchCommand> {
+    fn generate(&self, plan: &NodePlan, splot_config: &SplotConfig) -> Vec<UciBatchCommand> {
         self.managers
             .iter()
-            .flat_map(|manager| manager.generate_commands(network, node_context))
+            .flat_map(|manager| manager.generate_commands(plan, splot_config))
             .collect()
     }
 
     fn changeset(
         &self,
-        network: &Network,
-        node_context: &NodeContext,
+        plan: &NodePlan,
+        splot_config: &SplotConfig,
         current: &Snapshot,
     ) -> Result<Changeset, PipelineError> {
         let files = self.files();
-        let generated = self.generate(network, node_context);
+        let generated = self.generate(plan, splot_config);
 
         // Checked before anything touches uci.
         let duplicates = find_duplicate_sections(&generated);
@@ -333,9 +330,8 @@ mod tests {
     use super::*;
     use crate::{
         managers::{dhcp::DhcpManager, firewall::FirewallManager, network::NetworkManager},
-        splot_config::SplotConfig,
+        plan,
         test_support::checked,
-        types::identifier::Identifier,
     };
 
     fn set(path: &str, value: &str) -> UciBatchCommand {
@@ -435,15 +431,9 @@ network.spl_wireguard_spl_mesh_Cabin=wireguard_spl_mesh"
             .register(FirewallManager)
             .register(DhcpManager);
         let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY");
-        for (node_name, node) in network.nodes() {
-            let generated = pipeline.generate(
-                &network,
-                &NodeContext {
-                    own_name: node_name,
-                    own_node: node,
-                    splot_config: &splot_config,
-                },
-            );
+        for (node_name, _) in network.nodes() {
+            let plan = plan::plan(&network, node_name).unwrap();
+            let generated = pipeline.generate(&plan, &splot_config);
             assert!(!generated.is_empty());
             assert!(
                 !generated
@@ -513,16 +503,9 @@ nodes:
             macs: AA:BB:CC:DD:EE:02
 ",
         );
-        let own_name: Identifier = "Home".parse().unwrap();
-        let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY");
-        let commands = DhcpManager.generate_commands(
-            &network,
-            &NodeContext {
-                own_name: &own_name,
-                own_node: network.node(&own_name).unwrap(),
-                splot_config: &splot_config,
-            },
-        );
+        let plan = plan::plan(&network, &"Home".parse().unwrap()).unwrap();
+        let commands =
+            DhcpManager.generate_commands(&plan, &SplotConfig::for_tests("FAKE_MESH_KEY"));
         assert_eq!(
             find_duplicate_sections(&commands),
             ["dhcp.spl_host_my_printer"]

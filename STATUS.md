@@ -41,15 +41,25 @@ Validation is how the checked model (`src/model/`) gets built: `model::validate(
 - **Hosts** (`src/model/host.rs`), built by the `networks` pass: every node, zone device, hub client and global client, in config order, as a `HostRef` (its identity: `Node`, `Local { node, name }` or `Client`), its addresses, its MACs and its WireGuard key (hub and global clients). Each address is its IP with the prefix of the subnet it's on, checked to be a host there, and where it lives (`Zone { node, zone }`, `Hub { node }` or `Mesh`).
 - **Nodes** (`src/model/node.rs`), built by the same pass: each router's key, endpoint and listen port, its mesh address (its mesh IP with the mesh network's prefix, checked), its zones' subnets, its hub network and its `wanZone`. A node whose mesh IP fails its check is left out; a zone or hub that fails its checks is left out of the node.
 - **Services** (`src/model/service.rs`), each built whole by the `services` pass and kept in the `Network` by its host: the service's port, protocols, sources and WAN exposure. The sources are its `allowFrom` resolved to the networks each reference names, with where each lives: explicit tags, bare node names (the node's zone subnets and hub network), global client names (all their IPs), qualified `{Node}.{LocalName}` forms (including `{Node}.hub`), and `$node`, which resolves on each node to that router's own address on each of its zones. An unknown reference is an error; a network two references name is listed once. The WAN exposure is: for every `wan.via` node, the host address it forwards to (a node's mesh IP; a device's or hub client's IP; a global client's mesh IP, else its IP on that node's zone, or the zone a qualified `{Node}.{Zone}` names), and the allowed source CIDRs. A target whose address failed its own check is left out, with no second error.
-- The generators and the pipeline take only the `Network`; `main` finds its own node there (by public key, until `--node`). The raw `Config` is read by validation alone.
+- The planner reads only the `Network`; `main` finds its own node there (by public key, until `--node`). The raw `Config` is read by validation alone.
 
-### Firewall config generation (`src/managers/firewall/`)
+### Node plan (`src/plan/`)
+
+What one node has to do, by concern, worked out from the `Network`, with no platform in it: `plan::plan(&Network, node) -> Option<NodePlan>`, where `NodePlan { wireguard, firewall, dhcp }`. Each section comes from its own pure planner function; DNS joins once it's implemented.
+
+- **`wireguard`**: the mesh interface (listen port, mesh address) and its peers: every other node (routed, with its endpoint), every global client with a mesh IP, and this node's hub clients. Each peer carries its keepalive. No private key: the backend holds it.
+- **`firewall`**: the mesh zone's policy (input and forward drop, output accept), the rules (ingress, then egress), and the redirects.
+- **`dhcp`**: a lease for every address a host with MACs has on this node's zones.
+- Plan objects carry identity (a `HostRef`, the service, a rule's direction), never a backend's name for them: the OpenWrt renderer derives uci section names and labels from it.
+- `NodePlan`'s `Display` is a plain-text view of everything in it, one object per line in config notation (`Home`, `Cabin.camera`), snapshot-tested per node of the example config.
+
+### Firewall (planned in `src/plan/firewall/`, rendered by `src/managers/firewall/`)
 
 - **Zones (`zones.rs`)**: splot's one managed zone, the mesh zone (`spl_mesh`), rendered as a `config zone` UCI section. Everything that arrives over WireGuard is in it, hub clients included. Default policy `input`/`forward` `DROP`, `output ACCEPT`; access granted only via explicit service rules.
 - **Rules (`rules.rs`)**: per-service `config rule` UCI sections for every host's services (node, device, hub client, global client), from the model's hosts: an ingress rule toward the host's addresses on this node, an egress rule toward its addresses on other nodes. A global client's `meshIp` gets no rule yet. Its sources are the service's resolved `allowFrom` as seen from this node (sources on the destination's own zone are filtered out, since they don't traverse this router; the mesh and hubs are routed, so nothing there is filtered). Rules currently match on `src_ip` / `dest_ip` with `src` / `dest` left as `*` — per-zone scoping is still pending (see [ROADMAP.md](ROADMAP.md)).
 - **Redirects (`redirect.rs`)**: `config redirect` (DNAT port-forward) UCI sections for services that declare `wan`. `wan.via` selects which routers expose the service via their `wanZone`; each forwards to the target the model resolved for it (see the `wan` pass above), in the mesh zone for mesh and hub addresses. Forwarding to a host on another node isn't right yet: the redirect names the destination zone as it is on the host's own node. `wan.sources` (the CIDR allowlist) is applied as the redirect's `src_ip`: empty/missing means publicly reachable, a non-empty list restricts the forward to those CIDRs.
 
-### Network interface generation (`src/managers/network.rs`)
+### WireGuard (planned in `src/plan/wireguard.rs`, rendered by `src/managers/network.rs`)
 
 - Generates the `config interface` UCI section for the node's one WireGuard interface, the mesh interface (`spl_mesh`).
 - Peer sections (`config wireguard_spl_mesh`):
@@ -58,12 +68,12 @@ Validation is how the checked model (`src/model/`) gets built: `model::validate(
   - this node's own hub clients (peers on their hub node only).
 - Includes WireGuard-specific knobs: `listen_port`, `private_key`, `addresses` (the option OpenWrt's WireGuard handler reads; not `address`), `public_key`, `endpoint_host`, `endpoint_port`, `allowed_ips`, `persistent_keepalive`.
 
-### DHCP config generation (`src/managers/dhcp.rs`)
+### DHCP (planned in `src/plan/dhcp.rs`, rendered by `src/managers/dhcp.rs`)
 
 - Generates `config host` UCI sections for static DHCP leases.
 - Sources:
   - Zone devices with `macs` — one lease per zone IP, attached to each declared MAC.
-  - Global clients (`config.clients`) with `macs` and zone IPs on the current node.
+  - Global clients with `macs` and zone IPs on the current node.
 - Lease ties MAC to the zone IP so the device gets a predictable address every connection.
 
 ### Batch UCI command execution (`src/uci.rs`, `src/pipeline/`)
@@ -101,7 +111,7 @@ Validation is how the checked model (`src/model/`) gets built: `model::validate(
 
 ### UCI section naming (`managers/mod.rs` `UciSection`, `managers/naming.rs`)
 
-- Section names are a uci concern. Every generated struct (`WgInterface`, `FirewallZone`, `FirewallRule`, `FirewallRedirect`, `DhcpStaticLease`, and peers via `PeerSection`) implements `UciSection`: its file, its uci section type, an id (what tells it apart from other sections of the same type), and its options. Other backends will name things their own way.
+- Section names are a uci concern. The OpenWrt renderers implement `UciSection` on the plan objects (the mesh interface and zone, rules, redirects, leases, and peers via `PeerSection`): its file, its uci section type, an id derived from the object's identity (what tells it apart from other sections of the same type), and its options. Other backends will name things their own way.
 - The section name is derived from that, the same way for every type: `spl_<section type>_<id>`, e.g. `spl_rule_in_Home_ssh`, `spl_redirect_Home_nas_https`, `spl_zone_mesh`, `spl_host_printer`, `spl_wireguard_spl_mesh_Phone`. uci has one namespace per file; the type keeps sections of different types apart. A rule's id includes its direction (`in`: traffic to this node's hosts; `out`: from local sources to other nodes); cross-node rules are namespaced by node name (`spl_rule_out_Home_printer_ssh`).
 - Exception: an interface's section name is the interface name (`spl_mesh`). Zone `network` lists and peer section types refer to it, and netifd names the WireGuard device after it (at most 15 characters).
 - `UciSectionName` does the mechanics: the `spl_` prefix (declared in `consts.rs`) keeps splot-managed sections apart from operator-managed ones, parts are joined with `_`, and `-` is mapped to `_` by `uci::name` (uci rejects `-` in section and option names).
@@ -109,7 +119,7 @@ Validation is how the checked model (`src/model/`) gets built: `model::validate(
 
 ### Tests (`cargo test`)
 
-Unit-test suite over the deterministic core (~280 tests). Covers: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (hosts, reference resolution, WAN targets; `src/model/`), the UCI generators (firewall redirects/rules/zones, network, dhcp), UCI command/builder rendering, the uci not-found classification and dry-run redaction, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, pipeline) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
+Unit-test suite over the deterministic core (~280 tests). Covers: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (hosts, reference resolution, WAN targets; `src/model/`), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), UCI command/builder rendering, the uci not-found classification and dry-run redaction, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, pipeline) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
 
 ---
 

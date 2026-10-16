@@ -3,9 +3,7 @@ use clap::Parser;
 use crate::{
     cli::{Cli, Command},
     config::Config,
-    managers::{
-        NodeContext, dhcp::DhcpManager, firewall::FirewallManager, network::NetworkManager,
-    },
+    managers::{dhcp::DhcpManager, firewall::FirewallManager, network::NetworkManager},
     model::{Network, Validated, validator::types::ValidationWarning},
     pipeline::UciPipeline,
 };
@@ -18,6 +16,7 @@ pub mod env;
 pub mod managers;
 pub mod model;
 pub mod pipeline;
+pub mod plan;
 pub mod protocol;
 pub mod splot_config;
 #[cfg(test)]
@@ -48,7 +47,9 @@ fn main() -> anyhow::Result<()> {
             let splot_config = splot_config::SplotConfig::load()?;
             let own_public_key = wg::get_pubkey(splot_config.mesh_key())
                 .context("failed to derive this router's public key")?;
-            let Some((own_name, own_node)) = network.find_node_by_public_key(&own_public_key)
+            let Some(plan) = network
+                .find_node_by_public_key(&own_public_key)
+                .and_then(|(own_name, _)| plan::plan(&network, own_name))
             else {
                 bail!(
                     "this router's public key was not found in the splot config - add this node and try again"
@@ -60,16 +61,10 @@ fn main() -> anyhow::Result<()> {
                 .register(FirewallManager)
                 .register(DhcpManager);
 
-            let node_context = NodeContext {
-                own_name,
-                own_node,
-                splot_config: &splot_config,
-            };
-
             if *dry_run {
-                pipeline.print(&network, &node_context)?;
+                pipeline.print(&plan, &splot_config)?;
             } else {
-                let changed = pipeline.run(&network, &node_context)?;
+                let changed = pipeline.run(&plan, &splot_config)?;
 
                 if changed.is_empty() {
                     println!("Nothing changed.");

@@ -163,7 +163,7 @@ A hub is a network inside `meshNetwork` that a node sets aside for devices reach
 
 ### Scope
 
-Tests cover the **deterministic core**: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (`src/model/`: hosts, reference resolution, WAN targets), the UCI generators (firewall redirects/rules/zones, network, dhcp), and UCI command/builder rendering. The process/IO layer (`uci` executor, `wg`, `splot_config`, `env`, `pipeline`, `main`) is **out of scope** for now — it shells out and touches the filesystem; revisit as integration tests later.
+Tests cover the **deterministic core**: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (`src/model/`: hosts, reference resolution, WAN targets), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), and UCI command/builder rendering. The process/IO layer (`uci` executor, `wg`, `splot_config`, `env`, `pipeline`, `main`) is **out of scope** for now — it shells out and touches the filesystem; revisit as integration tests later.
 
 ### Placement
 
@@ -182,6 +182,12 @@ Tests are inline `#[cfg(test)] mod tests { use super::*; ... }` modules, always 
 - **Accept an intended change** with `cargo insta review` (needs `cargo install cargo-insta`), or `INSTA_UPDATE=always cargo test` and then review the `.snap` diff in git. Never accept a snapshot change you haven't read.
 - **A change that touches generator output** comes with its snapshot diff in the same commit, so the commit shows what it does to the generated router config.
 - Keep the example config representative: a new feature that generates config should appear in `splot.example.yml`, which puts it under the snapshot too.
+
+`example_plan_snapshot` (in `src/plan/mod.rs`) pins the node plan, the platform-neutral layer between the model and the renderers, as its plain-text view, for every node of `splot.example.yml`. Its snapshots live in `src/plan/snapshots/`.
+
+- **A planner change** (what a node should do) shows up in the plan snapshot and in the uci snapshot. Read the plan diff first: it says what was decided, in config notation.
+- **A rendering-only change** (how uci spells it) leaves the plan snapshot untouched and shows up in the uci snapshot alone, which proves the decision didn't move.
+- The view holds every piece of information the plan carries: a new plan field goes into it.
 
 ### Conventions
 

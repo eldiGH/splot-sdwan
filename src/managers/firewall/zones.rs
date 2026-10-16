@@ -2,32 +2,17 @@ use crate::{
     consts,
     managers::{
         UciSection, UciSectionBuilder,
-        firewall::{consts::FIREWALL_FILE_NAME, types::FirewallAction},
+        firewall::{consts::FIREWALL_FILE_NAME, target},
         naming,
     },
+    plan::firewall::ZonePolicy,
 };
 
-pub struct FirewallZone {
-    pub name: String,
-    pub network: Vec<String>,
-    pub input: FirewallAction,
-    pub output: FirewallAction,
-    pub forward: FirewallAction,
-}
+/// The mesh zone, splot's one zone: the operator's zones (`lan`, …) aren't
+/// splot's to create.
+pub(super) struct MeshZone<'a>(pub &'a ZonePolicy);
 
-impl Default for FirewallZone {
-    fn default() -> Self {
-        Self {
-            forward: FirewallAction::Drop,
-            input: FirewallAction::Drop,
-            output: FirewallAction::Accept,
-            name: String::new(),
-            network: Vec::new(),
-        }
-    }
-}
-
-impl UciSection for FirewallZone {
+impl UciSection for MeshZone<'_> {
     const FILE: &'static str = FIREWALL_FILE_NAME;
 
     fn section_type(&self) -> &str {
@@ -35,55 +20,53 @@ impl UciSection for FirewallZone {
     }
 
     fn id(&self) -> impl IntoIterator<Item = &str> {
-        [self.name.as_str()]
+        [consts::MESH_INTERFACE_NAME]
     }
 
     fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
+        let ZonePolicy {
+            input,
+            output,
+            forward,
+        } = *self.0;
+
         section
-            .set("name", naming::name_prefixed(&self.name))
-            .set("input", self.input.to_string())
-            .set("output", self.output.to_string())
-            .set("forward", self.forward.to_string())
-            .extend_list("network", &self.network)
+            .set("name", naming::name_prefixed(consts::MESH_INTERFACE_NAME))
+            .set("input", target(input))
+            .set("output", target(output))
+            .set("forward", target(forward))
+            .extend_list("network", [naming::mesh_interface()])
     }
-}
-
-/// splot's zones: the mesh is the only one. The operator's zones (`lan`, …)
-/// aren't splot's to create.
-pub fn get_firewall_zones() -> Vec<FirewallZone> {
-    vec![FirewallZone {
-        name: consts::MESH_INTERFACE_NAME.to_owned(),
-        network: vec![naming::mesh_interface().to_string()],
-
-        ..Default::default()
-    }]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plan::firewall::Verdict;
 
     #[test]
-    fn mesh_is_the_only_zone() {
-        let names: Vec<String> = get_firewall_zones().into_iter().map(|z| z.name).collect();
-        assert_eq!(names, ["mesh"]);
-    }
+    fn the_mesh_zone_covers_the_mesh_interface_with_the_plans_policy() {
+        let policy = ZonePolicy {
+            input: Verdict::Drop,
+            output: Verdict::Accept,
+            forward: Verdict::Drop,
+        };
+        let commands: Vec<String> = MeshZone(&policy)
+            .to_uci_commands()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
 
-    #[test]
-    fn mesh_zone_network_is_spl_mesh() {
-        let z = get_firewall_zones();
-        let mesh = z.iter().find(|z| z.name == "mesh").unwrap();
-        assert_eq!(mesh.network, vec!["spl_mesh"]);
-    }
-
-    #[test]
-    fn default_policy_drop_in_drop_fwd_accept_out() {
-        // Zero-trust default: drop unsolicited input and transit, allow the router's
-        // own egress. Access is granted only via explicit service rules.
-        for zone in get_firewall_zones() {
-            assert!(matches!(zone.input, FirewallAction::Drop));
-            assert!(matches!(zone.forward, FirewallAction::Drop));
-            assert!(matches!(zone.output, FirewallAction::Accept));
-        }
+        assert_eq!(
+            commands,
+            [
+                "set firewall.spl_zone_mesh='zone'",
+                "set firewall.spl_zone_mesh.name='[SPLOT] mesh'",
+                "set firewall.spl_zone_mesh.input='DROP'",
+                "set firewall.spl_zone_mesh.output='ACCEPT'",
+                "set firewall.spl_zone_mesh.forward='DROP'",
+                "add_list firewall.spl_zone_mesh.network='spl_mesh'",
+            ]
+        );
     }
 }

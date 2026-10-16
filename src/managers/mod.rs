@@ -1,11 +1,6 @@
 use std::{fmt::Display, iter};
 
-use crate::{
-    model::{Network, node::Node},
-    splot_config::SplotConfig,
-    types::identifier::Identifier,
-    uci::UciBatchCommand,
-};
+use crate::{plan::NodePlan, splot_config::SplotConfig, uci::UciBatchCommand};
 
 pub mod dhcp;
 pub mod firewall;
@@ -14,21 +9,16 @@ pub mod network;
 
 use naming::UciSectionName;
 
+/// Renders one concern of a node's plan as uci commands.
 pub trait UciManager {
-    /// What `network` asks of one node, as uci commands.
+    /// `splot_config` holds the node's private key, which the plan doesn't.
     fn generate_commands(
         &self,
-        network: &Network,
-        node_context: &NodeContext,
+        plan: &NodePlan,
+        splot_config: &SplotConfig,
     ) -> Vec<UciBatchCommand>;
 
     fn config_file(&self) -> &'static str;
-}
-
-pub struct NodeContext<'a> {
-    pub own_name: &'a Identifier,
-    pub own_node: &'a Node,
-    pub splot_config: &'a SplotConfig,
 }
 
 /// A generated struct as one uci section. Its section name follows from what it
@@ -124,7 +114,7 @@ mod tests {
     use std::fmt::Write;
 
     use super::*;
-    use crate::test_support;
+    use crate::{plan, test_support};
 
     fn render(cmd: &UciBatchCommand) -> String {
         cmd.to_string()
@@ -154,17 +144,13 @@ mod tests {
 
         let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY");
 
-        for (node_name, node) in network.nodes() {
-            let context = NodeContext {
-                own_name: node_name,
-                own_node: node,
-                splot_config: &splot_config,
-            };
+        for (node_name, _) in network.nodes() {
+            let plan = plan::plan(&network, node_name).unwrap();
 
             let mut output = String::new();
             for (label, manager) in managers {
                 writeln!(output, "# {label}").unwrap();
-                for command in manager.generate_commands(&network, &context) {
+                for command in manager.generate_commands(&plan, &splot_config) {
                     writeln!(output, "{command}").unwrap();
                 }
             }

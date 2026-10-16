@@ -1,0 +1,25 @@
+---
+source: src/plan/mod.rs
+expression: plan.to_string()
+---
+# Home
+
+[wireguard]
+interface: listen 51820, address 10.100.0.1/16
+peer Cabin: key ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.2/32, 192.168.2.0/24], routed, endpoint 203.0.113.20:51820, keepalive 25s
+peer Phone: key ReplacePhonePublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.100/32], keepalive 25s
+peer Home.lte-cam: key ReplaceLteCamPublicKeyAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.10.10/32], keepalive 25s
+
+[firewall]
+mesh zone: input drop, output accept, forward drop
+accept in Home ssh: tcp/22 from [10.100.0.100/32, 192.168.1.50/32] to [10.100.0.1/32, 192.168.1.1/32]
+accept in Home.nas https: tcp/443 from [10.100.0.100/32] to [192.168.1.20/32]
+accept in Home.printer print: tcp/9100 from [10.100.0.100/32] to [192.168.1.16/32]
+accept in Home.lte-cam rtsp: tcp/554 from [10.100.0.100/32, 192.168.1.50/32] to [10.100.10.10/32]
+accept out Cabin.camera rtsp: tcp/554 from [192.168.1.50/32] to [192.168.2.30/32]
+forward Home.nas https: wan tcp/8443 from [198.51.100.0/24] to lan 192.168.1.20:443
+
+[dhcp]
+lease Home.nas: 192.168.1.20 for [aa:bb:cc:00:00:03]
+lease Home.printer: 192.168.1.16 for [aa:bb:cc:00:00:02]
+lease Phone: 192.168.1.50 for [aa:bb:cc:00:00:01]

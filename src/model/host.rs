@@ -1,6 +1,6 @@
 //! Hosts: everything in the network that has an address.
 
-use std::{collections::BTreeSet, net::Ipv4Addr};
+use std::{collections::BTreeSet, fmt, net::Ipv4Addr};
 
 use crate::{
     config::ServiceHost,
@@ -15,6 +15,16 @@ pub enum HostRef {
     Node(Identifier),
     Local { node: Identifier, name: Identifier },
     Client(Identifier),
+}
+
+/// Config notation: `Home`, `Cabin.camera`, `Laptop`, as an `allowFrom` names it.
+impl fmt::Display for HostRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Node(name) | Self::Client(name) => write!(f, "{name}"),
+            Self::Local { node, name } => write!(f, "{node}.{name}"),
+        }
+    }
 }
 
 impl HostRef {
@@ -182,6 +192,17 @@ mod tests {
 
     fn id(s: &str) -> Identifier {
         s.parse().unwrap()
+    }
+
+    #[test]
+    fn a_host_ref_reads_as_in_the_config() {
+        assert_eq!(HostRef::Node(id("Home")).to_string(), "Home");
+        assert_eq!(HostRef::Client(id("Laptop")).to_string(), "Laptop");
+        let camera = HostRef::Local {
+            node: id("Cabin"),
+            name: id("camera"),
+        };
+        assert_eq!(camera.to_string(), "Cabin.camera");
     }
 
     #[test]
