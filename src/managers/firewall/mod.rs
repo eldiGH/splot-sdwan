@@ -1,7 +1,6 @@
 mod consts;
 mod redirect;
 mod rules;
-mod tag_resolution;
 mod types;
 mod zones;
 
@@ -15,7 +14,6 @@ use crate::{
             consts::FIREWALL_FILE_NAME,
             redirect::get_firewall_redirects,
             rules::{get_firewall_egress_rules, get_firewall_ingress_rules},
-            tag_resolution::build_tags_resolution_map,
             zones::get_firewall_zones,
         },
     },
@@ -41,16 +39,12 @@ impl UciManager for FirewallManager {
             node_context.own_name
         );
 
-        let tags = build_tags_resolution_map(config, node_context.own_name);
-        debug!("  Resolved {} tag(s)", tags.len());
-
         let zones = get_firewall_zones();
-        let mut rules = get_firewall_ingress_rules(network, node_context.own_name, &tags);
+        let mut rules = get_firewall_ingress_rules(network, node_context.own_name);
         rules.extend(get_firewall_egress_rules(
             config,
             network,
             node_context.own_name,
-            &tags,
         ));
 
         let redirects = get_firewall_redirects(config, node_context);

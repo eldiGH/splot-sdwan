@@ -1,18 +1,16 @@
 use std::fmt;
 
 use crate::{
-    config::{Config, Service},
+    config::Config,
     managers::{
         UciSection, UciSectionBuilder,
-        firewall::{
-            consts::FIREWALL_FILE_NAME,
-            types::{FirewallAction, TagMap},
-        },
+        firewall::{consts::FIREWALL_FILE_NAME, types::FirewallAction},
         naming,
     },
     model::{
         Network,
         host::{HostAddress, HostRef},
+        service::{Service, Source},
     },
     protocol::Protocols,
     types::{identifier::Identifier, ip::Ipv4Network, port::PortOrRange},
@@ -75,24 +73,18 @@ fn generate_rule_from_service(
     service: &Service,
     dest_addresses: &[&HostAddress],
     owner_name: impl fmt::Display,
-    tag_resolutions: &TagMap,
+    own_name: &Identifier,
     src_ip_filter: Option<&[Ipv4Network]>,
 ) -> Option<FirewallRule> {
     let src_ips: Vec<Ipv4Network> = service
-        .allow_from
-        .iter()
-        .flat_map(|tag| {
-            tag_resolutions
-                .get(tag)
-                .expect("allowFrom tag not found in resolution map")
-                .values()
-                .flatten()
-                // skip same-LAN sources — they don't traverse this router's firewall
-                .filter(|resolution| {
-                    dest_addresses
-                        .iter()
-                        .any(|dest_address| !dest_address.shares_link(resolution.ip()))
-                })
+        .sources()
+        .on(own_name)
+        .map(Source::network)
+        // skip same-LAN sources — they don't traverse this router's firewall
+        .filter(|network| {
+            dest_addresses
+                .iter()
+                .any(|dest_address| !dest_address.shares_link(network.ip()))
         })
         .filter(|network| {
             let Some(src_ip_filter) = src_ip_filter else {
@@ -103,7 +95,6 @@ fn generate_rule_from_service(
                 .iter()
                 .any(|address| address.contains(network.ip()))
         })
-        .cloned()
         .collect();
 
     if src_ips.is_empty() {
@@ -120,8 +111,8 @@ fn generate_rule_from_service(
             .iter()
             .map(|address| Ipv4Network::host(address.ip()))
             .collect(),
-        dest_port: service.port.internal(),
-        proto: service.proto.clone().into(),
+        dest_port: service.port().internal(),
+        proto: service.proto().clone().into(),
         target: FirewallAction::Accept,
     })
 }
@@ -135,20 +126,23 @@ fn owner_name(host: &HostRef, direction: RuleDirection) -> String {
     }
 }
 
-/// A rule for each service of every host with addresses on the nodes `on` picks,
-/// toward those addresses. A global client's mesh IP is on no node, so it gets no
-/// rule.
+/// A rule for each service of every host with addresses on this node (ingress)
+/// or on other nodes (egress), toward those addresses. A global client's mesh IP
+/// is on no node, so it gets no rule.
 fn host_rules(
     network: &Network,
     direction: RuleDirection,
-    on: impl Fn(&Identifier) -> bool,
-    tags: &TagMap,
+    own_name: &Identifier,
     src_ip_filter: Option<&[Ipv4Network]>,
 ) -> Vec<FirewallRule> {
+    let on = |node: &Identifier| match direction {
+        RuleDirection::Ingress => node == own_name,
+        RuleDirection::Egress => node != own_name,
+    };
     let mut rules = Vec::new();
 
     for host in network.hosts() {
-        let addresses: Vec<&HostAddress> = host.addresses_on(&on).collect();
+        let addresses: Vec<&HostAddress> = host.addresses_on(on).collect();
 
         if addresses.is_empty() {
             continue;
@@ -163,7 +157,7 @@ fn host_rules(
                 service,
                 &addresses,
                 &owner,
-                tags,
+                own_name,
                 src_ip_filter,
             ));
         }
@@ -172,25 +166,14 @@ fn host_rules(
     rules
 }
 
-pub fn get_firewall_ingress_rules(
-    network: &Network,
-    own_name: &Identifier,
-    tags: &TagMap,
-) -> Vec<FirewallRule> {
-    host_rules(
-        network,
-        RuleDirection::Ingress,
-        |node| node == own_name,
-        tags,
-        None,
-    )
+pub fn get_firewall_ingress_rules(network: &Network, own_name: &Identifier) -> Vec<FirewallRule> {
+    host_rules(network, RuleDirection::Ingress, own_name, None)
 }
 
 pub fn get_firewall_egress_rules(
     config: &Config,
     network: &Network,
     own_name: &Identifier,
-    tags: &TagMap,
 ) -> Vec<FirewallRule> {
     let local_networks: Vec<Ipv4Network> = config
         .nodes
@@ -202,8 +185,7 @@ pub fn get_firewall_egress_rules(
     host_rules(
         network,
         RuleDirection::Egress,
-        |node| node != own_name,
-        tags,
+        own_name,
         Some(&local_networks),
     )
 }
@@ -211,18 +193,15 @@ pub fn get_firewall_egress_rules(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        managers::firewall::tag_resolution::build_tags_resolution_map, test_support::checked,
-    };
+    use crate::test_support::checked;
 
     fn id(s: &str) -> Identifier {
         s.parse().unwrap()
     }
 
     fn ingress(yaml: &str, own: &str) -> Vec<FirewallRule> {
-        let (cfg, network) = checked(yaml);
-        let tags = build_tags_resolution_map(&cfg, &id(own));
-        get_firewall_ingress_rules(&network, &id(own), &tags)
+        let (_, network) = checked(yaml);
+        get_firewall_ingress_rules(&network, &id(own))
     }
 
     #[test]
@@ -367,8 +346,7 @@ clients:
 
     fn egress(yaml: &str, own: &str) -> Vec<FirewallRule> {
         let (cfg, network) = checked(yaml);
-        let tags = build_tags_resolution_map(&cfg, &id(own));
-        get_firewall_egress_rules(&cfg, &network, &id(own), &tags)
+        get_firewall_egress_rules(&cfg, &network, &id(own))
     }
 
     // Home-local workstation (tag `staff`) wants to reach Cabin's `web` service.
@@ -601,6 +579,59 @@ clients:
             .expect("egress rule for the camera missing");
         assert_eq!(networks(&rule.dest_ip), ["10.100.49.10/32"]);
         assert_eq!(networks(&rule.src_ip), ["192.168.2.10/32"]);
+    }
+
+    #[test]
+    fn a_reference_with_nothing_behind_it_gives_no_rule() {
+        // Cabin has no zones and no hub: `Cabin` names no network. `$node` on Home,
+        // which has no zones either, names none.
+        let yaml = "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    services:
+      ssh: { port: 22, proto: tcp, allowFrom: Cabin }
+      dns: { port: 53, proto: udp, allowFrom: $node }
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+";
+        assert!(ingress(yaml, "Home").is_empty());
+        assert!(egress(yaml, "Cabin").is_empty());
+    }
+
+    #[test]
+    fn a_source_two_references_name_is_listed_once() {
+        // Phone is named directly and by its tag.
+        let rules = ingress(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    services:
+      ssh: { port: 22, proto: tcp, allowFrom: [Phone, mobile] }
+clients:
+  Phone:
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+    meshIp: 10.100.0.100
+    tags: mobile
+",
+            "Home",
+        );
+        let [rule] = rules.as_slice() else {
+            panic!("expected one rule, got {}", rules.len());
+        };
+        assert_eq!(networks(&rule.src_ip), ["10.100.0.100/32"]);
     }
 
     #[test]

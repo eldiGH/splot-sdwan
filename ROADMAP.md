@@ -36,7 +36,7 @@ Remove:
 - Optional `zone.address` and everything that depends on it
 - `DevicesInAddresslessZone` error variant
 - `ClientIpInAddresslessZone` error variant
-- Silent-exclusion handling for addressless zones in `tag_resolution.rs`
+- Silent-exclusion handling for addressless zones in tag resolution
 - All addressless-zone mentions in CONFIG.md and CLAUDE.md (already done)
 
 Add:
@@ -91,7 +91,7 @@ This is the first user-facing entry point. Implement structured logging (e.g. `t
 
 ## 3. Per-zone src/dest scoping in generated rules
 
-Generated rules currently set `src=*` and `dest=*`, matching only on `src_ip` / `dest_ip`. Replace `*` with computed zone names from the zone-aware tag resolution map.
+Generated rules currently set `src=*` and `dest=*`, matching only on `src_ip` / `dest_ip`. Replace `*` with zone names computed from where each resolved source lives (its place in the checked model).
 
 When a rule's `allowFrom` resolves to source IPs across N zones, emit N rules — one per source zone, each with that zone's name in `src` and only that zone's IPs in `src_ip`. The `dest` zone is the zone the target IP belongs to (`device` if the target is `$node`, otherwise the matching zone). This naturally distinguishes input rules (router as destination) from forward rules (downstream destination) without separate code paths.
 

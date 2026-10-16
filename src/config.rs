@@ -21,7 +21,7 @@ use crate::{
     },
 };
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ServiceWan {
     pub via: WanViaTargets,
@@ -30,7 +30,7 @@ pub struct ServiceWan {
     pub sources: OneOrManyUnique<Ipv4Network>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Service {
     pub port: ServicePort,

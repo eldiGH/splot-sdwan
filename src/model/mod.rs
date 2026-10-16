@@ -1,6 +1,7 @@
 //! The checked model: what a config becomes once it passed validation.
 
 pub mod host;
+pub mod service;
 pub mod validator;
 
 use crate::config::Config;

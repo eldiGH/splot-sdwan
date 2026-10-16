@@ -15,7 +15,7 @@ use crate::{
         host::Host,
         validator::{
             entities::check_entities, names::validate_names, networks::check_networks,
-            ports::check_ports, references::check_references_resolution, tags::validate_tags,
+            ports::check_ports, references::check_references, tags::validate_tags,
             types::ValidationReport, wan::check_wan,
         },
     },
@@ -36,11 +36,14 @@ pub(super) fn check(config: &Config) -> Checked {
     let names = validate_names(config, &mut report);
     let tags = validate_tags(config, &mut report, &names);
     let refs: HashSet<AllowFromRef> = names.into_iter().chain(tags).collect();
-    check_references_resolution(config, &refs, &mut report);
+    let mut services = check_references(config, &refs, &mut report);
 
     check_entities(config, &mut report);
 
-    let hosts = check_networks(config, &mut report);
+    let mut hosts = check_networks(config, &mut report);
+    for host in &mut hosts {
+        host.services = services.remove(&host.id).unwrap_or_default();
+    }
 
     check_ports(config, &mut report);
 

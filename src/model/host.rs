@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    config::Service,
+    model::service::Service,
     types::{identifier::Identifier, ip::Ipv4Interface, mac::MacAddress},
 };
 
@@ -30,7 +30,7 @@ impl HostRef {
 }
 
 /// Where an address lives.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Place {
     Zone {
         node: Identifier,
