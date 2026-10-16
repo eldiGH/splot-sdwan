@@ -110,7 +110,7 @@ pub(super) fn print(rendered: &Rendered) -> Result<(), Error> {
     let current = snapshot(&files)?;
 
     for command in changeset(rendered, &current)?.commands() {
-        println!("{}", command.redacted());
+        println!("{command}");
     }
 
     // As comments, so the output stays a valid `uci batch` script.

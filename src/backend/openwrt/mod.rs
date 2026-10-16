@@ -32,10 +32,29 @@ impl Rendered {
     fn commands(&self) -> impl Iterator<Item = &UciBatchCommand> {
         self.files.iter().flat_map(|(_, commands)| commands)
     }
+
+    /// The same config with the node's private key where the placeholder is.
+    fn with_private_key(&self, private_key: &str) -> Self {
+        let fill = |command: &UciBatchCommand| match command {
+            UciBatchCommand::Set(path, value) if value == network::PRIVATE_KEY_PLACEHOLDER => {
+                UciBatchCommand::set(path, private_key)
+            }
+            _ => command.clone(),
+        };
+
+        Self {
+            files: self
+                .files
+                .iter()
+                .map(|(file, commands)| (*file, commands.iter().map(fill).collect()))
+                .collect(),
+        }
+    }
 }
 
 pub struct OpenWrtBackend {
-    /// Where the node's private key lives.
+    /// Where the node's private key lives: `apply` fills it into the rendered
+    /// config.
     splot_config: SplotConfig,
 }
 
@@ -52,10 +71,7 @@ impl Backend for OpenWrtBackend {
     fn render(&self, plan: &NodePlan) -> Rendered {
         Rendered {
             files: vec![
-                (
-                    network::FILE,
-                    network::render(plan, self.splot_config.mesh_key()),
-                ),
+                (network::FILE, network::render(plan)),
                 (firewall::FILE, firewall::render(plan)),
                 (dhcp::FILE, dhcp::render(plan)),
             ],
@@ -67,7 +83,8 @@ impl Backend for OpenWrtBackend {
     }
 
     fn apply(&self, rendered: &Rendered) -> Result<Vec<String>, Error> {
-        let changed = apply::run(rendered)?;
+        let rendered = rendered.with_private_key(self.splot_config.mesh_key());
+        let changed = apply::run(&rendered)?;
 
         Ok(changed.into_iter().map(str::to_owned).collect())
     }
@@ -87,6 +104,44 @@ mod tests {
     // of the generated router config (`cargo insta review`). It records today's
     // output as-is, known-wrong parts included: a fix shows up as a snapshot diff.
     // Keys are fakes; the delete/commit lines need uci and are not part of it.
+
+    fn set(path: &str, value: &str) -> UciBatchCommand {
+        UciBatchCommand::set(path, value)
+    }
+
+    #[test]
+    fn apply_fills_in_the_private_key_and_nothing_else() {
+        let rendered = Rendered {
+            files: vec![
+                (
+                    "network",
+                    vec![
+                        set("network.spl_mesh", "interface"),
+                        set(
+                            "network.spl_mesh.private_key",
+                            network::PRIVATE_KEY_PLACEHOLDER,
+                        ),
+                        set("network.spl_mesh.proto", "wireguard"),
+                    ],
+                ),
+                ("dhcp", vec![set("dhcp.spl_host_printer.name", "printer")]),
+            ],
+        };
+
+        let filled = rendered.with_private_key("REAL_KEY");
+
+        let commands: Vec<String> = filled.commands().map(ToString::to_string).collect();
+        assert_eq!(
+            commands,
+            [
+                "set network.spl_mesh='interface'",
+                "set network.spl_mesh.private_key='REAL_KEY'",
+                "set network.spl_mesh.proto='wireguard'",
+                "set dhcp.spl_host_printer.name='printer'",
+            ]
+        );
+        assert_eq!(filled.files(), ["network", "dhcp"]);
+    }
 
     #[test]
     fn example_config_snapshot() {

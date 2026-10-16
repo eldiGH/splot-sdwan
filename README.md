@@ -108,7 +108,7 @@ Requires Rust (edition 2024), and on the target router: OpenWRT with `uci` and W
 cargo build --release
 # on the router, with splot.yml in the working directory:
 ./splot-sdwan check              # validate the config, report errors and warnings
-./splot-sdwan apply --dry-run    # print the uci commands (private keys redacted)
+./splot-sdwan apply --dry-run    # print the uci commands (with a placeholder for the private key)
 ./splot-sdwan apply              # validate, generate, and apply via uci
 ```
 

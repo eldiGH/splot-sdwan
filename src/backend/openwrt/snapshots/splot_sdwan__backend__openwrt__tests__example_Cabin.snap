@@ -5,7 +5,7 @@ expression: output
 # network
 set network.spl_mesh='interface'
 set network.spl_mesh.proto='wireguard'
-set network.spl_mesh.private_key='FAKE_MESH_KEY'
+set network.spl_mesh.private_key='<private key>'
 set network.spl_mesh.listen_port='51820'
 add_list network.spl_mesh.addresses='10.100.0.2/16'
 set network.spl_wireguard_spl_mesh_Home='wireguard_spl_mesh'

@@ -88,7 +88,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 - It then stages everything (deleting splot's old sections, creating the new ones) in one `uci batch` without commits. `uci batch` exits 0 even when it rejects a line — it prints the error to stderr and carries on — so any stderr output counts as failure: splot reverts its staged changes and commits nothing.
 - Only then does it commit, file by file. Commits across files aren't atomic: if one fails (e.g. a full flash), the files before it keep the new config, and the error says which.
 - The uci module exposes plain functions (`get`, `show`, `has_changes`, `batch`, `commit`, `revert`) over a shared `run()` helper with typed errors (`uci::Error`): spawn failures, I/O errors, non-zero exits and rejected input (stderr output) are distinguished, and uci's exact `Entry not found` message is classified as legitimate absence (`Ok(None)`) rather than failure.
-- Dry-run output redacts private-key values (`UciBatchCommand::redacted()`); the real batch input is never redacted.
+- The node's private key is never in what's rendered: the plan has no key, so the rendered config holds a placeholder (`<private key>`) where it goes, and so do the snapshot and the dry run. `apply` fills the key in from the key store just before staging. The placeholder isn't a valid key, so it can't pass for one.
 
 ### Reloading services after apply (`src/backend/openwrt/reload.rs`)
 
@@ -124,7 +124,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 
 ### Tests (`cargo test`)
 
-Unit-test suite over the deterministic core (~280 tests). Covers: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (hosts, reference resolution, WAN targets; `src/model/`), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), UCI command/builder rendering, the uci not-found classification and dry-run redaction, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, the OpenWrt apply) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
+Unit-test suite over the deterministic core (~280 tests). Covers: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (hosts, reference resolution, WAN targets; `src/model/`), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), UCI command/builder rendering, the uci not-found classification and the private-key fill-in, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, the OpenWrt apply) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
 
 ---
 

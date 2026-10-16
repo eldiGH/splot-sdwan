@@ -15,10 +15,14 @@ use crate::{
 
 pub(super) const FILE: &str = "network";
 
-/// The mesh interface: the plan's interface, with the node's private key.
+/// What the rendered config holds where the node's private key goes. The plan has
+/// no key, so neither has what's rendered from it: `apply` fills it in from the
+/// key store. Not a valid key, so it can't pass for one.
+pub(super) const PRIVATE_KEY_PLACEHOLDER: &str = "<private key>";
+
+/// The mesh interface.
 struct MeshInterface<'a> {
     plan: &'a WireGuardPlan,
-    private_key: &'a str,
 }
 
 impl UciSection for MeshInterface<'_> {
@@ -42,7 +46,7 @@ impl UciSection for MeshInterface<'_> {
     fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
         section
             .set("proto", "wireguard")
-            .set("private_key", self.private_key)
+            .set("private_key", PRIVATE_KEY_PLACEHOLDER)
             .set("listen_port", self.plan.listen_port.to_string())
             // Not `address`: OpenWrt's WireGuard handler reads `addresses`.
             .extend_list("addresses", [self.plan.address])
@@ -94,8 +98,8 @@ impl UciSection for PeerSection<'_> {
 }
 
 /// The mesh interface's section, followed by one section per peer.
-fn interface_commands(plan: &WireGuardPlan, private_key: &str) -> Vec<UciBatchCommand> {
-    let interface = MeshInterface { plan, private_key };
+fn interface_commands(plan: &WireGuardPlan) -> Vec<UciBatchCommand> {
+    let interface = MeshInterface { plan };
     let peer_type = format!("wireguard_{}", interface.section_name());
 
     let mut commands = interface.to_uci_commands();
@@ -110,9 +114,9 @@ fn interface_commands(plan: &WireGuardPlan, private_key: &str) -> Vec<UciBatchCo
     commands
 }
 
-/// The plan's WireGuard section as the `network` file's commands, with the node's
-/// private key.
-pub(super) fn render(plan: &NodePlan, private_key: &str) -> Vec<UciBatchCommand> {
+/// The plan's WireGuard section as the `network` file's commands, with a
+/// placeholder for the node's private key.
+pub(super) fn render(plan: &NodePlan) -> Vec<UciBatchCommand> {
     info!("Generating network config for node '{}'", plan.node);
     for peer in &plan.wireguard.peers {
         debug!(
@@ -123,7 +127,7 @@ pub(super) fn render(plan: &NodePlan, private_key: &str) -> Vec<UciBatchCommand>
     }
     info!("  Mesh interface: {} peer(s)", plan.wireguard.peers.len());
 
-    interface_commands(&plan.wireguard, private_key)
+    interface_commands(&plan.wireguard)
 }
 
 #[cfg(test)]
@@ -166,11 +170,9 @@ clients:
         cmds.iter().any(|c| c.to_string().contains(s))
     }
 
-    const MESH_KEY: &str = "MESH_PRIVATE_AAAA";
-
     fn cmds_for(yaml: &str, own: &str) -> Vec<UciBatchCommand> {
         let plan = plan::plan(&checked(yaml), &own.parse().unwrap()).unwrap();
-        interface_commands(&plan.wireguard, MESH_KEY)
+        interface_commands(&plan.wireguard)
     }
 
     fn cmds() -> Vec<UciBatchCommand> {
@@ -226,10 +228,12 @@ clients:
     }
 
     #[test]
-    fn mesh_interface_uses_mesh_private_key() {
+    fn the_private_key_is_a_placeholder_apply_fills_in() {
+        // The plan holds no private key, so neither does what's rendered from it:
+        // not the snapshot, not the dry run.
         assert!(has_cmd(
             &cmds(),
-            &format!("spl_mesh.private_key='{MESH_KEY}'")
+            &format!("set network.spl_mesh.private_key='{PRIVATE_KEY_PLACEHOLDER}'")
         ));
     }
 
