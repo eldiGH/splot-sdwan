@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    config::{self, Client, Config, Node, ServiceHost},
+    config::{self, Client, Config, Node},
     model::{
         host::{HostRef, Place},
         service::{Service, Source, Sources},
@@ -146,37 +146,6 @@ impl Resolution {
     }
 }
 
-/// The host a service belongs to, and the service's name.
-fn identify(host: ServiceHost<'_>) -> (HostRef, &Identifier) {
-    match host {
-        ServiceHost::Node {
-            node_name,
-            service_name,
-        } => (HostRef::Node(node_name.clone()), service_name),
-        ServiceHost::Device {
-            node_name,
-            device_name: name,
-            service_name,
-            ..
-        }
-        | ServiceHost::HubClient {
-            node_name,
-            client_name: name,
-            service_name,
-        } => (
-            HostRef::Local {
-                node: node_name.clone(),
-                name: name.clone(),
-            },
-            service_name,
-        ),
-        ServiceHost::Client {
-            client_name,
-            service_name,
-        } => (HostRef::Client(client_name.clone()), service_name),
-    }
-}
-
 /// Resolves the service's `allowFrom`. An unknown reference is reported and left
 /// out.
 fn resolve_sources(
@@ -226,7 +195,7 @@ pub(super) fn check_references(
         let sources = resolve_sources(service, known_references, &resolution, report, |loc| {
             host.to_location(loc)
         });
-        let (host, name) = identify(host);
+        let (host, name) = HostRef::of_service(host);
 
         services.entry(host).or_default().insert(
             name.clone(),
@@ -234,6 +203,8 @@ pub(super) fn check_references(
                 port: service.port,
                 proto: service.proto.clone().into(),
                 sources,
+                // The WAN pass fills it in.
+                wan: None,
             },
         );
     }

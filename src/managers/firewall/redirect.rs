@@ -1,15 +1,15 @@
 use std::net::Ipv4Addr;
 
 use crate::{
-    config::{Config, Service},
     managers::{
         NodeContext, UciSection, UciSectionBuilder, firewall::consts::FIREWALL_FILE_NAME, naming,
     },
-    protocol::Protocols,
-    types::{
-        identifier::Identifier, ip::Ipv4Network, port::PortOrRange, wan_via_target::WanViaTarget,
-        zone_ref::ZoneRef,
+    model::{
+        Network,
+        host::{HostRef, Place},
     },
+    protocol::Protocols,
+    types::{ip::Ipv4Network, port::PortOrRange, zone_ref::ZoneRef},
 };
 
 pub struct FirewallRedirect {
@@ -48,146 +48,54 @@ impl UciSection for FirewallRedirect {
     }
 }
 
-struct RedirectBuilder<'a> {
-    config: &'a Config,
-    node_context: &'a NodeContext<'a>,
-    wan_zone: &'a ZoneRef,
-}
-
-impl RedirectBuilder<'_> {
-    fn local_service_redirect(
-        &self,
-        service_name: &Identifier,
-        service: &Service,
-        dest_zone: ZoneRef,
-        dest_ip: Ipv4Addr,
-        owner_name: &Identifier,
-        node_name: &Identifier,
-    ) -> Option<FirewallRedirect> {
-        let wan = service.wan.as_ref()?;
-
-        if !wan.via.iter().any(
-            |via| matches!(via, WanViaTarget::Bare(node) if node == self.node_context.own_name),
-        ) {
-            return None;
-        }
-
-        let name = if node_name == owner_name {
-            format!("{owner_name}_{service_name}")
-        } else {
-            format!("{node_name}_{owner_name}_{service_name}")
-        };
-
-        Some(FirewallRedirect {
-            name,
-            dest: dest_zone,
-            dest_ip,
-            dest_port: service.port.internal(),
-            proto: service.proto.clone().into(),
-            src: self.wan_zone.clone(),
-            src_dport: service.port.external(),
-            src_ip: wan.sources.iter().cloned().collect(),
-        })
-    }
-
-    fn local_redirects(&self, redirects: &mut Vec<FirewallRedirect>) {
-        for (node_name, node) in &self.config.nodes {
-            for (service_name, service) in &node.services {
-                redirects.extend(self.local_service_redirect(
-                    service_name,
-                    service,
-                    ZoneRef::Mesh,
-                    node.mesh_ip,
-                    node_name,
-                    node_name,
-                ))
-            }
-
-            for (zone_name, zone) in &node.zones {
-                for (device_name, device) in &zone.devices {
-                    for (service_name, service) in &device.services {
-                        redirects.extend(self.local_service_redirect(
-                            service_name,
-                            service,
-                            ZoneRef::Named(zone_name.clone()),
-                            device.ip,
-                            device_name,
-                            node_name,
-                        ));
-                    }
-                }
-            }
-
-            for (client_name, client) in node.hub_clients() {
-                for (service_name, service) in &client.services {
-                    redirects.extend(self.local_service_redirect(
-                        service_name,
-                        service,
-                        ZoneRef::Mesh,
-                        client.ip,
-                        client_name,
-                        node_name,
-                    ));
-                }
-            }
-        }
-    }
-
-    fn client_redirects(&self, redirects: &mut Vec<FirewallRedirect>) {
-        for (client_name, client) in &self.config.clients {
-            for (service_name, service) in &client.services {
-                let Some(wan) = &service.wan else { continue };
-
-                for via in &wan.via {
-                    if via.node() != self.node_context.own_name {
-                        continue;
-                    }
-
-                    let Ok(resolution) = client.resolve_wan_target(via, self.node_context.own_node)
-                    else {
-                        continue;
-                    };
-
-                    let name = format!("{client_name}_{service_name}");
-                    redirects.push(FirewallRedirect {
-                        name,
-                        proto: service.proto.clone().into(),
-                        src: self.wan_zone.clone(),
-                        src_dport: service.port.external(),
-                        src_ip: wan.sources.iter().cloned().collect(),
-                        dest: resolution.dest_zone,
-                        dest_ip: resolution.dest_ip,
-                        dest_port: service.port.internal(),
-                    })
-                }
-            }
-        }
+/// The zone a target is in, on the node that forwards to it. Everything on the
+/// mesh or a hub arrives through the mesh zone. A zone is named as on its own
+/// node, which is right only when that node is this one.
+fn dest_zone(place: &Place) -> ZoneRef {
+    match place {
+        Place::Zone { zone, .. } => ZoneRef::Named(zone.clone()),
+        Place::Hub { .. } | Place::Mesh => ZoneRef::Mesh,
     }
 }
 
+/// The host part of a redirect's name: a host inside a node with the node's name.
+fn owner_name(host: &HostRef) -> String {
+    match host {
+        HostRef::Local { node, name } => format!("{node}_{name}"),
+        _ => host.name().to_string(),
+    }
+}
+
+/// A redirect for every service exposed through this node, to what it forwards
+/// the service to. None when the node has no `wanZone`.
 pub fn get_firewall_redirects(
-    config: &Config,
+    network: &Network,
     node_context: &NodeContext,
 ) -> Vec<FirewallRedirect> {
-    let mut redirects: Vec<FirewallRedirect> = vec![];
-
-    let Some(wan_zone) = node_context
-        .own_node
-        .wan_zone
-        .as_ref()
-        .map(|id| ZoneRef::Named(id.clone()))
-    else {
-        return redirects;
+    let Some(wan_zone) = &node_context.own_node.wan_zone else {
+        return Vec::new();
     };
+    let mut redirects = Vec::new();
 
-    let builder = RedirectBuilder {
-        config,
-        node_context,
-        wan_zone: &wan_zone,
-    };
+    for host in network.hosts() {
+        for (service_name, service) in host.services() {
+            let Some(wan) = service.wan() else { continue };
+            let Some(target) = wan.target(node_context.own_name) else {
+                continue;
+            };
 
-    builder.local_redirects(&mut redirects);
-    builder.client_redirects(&mut redirects);
+            redirects.push(FirewallRedirect {
+                name: format!("{}_{service_name}", owner_name(host.id())),
+                proto: service.proto().clone().into(),
+                src: ZoneRef::Named(wan_zone.clone()),
+                src_dport: service.port().external(),
+                src_ip: wan.sources().iter().copied().collect(),
+                dest: dest_zone(target.place()),
+                dest_ip: target.ip(),
+                dest_port: service.port().internal(),
+            });
+        }
+    }
 
     redirects
 }
@@ -195,15 +103,15 @@ pub fn get_firewall_redirects(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{splot_config::SplotConfig, test_support::config};
+    use crate::{splot_config::SplotConfig, test_support::checked, types::identifier::Identifier};
 
     fn redirects(yaml: &str, own: &str) -> Vec<FirewallRedirect> {
-        let cfg = config(yaml);
+        let (cfg, network) = checked(yaml);
         let own_name: Identifier = own.parse().unwrap();
         let splot_config = SplotConfig::for_tests("AAAA");
 
         get_firewall_redirects(
-            &cfg,
+            &network,
             &NodeContext {
                 own_node: cfg.nodes.get(&own_name).unwrap(),
                 own_name: &own_name,
@@ -243,5 +151,75 @@ nodes:
         assert_eq!(redirect.dest_ip.to_string(), "10.100.49.10");
         assert_eq!(redirect.src_dport.to_string(), "8080");
         assert_eq!(redirect.dest_port.to_string(), "80");
+    }
+
+    // Home and Cabin both have a WAN. Home exposes its own ssh, Cabin its nas's
+    // https. Phone (with a mesh IP) and Laptop (only an IP on Home's lan) are
+    // exposed through Home.
+    const EXPOSED: &str = "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+    services:
+      ssh: { port: '2222:22', proto: tcp, wan: { via: Home } }
+    zones:
+      lan:
+        address: 192.168.1.1/24
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    wanZone: wan
+    zones:
+      lan:
+        address: 192.168.2.1/24
+        devices:
+          nas:
+            ip: 192.168.2.20
+            macs: AA:BB:CC:DD:EE:01
+            services:
+              https: { port: 443, proto: tcp, wan: { via: Cabin } }
+clients:
+  Phone:
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+    meshIp: 10.100.1.10
+    services:
+      web: { port: 8080, proto: tcp, wan: { via: Home } }
+  Laptop:
+    macs: AA:BB:CC:DD:EE:02
+    ips:
+      Home: { lan: 192.168.1.50 }
+    services:
+      game: { port: 27015, proto: udp, wan: { via: Home } }
+";
+
+    /// Each redirect as `name -> dest_zone dest_ip`.
+    fn targets(redirects: &[FirewallRedirect]) -> Vec<String> {
+        redirects
+            .iter()
+            .map(|r| format!("{} -> {} {}", r.name, r.dest, r.dest_ip))
+            .collect()
+    }
+
+    #[test]
+    fn only_services_exposed_through_this_node_are_forwarded() {
+        assert_eq!(
+            targets(&redirects(EXPOSED, "Home")),
+            [
+                "Home_ssh -> mesh 10.100.0.1",
+                "Laptop_game -> lan 192.168.1.50",
+                "Phone_web -> mesh 10.100.1.10",
+            ]
+        );
+        assert_eq!(
+            targets(&redirects(EXPOSED, "Cabin")),
+            ["Cabin_nas_https -> lan 192.168.2.20"]
+        );
     }
 }

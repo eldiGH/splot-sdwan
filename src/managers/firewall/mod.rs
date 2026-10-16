@@ -47,7 +47,7 @@ impl UciManager for FirewallManager {
             node_context.own_name,
         ));
 
-        let redirects = get_firewall_redirects(config, node_context);
+        let redirects = get_firewall_redirects(network, node_context);
 
         info!(
             "  {} zone(s), {} rule(s), {} redirect(s)",

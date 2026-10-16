@@ -6,6 +6,7 @@ use std::{
 };
 
 use crate::{
+    config::ServiceHost,
     model::service::Service,
     types::{identifier::Identifier, ip::Ipv4Interface, mac::MacAddress},
 };
@@ -21,6 +22,38 @@ pub enum HostRef {
 }
 
 impl HostRef {
+    /// The host a config service belongs to, and the service's name.
+    pub(super) fn of_service(host: ServiceHost<'_>) -> (Self, &Identifier) {
+        match host {
+            ServiceHost::Node {
+                node_name,
+                service_name,
+            } => (Self::Node(node_name.clone()), service_name),
+            ServiceHost::Device {
+                node_name,
+                device_name: name,
+                service_name,
+                ..
+            }
+            | ServiceHost::HubClient {
+                node_name,
+                client_name: name,
+                service_name,
+            } => (
+                Self::Local {
+                    node: node_name.clone(),
+                    name: name.clone(),
+                },
+                service_name,
+            ),
+            ServiceHost::Client {
+                client_name,
+                service_name,
+                ..
+            } => (Self::Client(client_name.clone()), service_name),
+        }
+    }
+
     /// Its own name, without its node's.
     pub fn name(&self) -> &Identifier {
         match self {

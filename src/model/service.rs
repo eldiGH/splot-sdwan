@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    model::host::Place,
+    model::host::{HostAddress, Place},
     protocol::Protocol,
     types::{identifier::Identifier, ip::Ipv4Network, port::ServicePort},
 };
@@ -14,6 +14,7 @@ pub struct Service {
     pub(super) port: ServicePort,
     pub(super) proto: BTreeSet<Protocol>,
     pub(super) sources: Sources,
+    pub(super) wan: Option<Wan>,
 }
 
 impl Service {
@@ -27,6 +28,32 @@ impl Service {
 
     /// Who its `allowFrom` lets in.
     pub fn sources(&self) -> &Sources {
+        &self.sources
+    }
+
+    /// How it's exposed to the internet, if it is.
+    pub fn wan(&self) -> Option<&Wan> {
+        self.wan.as_ref()
+    }
+}
+
+/// How a service is exposed to the internet.
+#[derive(Debug)]
+pub struct Wan {
+    /// What each node it's exposed through forwards it to: one of its host's
+    /// addresses.
+    pub(super) targets: BTreeMap<Identifier, HostAddress>,
+    /// The CIDRs the internet side may come from; none means anyone.
+    pub(super) sources: BTreeSet<Ipv4Network>,
+}
+
+impl Wan {
+    /// What `node` forwards the service to, if it's exposed through it.
+    pub fn target(&self, node: &Identifier) -> Option<&HostAddress> {
+        self.targets.get(node)
+    }
+
+    pub fn sources(&self) -> &BTreeSet<Ipv4Network> {
         &self.sources
     }
 }

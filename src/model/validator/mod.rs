@@ -41,13 +41,14 @@ pub(super) fn check(config: &Config) -> Checked {
     check_entities(config, &mut report);
 
     let mut hosts = check_networks(config, &mut report);
-    for host in &mut hosts {
-        host.services = services.remove(&host.id).unwrap_or_default();
-    }
 
     check_ports(config, &mut report);
 
-    check_wan(config, &mut report);
+    check_wan(config, &hosts, &mut services, &mut report);
+
+    for host in &mut hosts {
+        host.services = services.remove(&host.id).unwrap_or_default();
+    }
 
     // Canonical order for every consumer: by config location, so the output reads
     // top to bottom like the config instead of pass by pass. Stable sort — several
