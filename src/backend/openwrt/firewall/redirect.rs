@@ -2,7 +2,6 @@
 
 use crate::{
     backend::openwrt::{
-        firewall::FILE as FIREWALL_FILE_NAME,
         naming,
         section::{UciSection, UciSectionBuilder},
     },
@@ -19,8 +18,6 @@ fn host_id(host: &HostRef) -> Vec<&str> {
 }
 
 impl UciSection for Redirect {
-    const FILE: &'static str = FIREWALL_FILE_NAME;
-
     fn section_type(&self) -> &str {
         "redirect"
     }
@@ -72,7 +69,8 @@ mod tests {
             proto: BTreeSet::from([Protocol::Tcp]),
         };
         let commands: Vec<String> = redirect
-            .to_uci_commands()
+            .to_section()
+            .commands("firewall")
             .iter()
             .map(ToString::to_string)
             .collect();

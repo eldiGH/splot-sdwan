@@ -12,6 +12,8 @@ use std::{
 
 use log::info;
 
+use super::network;
+
 /// How a WireGuard interface picks up changed peers.
 ///
 /// netifd's reload compares only an interface's own options (key, port,
@@ -80,7 +82,7 @@ impl Reload {
 
         Some(Self {
             wireguard_interface: changed_files
-                .contains(&"network")
+                .contains(&network::FILE)
                 .then_some(wireguard_interface),
             peer_update,
         })

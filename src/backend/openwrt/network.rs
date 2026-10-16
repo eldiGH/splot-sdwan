@@ -2,8 +2,7 @@ use log::{debug, info};
 
 use super::{
     naming::{self, UciSectionName},
-    section::{UciSection, UciSectionBuilder},
-    uci::UciBatchCommand,
+    section::{Section, UciSection, UciSectionBuilder},
 };
 use crate::{
     consts,
@@ -26,8 +25,6 @@ struct MeshInterface<'a> {
 }
 
 impl UciSection for MeshInterface<'_> {
-    const FILE: &'static str = FILE;
-
     fn section_type(&self) -> &str {
         "interface"
     }
@@ -61,8 +58,6 @@ struct PeerSection<'a> {
 }
 
 impl UciSection for PeerSection<'_> {
-    const FILE: &'static str = FILE;
-
     fn section_type(&self) -> &str {
         self.section_type
     }
@@ -96,25 +91,25 @@ impl UciSection for PeerSection<'_> {
 }
 
 /// The mesh interface's section, followed by one section per peer.
-fn interface_commands(plan: &WireGuardPlan) -> Vec<UciBatchCommand> {
+fn interface_sections(plan: &WireGuardPlan) -> Vec<Section> {
     let interface = MeshInterface { plan };
     let peer_type = format!("wireguard_{}", interface.section_name());
 
-    let mut commands = interface.to_uci_commands();
+    let mut sections = vec![interface.to_section()];
     for peer in &plan.peers {
         let section = PeerSection {
             section_type: &peer_type,
             peer,
         };
-        commands.extend(section.to_uci_commands());
+        sections.push(section.to_section());
     }
 
-    commands
+    sections
 }
 
-/// The plan's WireGuard section as the `network` file's commands, with a
+/// The plan's WireGuard section as the `network` file's sections, with a
 /// placeholder for the node's private key.
-pub(super) fn render(plan: &NodePlan) -> Vec<UciBatchCommand> {
+pub(super) fn render(plan: &NodePlan) -> Vec<Section> {
     info!("Generating network config for node '{}'", plan.node);
     for peer in &plan.wireguard.peers {
         debug!(
@@ -125,13 +120,13 @@ pub(super) fn render(plan: &NodePlan) -> Vec<UciBatchCommand> {
     }
     info!("  Mesh interface: {} peer(s)", plan.wireguard.peers.len());
 
-    interface_commands(&plan.wireguard)
+    interface_sections(&plan.wireguard)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{plan, test_support::checked};
+    use crate::{backend::openwrt::uci::UciBatchCommand, plan, test_support::checked};
 
     // Home has a hub with a client; Cabin's hub is empty.
     const FIXTURE: &str = "
@@ -170,7 +165,10 @@ clients:
 
     fn cmds_for(yaml: &str, own: &str) -> Vec<UciBatchCommand> {
         let plan = plan::plan(&checked(yaml), &own.parse().unwrap()).unwrap();
-        interface_commands(&plan.wireguard)
+        interface_sections(&plan.wireguard)
+            .iter()
+            .flat_map(|section| section.commands("network"))
+            .collect()
     }
 
     fn cmds() -> Vec<UciBatchCommand> {

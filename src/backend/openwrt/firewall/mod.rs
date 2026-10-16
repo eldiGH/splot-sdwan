@@ -2,9 +2,11 @@ mod redirect;
 mod rules;
 mod zones;
 
+use std::iter;
+
 use log::{Level, debug, info, log_enabled};
 
-use super::{section::UciSection, uci::UciBatchCommand};
+use super::section::{Section, UciSection};
 use crate::plan::{NodePlan, firewall::Verdict};
 use zones::MeshZone;
 
@@ -18,9 +20,9 @@ fn target(verdict: Verdict) -> &'static str {
     }
 }
 
-/// The plan's firewall section as the `firewall` file's commands: the mesh zone,
+/// The plan's firewall section as the `firewall` file's sections: the mesh zone,
 /// then the rules, then the redirects.
-pub(super) fn render(plan: &NodePlan) -> Vec<UciBatchCommand> {
+pub(super) fn render(plan: &NodePlan) -> Vec<Section> {
     let firewall = &plan.firewall;
 
     info!("Generating firewall config for node '{}'", plan.node);
@@ -39,20 +41,12 @@ pub(super) fn render(plan: &NodePlan) -> Vec<UciBatchCommand> {
         }
     }
 
-    MeshZone(&firewall.mesh_zone)
-        .to_uci_commands()
-        .into_iter()
-        .chain(
-            firewall
-                .rules
-                .iter()
-                .flat_map(|rule| rule.to_uci_commands()),
-        )
-        .chain(
-            firewall
-                .redirects
-                .iter()
-                .flat_map(|redirect| redirect.to_uci_commands()),
-        )
-        .collect()
+    let zone = MeshZone(&firewall.mesh_zone).to_section();
+    let rules = firewall.rules.iter().map(|rule| rule.to_section());
+    let redirects = firewall
+        .redirects
+        .iter()
+        .map(|redirect| redirect.to_section());
+
+    iter::once(zone).chain(rules).chain(redirects).collect()
 }

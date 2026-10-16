@@ -1,15 +1,51 @@
-//! A generated object as one uci section: its section name and its options.
+//! A generated object as one uci section: its section name, its type and its
+//! options.
 
 use std::{fmt::Display, iter};
 
 use super::{naming::UciSectionName, uci::UciBatchCommand};
 
+/// An option's value: one value, or a list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Value {
+    Single(String),
+    List(Vec<String>),
+}
+
+/// A uci section: its name, its type and its options, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Section {
+    pub(super) name: String,
+    pub(super) section_type: String,
+    pub(super) options: Vec<(String, Value)>,
+}
+
+impl Section {
+    /// The commands that create it in `file`: the section, then each option.
+    pub(super) fn commands(&self, file: &str) -> Vec<UciBatchCommand> {
+        let path = format!("{file}.{}", self.name);
+        let mut commands = vec![UciBatchCommand::set(&path, &self.section_type)];
+
+        for (option, value) in &self.options {
+            let option = format!("{path}.{option}");
+
+            match value {
+                Value::Single(value) => commands.push(UciBatchCommand::set(option, value)),
+                Value::List(values) => commands.extend(
+                    values
+                        .iter()
+                        .map(|value| UciBatchCommand::add_list(&option, value)),
+                ),
+            }
+        }
+
+        commands
+    }
+}
+
 /// A generated object as one uci section. Its section name follows from what it
 /// is: `spl_<section type>_<id>`.
 pub(super) trait UciSection {
-    /// The uci file the section lives in.
-    const FILE: &'static str;
-
     /// The uci section type (`rule`, `redirect`, `host`, …). It also leads the
     /// section name: uci has one namespace per file, and the type keeps sections
     /// of different types apart.
@@ -18,41 +54,39 @@ pub(super) trait UciSection {
     /// What tells this section apart from other sections of the same type.
     fn id(&self) -> impl IntoIterator<Item = &str>;
 
-    /// Everything after the line that creates the section.
+    /// Everything but the section's name and type.
     fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder;
 
     fn section_name(&self) -> UciSectionName {
         UciSectionName::new(iter::once(self.section_type()).chain(self.id()))
     }
 
-    fn to_uci_commands(&self) -> Vec<UciBatchCommand> {
-        let section = UciSectionBuilder::new(Self::FILE, &self.section_name(), self.section_type());
+    fn to_section(&self) -> Section {
+        let section = UciSectionBuilder::new(&self.section_name(), self.section_type());
 
         self.options(section).build()
     }
 }
 
 pub(super) struct UciSectionBuilder {
-    path: String,
-    commands: Vec<UciBatchCommand>,
+    section: Section,
 }
 
 impl UciSectionBuilder {
-    pub(super) fn new(file: &str, name: &UciSectionName, section_type: &str) -> Self {
-        let path = format!("{file}.{name}");
-
-        let commands = vec![UciBatchCommand::set(&path, section_type)];
-
-        Self { path, commands }
-    }
-
-    fn prop(&self, prop_name: &str) -> String {
-        format!("{}.{prop_name}", self.path)
+    pub(super) fn new(name: &UciSectionName, section_type: &str) -> Self {
+        Self {
+            section: Section {
+                name: name.to_string(),
+                section_type: section_type.to_owned(),
+                options: Vec::new(),
+            },
+        }
     }
 
     pub(super) fn set(mut self, prop_name: &str, value: impl Into<String>) -> Self {
-        self.commands
-            .push(UciBatchCommand::set(self.prop(prop_name), value));
+        self.section
+            .options
+            .push((prop_name.to_owned(), Value::Single(value.into())));
 
         self
     }
@@ -63,32 +97,26 @@ impl UciSectionBuilder {
         self.set(prop_name, value)
     }
 
+    /// The values, sorted. An empty list adds no option.
     pub(super) fn extend_list(
         mut self,
         prop_name: &str,
         values: impl IntoIterator<Item = impl Display>,
     ) -> Self {
-        let prop = self.prop(prop_name);
+        let mut values: Vec<String> = values.into_iter().map(|v| v.to_string()).collect();
+        values.sort();
 
-        let sorted_values = {
-            let mut values = values
-                .into_iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>();
-            values.sort();
-
-            values
-                .into_iter()
-                .map(|value| UciBatchCommand::add_list(prop.clone(), value))
-        };
-
-        self.commands.extend(sorted_values);
+        if !values.is_empty() {
+            self.section
+                .options
+                .push((prop_name.to_owned(), Value::List(values)));
+        }
 
         self
     }
 
-    pub(super) fn build(self) -> Vec<UciBatchCommand> {
-        self.commands
+    pub(super) fn build(self) -> Section {
+        self.section
     }
 }
 
@@ -106,8 +134,6 @@ mod tests {
     }
 
     impl UciSection for Example {
-        const FILE: &'static str = "firewall";
-
         fn section_type(&self) -> &str {
             self.section_type
         }
@@ -130,7 +156,9 @@ mod tests {
 
     #[test]
     fn section_is_named_after_its_type_and_id() {
-        let cmds = example("rule", &["in", "my-printer_ipp"]).to_uci_commands();
+        let cmds = example("rule", &["in", "my-printer_ipp"])
+            .to_section()
+            .commands("firewall");
         assert_eq!(cmds.len(), 2);
         assert_eq!(
             render(&cmds[0]),
@@ -153,12 +181,17 @@ mod tests {
     }
 
     fn builder() -> UciSectionBuilder {
-        UciSectionBuilder::new("firewall", &UciSectionName::new(["my_rule"]), "rule")
+        UciSectionBuilder::new(&UciSectionName::new(["my_rule"]), "rule")
+    }
+
+    /// What the builder built, as commands in the firewall file.
+    fn commands(builder: UciSectionBuilder) -> Vec<UciBatchCommand> {
+        builder.build().commands("firewall")
     }
 
     #[test]
     fn new_emits_set_section_first() {
-        let cmds = builder().build();
+        let cmds = commands(builder());
         assert_eq!(cmds.len(), 1);
         // path is file.spl_<name>, value is the section type
         assert_eq!(render(&cmds[0]), "set firewall.spl_my_rule='rule'");
@@ -166,21 +199,21 @@ mod tests {
 
     #[test]
     fn set_appends_property() {
-        let cmds = builder().set("dest", "lan").build();
+        let cmds = commands(builder().set("dest", "lan"));
         assert_eq!(cmds.len(), 2);
         assert_eq!(render(&cmds[1]), "set firewall.spl_my_rule.dest='lan'");
     }
 
     #[test]
     fn set_if_some_emits_when_some() {
-        let cmds = builder().set_if_some("name", Some("hello")).build();
+        let cmds = commands(builder().set_if_some("name", Some("hello")));
         assert_eq!(cmds.len(), 2);
         assert_eq!(render(&cmds[1]), "set firewall.spl_my_rule.name='hello'");
     }
 
     #[test]
     fn set_if_some_skips_when_none() {
-        let cmds = builder().set_if_some("name", None::<String>).build();
+        let cmds = commands(builder().set_if_some("name", None::<String>));
         // only the initial section set
         assert_eq!(cmds.len(), 1);
     }
@@ -188,9 +221,9 @@ mod tests {
     #[test]
     fn extend_list_sorted_output() {
         // Pass values in reverse order; expect them sorted alphabetically in the output.
-        let cmds = builder()
-            .extend_list("src_ip", ["10.0.1.0/24", "10.0.0.0/24", "192.168.0.0/16"])
-            .build();
+        let cmds = commands(
+            builder().extend_list("src_ip", ["10.0.1.0/24", "10.0.0.0/24", "192.168.0.0/16"]),
+        );
         // 1 section set + 3 add_list
         assert_eq!(cmds.len(), 4);
         assert_eq!(
@@ -210,19 +243,18 @@ mod tests {
     #[test]
     fn extend_list_empty_emits_no_add_list() {
         // Empty sources → no src_ip line → publicly reachable (key semantic for wan.sources).
-        let cmds = builder()
-            .extend_list("src_ip", std::iter::empty::<String>())
-            .build();
+        let cmds = commands(builder().extend_list("src_ip", std::iter::empty::<String>()));
         assert_eq!(cmds.len(), 1);
     }
 
     #[test]
     fn build_preserves_insertion_order() {
-        let cmds = builder()
-            .set("target", "ACCEPT")
-            .set("src", "mesh")
-            .extend_list("proto", ["tcp", "udp"])
-            .build();
+        let cmds = commands(
+            builder()
+                .set("target", "ACCEPT")
+                .set("src", "mesh")
+                .extend_list("proto", ["tcp", "udp"]),
+        );
         // section set, target, src, then sorted proto add_lists
         assert_eq!(render(&cmds[0]), "set firewall.spl_my_rule='rule'");
         assert_eq!(render(&cmds[1]), "set firewall.spl_my_rule.target='ACCEPT'");

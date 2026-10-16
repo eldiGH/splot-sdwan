@@ -1,6 +1,6 @@
 use crate::{
     backend::openwrt::{
-        firewall::{FILE as FIREWALL_FILE_NAME, target},
+        firewall::target,
         naming,
         section::{UciSection, UciSectionBuilder},
     },
@@ -13,8 +13,6 @@ use crate::{
 pub(super) struct MeshZone<'a>(pub &'a ZonePolicy);
 
 impl UciSection for MeshZone<'_> {
-    const FILE: &'static str = FIREWALL_FILE_NAME;
-
     fn section_type(&self) -> &str {
         "zone"
     }
@@ -52,7 +50,8 @@ mod tests {
             forward: Verdict::Drop,
         };
         let commands: Vec<String> = MeshZone(&policy)
-            .to_uci_commands()
+            .to_section()
+            .commands("firewall")
             .iter()
             .map(ToString::to_string)
             .collect();

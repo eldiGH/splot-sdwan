@@ -13,13 +13,14 @@ pub mod uci;
 
 use crate::{backend::Backend, plan::NodePlan};
 pub use apply::Error;
+use section::{Section, Value};
 use splot_config::SplotConfig;
 use uci::UciBatchCommand;
 
-/// The node's config as uci commands, file by file, in the order splot commits
+/// The node's config as uci sections, file by file, in the order splot commits
 /// the files.
 pub struct Rendered {
-    files: Vec<(&'static str, Vec<UciBatchCommand>)>,
+    files: Vec<(&'static str, Vec<Section>)>,
 }
 
 impl Rendered {
@@ -28,25 +29,32 @@ impl Rendered {
         self.files.iter().map(|(file, _)| *file).collect()
     }
 
-    /// Every command, file by file.
-    fn commands(&self) -> impl Iterator<Item = &UciBatchCommand> {
-        self.files.iter().flat_map(|(_, commands)| commands)
+    /// The commands that create every section, file by file.
+    fn commands(&self) -> Vec<UciBatchCommand> {
+        self.files
+            .iter()
+            .flat_map(|(file, sections)| sections.iter().flat_map(|section| section.commands(file)))
+            .collect()
     }
 
     /// The same config with the node's private key where the placeholder is.
     fn with_private_key(&self, private_key: &str) -> Self {
-        let fill = |command: &UciBatchCommand| match command {
-            UciBatchCommand::Set(path, value) if value == network::PRIVATE_KEY_PLACEHOLDER => {
-                UciBatchCommand::set(path, private_key)
+        let fill = |(option, value): &(String, Value)| match value {
+            Value::Single(value) if value == network::PRIVATE_KEY_PLACEHOLDER => {
+                (option.clone(), Value::Single(private_key.to_owned()))
             }
-            _ => command.clone(),
+            _ => (option.clone(), value.clone()),
+        };
+        let fill_section = |section: &Section| Section {
+            options: section.options.iter().map(fill).collect(),
+            ..section.clone()
         };
 
         Self {
             files: self
                 .files
                 .iter()
-                .map(|(file, commands)| (*file, commands.iter().map(fill).collect()))
+                .map(|(file, sections)| (*file, sections.iter().map(fill_section).collect()))
                 .collect(),
         }
     }
@@ -105,8 +113,15 @@ mod tests {
     // output as-is, known-wrong parts included: a fix shows up as a snapshot diff.
     // Keys are fakes; the delete/commit lines need uci and are not part of it.
 
-    fn set(path: &str, value: &str) -> UciBatchCommand {
-        UciBatchCommand::set(path, value)
+    fn section(name: &str, section_type: &str, options: &[(&str, &str)]) -> Section {
+        Section {
+            name: name.to_owned(),
+            section_type: section_type.to_owned(),
+            options: options
+                .iter()
+                .map(|(option, value)| (option.to_string(), Value::Single(value.to_string())))
+                .collect(),
+        }
     }
 
     #[test]
@@ -115,28 +130,32 @@ mod tests {
             files: vec![
                 (
                     "network",
-                    vec![
-                        set("network.spl_mesh", "interface"),
-                        set(
-                            "network.spl_mesh.private_key",
-                            network::PRIVATE_KEY_PLACEHOLDER,
-                        ),
-                        set("network.spl_mesh.proto", "wireguard"),
-                    ],
+                    vec![section(
+                        "spl_mesh",
+                        "interface",
+                        &[
+                            ("private_key", network::PRIVATE_KEY_PLACEHOLDER),
+                            ("proto", "wireguard"),
+                        ],
+                    )],
                 ),
-                ("dhcp", vec![set("dhcp.spl_host_printer.name", "printer")]),
+                (
+                    "dhcp",
+                    vec![section("spl_host_printer", "host", &[("name", "printer")])],
+                ),
             ],
         };
 
         let filled = rendered.with_private_key("REAL_KEY");
 
-        let commands: Vec<String> = filled.commands().map(ToString::to_string).collect();
+        let commands: Vec<String> = filled.commands().iter().map(ToString::to_string).collect();
         assert_eq!(
             commands,
             [
                 "set network.spl_mesh='interface'",
                 "set network.spl_mesh.private_key='REAL_KEY'",
                 "set network.spl_mesh.proto='wireguard'",
+                "set dhcp.spl_host_printer='host'",
                 "set dhcp.spl_host_printer.name='printer'",
             ]
         );
@@ -155,9 +174,9 @@ mod tests {
             let plan = plan::plan(&network, node.name()).unwrap();
 
             let mut output = String::new();
-            for (file, commands) in &backend.render(&plan).files {
+            for (file, sections) in &backend.render(&plan).files {
                 writeln!(output, "# {file}").unwrap();
-                for command in commands {
+                for command in sections.iter().flat_map(|section| section.commands(file)) {
                     writeln!(output, "{command}").unwrap();
                 }
             }

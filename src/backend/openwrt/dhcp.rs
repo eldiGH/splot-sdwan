@@ -2,16 +2,13 @@ use log::{Level, debug, info, log_enabled};
 
 use super::{
     naming,
-    section::{UciSection, UciSectionBuilder},
-    uci::UciBatchCommand,
+    section::{Section, UciSection, UciSectionBuilder},
 };
 use crate::plan::{NodePlan, dhcp::Lease};
 
 pub(super) const FILE: &str = "dhcp";
 
 impl UciSection for Lease {
-    const FILE: &'static str = FILE;
-
     fn section_type(&self) -> &str {
         "host"
     }
@@ -28,8 +25,8 @@ impl UciSection for Lease {
     }
 }
 
-/// The plan's DHCP section as the `dhcp` file's commands.
-pub(super) fn render(plan: &NodePlan) -> Vec<UciBatchCommand> {
+/// The plan's DHCP section as the `dhcp` file's sections.
+pub(super) fn render(plan: &NodePlan) -> Vec<Section> {
     let leases = &plan.dhcp.leases;
 
     info!("Generating DHCP config for node '{}'", plan.node);
@@ -45,10 +42,7 @@ pub(super) fn render(plan: &NodePlan) -> Vec<UciBatchCommand> {
         }
     }
 
-    leases
-        .iter()
-        .flat_map(|lease| lease.to_uci_commands())
-        .collect()
+    leases.iter().map(|lease| lease.to_section()).collect()
 }
 
 #[cfg(test)]
@@ -75,7 +69,11 @@ nodes:
 ",
         );
         let plan = plan::plan(&network, &"Home".parse().unwrap()).unwrap();
-        let commands: Vec<String> = render(&plan).iter().map(ToString::to_string).collect();
+        let commands: Vec<String> = render(&plan)
+            .iter()
+            .flat_map(|section| section.commands("dhcp"))
+            .map(|command| command.to_string())
+            .collect();
 
         assert_eq!(
             commands,

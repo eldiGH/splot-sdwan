@@ -128,7 +128,7 @@ pub(super) fn print(rendered: &Rendered) -> Result<(), Error> {
 /// What replaces splot's sections in `current`: deletes for the old ones, then
 /// the rendered ones.
 fn changeset(rendered: &Rendered, current: &Snapshot) -> Result<Changeset, Error> {
-    let generated: Vec<UciBatchCommand> = rendered.commands().cloned().collect();
+    let generated = rendered.commands();
 
     // Checked before anything touches uci.
     let duplicates = find_duplicate_sections(&generated);
@@ -390,7 +390,7 @@ network.spl_wireguard_spl_mesh_Cabin=wireguard_spl_mesh"
         let example = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/splot.example.yml"));
         for node in ["Home", "Cabin"] {
             let rendered = rendered(example, node);
-            let generated: Vec<&UciBatchCommand> = rendered.commands().collect();
+            let generated = rendered.commands();
             assert!(!generated.is_empty());
             assert!(
                 !generated
@@ -461,7 +461,7 @@ nodes:
 ",
             "Home",
         );
-        let commands: Vec<UciBatchCommand> = rendered.commands().cloned().collect();
+        let commands = rendered.commands();
         assert_eq!(
             find_duplicate_sections(&commands),
             ["dhcp.spl_host_my_printer"]

@@ -2,7 +2,6 @@
 
 use crate::{
     backend::openwrt::{
-        firewall::FILE as FIREWALL_FILE_NAME,
         naming,
         section::{UciSection, UciSectionBuilder},
     },
@@ -27,8 +26,6 @@ fn host_id(host: &HostRef, direction: Direction) -> Vec<&str> {
 }
 
 impl UciSection for Rule {
-    const FILE: &'static str = FIREWALL_FILE_NAME;
-
     fn section_type(&self) -> &str {
         "rule"
     }
@@ -88,7 +85,8 @@ mod tests {
 
     /// A rendered rule's `name` option.
     fn label(rule: &Rule) -> String {
-        rule.to_uci_commands()
+        rule.to_section()
+            .commands("firewall")
             .iter()
             .map(ToString::to_string)
             .find(|command| command.contains(".name="))
@@ -153,7 +151,7 @@ clients:
             .firewall
             .rules
             .iter()
-            .map(|rule| rule.to_uci_commands()[0].to_string())
+            .map(|rule| rule.to_section().commands("firewall")[0].to_string())
             .collect();
 
         let laptop_in = "set firewall.spl_rule_in_Laptop_ssh='rule'".to_owned();
