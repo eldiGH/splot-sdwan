@@ -1,18 +1,17 @@
-mod reload;
+//! Applying the rendered config: stage it in one `uci batch`, commit it file by
+//! file, then reload the services whose config changed.
 
 use std::collections::HashSet;
 
-use crate::{
-    consts,
-    managers::{UciManager, naming},
-    plan::NodePlan,
-    splot_config::SplotConfig,
+use super::{
+    Rendered, naming,
+    reload::{self, Reload},
     uci::{self, UciBatchCommand},
 };
-use reload::Reload;
+use crate::consts;
 
 #[derive(Debug, thiserror::Error)]
-pub enum PipelineError {
+pub enum Error {
     #[error(transparent)]
     Uci(#[from] uci::Error),
     #[error("failed to ask netifd how WireGuard picks up changed peers")]
@@ -69,125 +68,81 @@ fn commit_failed_message(file: &str, committed: &[&str], reverted: bool) -> Stri
     format!("committing {file} failed: {outcome} ({revert})")
 }
 
-pub struct UciPipeline {
-    managers: Vec<Box<dyn UciManager>>,
+/// Applies the rendered config and makes it live: refuses to start while its
+/// files have uncommitted changes, stages and commits splot's changes, then
+/// reloads the services whose config changed. Returns the changed files.
+pub(super) fn run(rendered: &Rendered) -> Result<Vec<&'static str>, Error> {
+    let files = rendered.files();
+
+    // uci keeps uncommitted changes in one place per file, shared by every uci
+    // user on the router: committing or reverting ours would commit or revert
+    // theirs too. So don't start while there are any.
+    let mut pending = Vec::new();
+    for file in &files {
+        if uci::has_changes(file)? {
+            pending.push(*file);
+        }
+    }
+    if !pending.is_empty() {
+        return Err(Error::PendingChanges(pending));
+    }
+
+    // Asked before anything is written.
+    let peer_update = reload::peer_update().map_err(Error::Netifd)?;
+
+    let before = snapshot(&files)?;
+    changeset(rendered, &before)?.apply()?;
+    let after = snapshot(&files)?;
+    let changed = changed_files(&before, &after);
+
+    if let Some(reload) = Reload::new(&changed, naming::mesh_interface().to_string(), peer_update) {
+        reload.run()?;
+    }
+
+    Ok(changed)
 }
 
-impl Default for UciPipeline {
-    fn default() -> Self {
-        Self::new()
+/// Prints what `run` would send to uci, and the reload after it.
+pub(super) fn print(rendered: &Rendered) -> Result<(), Error> {
+    let peer_update = reload::peer_update().map_err(Error::Netifd)?;
+
+    let files = rendered.files();
+    let current = snapshot(&files)?;
+
+    for command in changeset(rendered, &current)?.commands() {
+        println!("{}", command.redacted());
     }
+
+    // As comments, so the output stays a valid `uci batch` script.
+    if let Some(reload) = Reload::new(&files, naming::mesh_interface().to_string(), peer_update) {
+        println!("# Then, if anything changed, splot reloads the services;");
+        println!("# the network and WireGuard lines only if network changed:");
+        for command in reload.commands() {
+            println!("#   {command}");
+        }
+    }
+
+    Ok(())
 }
 
-impl UciPipeline {
-    pub fn new() -> Self {
-        Self { managers: vec![] }
+/// What replaces splot's sections in `current`: deletes for the old ones, then
+/// the rendered ones.
+fn changeset(rendered: &Rendered, current: &Snapshot) -> Result<Changeset, Error> {
+    let generated: Vec<UciBatchCommand> = rendered.commands().cloned().collect();
+
+    // Checked before anything touches uci.
+    let duplicates = find_duplicate_sections(&generated);
+    if !duplicates.is_empty() {
+        return Err(Error::DuplicateSections(duplicates));
     }
 
-    pub fn register<M: UciManager + 'static>(mut self, manager: M) -> Self {
-        self.managers.push(Box::new(manager));
-        self
-    }
+    let mut changes = delete_commands(current);
+    changes.extend(generated);
 
-    /// Applies the generated config and makes it live: refuses to start while the
-    /// files have uncommitted changes, stages and commits splot's changes, then
-    /// reloads the services whose config changed. Returns the changed files.
-    pub fn run(
-        &self,
-        plan: &NodePlan,
-        splot_config: &SplotConfig,
-    ) -> Result<Vec<&'static str>, PipelineError> {
-        // uci keeps uncommitted changes in one place per file, shared by every uci
-        // user on the router: committing or reverting ours would commit or revert
-        // theirs too. So don't start while there are any.
-        let mut pending = Vec::new();
-        for file in self.get_files_used() {
-            if uci::has_changes(file)? {
-                pending.push(file);
-            }
-        }
-        if !pending.is_empty() {
-            return Err(PipelineError::PendingChanges(pending));
-        }
-
-        // Asked before anything is written.
-        let peer_update = reload::peer_update().map_err(PipelineError::Netifd)?;
-
-        let files = self.files();
-        let before = snapshot(&files)?;
-        self.changeset(plan, splot_config, &before)?.apply()?;
-        let after = snapshot(&files)?;
-        let changed = changed_files(&before, &after);
-
-        if let Some(reload) =
-            Reload::new(&changed, naming::mesh_interface().to_string(), peer_update)
-        {
-            reload.run()?;
-        }
-
-        Ok(changed)
-    }
-
-    /// Prints what `run` would send to uci, and the reload after it.
-    pub fn print(&self, plan: &NodePlan, splot_config: &SplotConfig) -> Result<(), PipelineError> {
-        let peer_update = reload::peer_update().map_err(PipelineError::Netifd)?;
-
-        let files = self.files();
-        let current = snapshot(&files)?;
-
-        for command in self.changeset(plan, splot_config, &current)?.commands() {
-            println!("{}", command.redacted());
-        }
-
-        // As comments, so the output stays a valid `uci batch` script.
-        if let Some(reload) = Reload::new(&files, naming::mesh_interface().to_string(), peer_update)
-        {
-            println!("# Then, if anything changed, splot reloads the services;");
-            println!("# the network and WireGuard lines only if network changed:");
-            for command in reload.commands() {
-                println!("#   {command}");
-            }
-        }
-
-        Ok(())
-    }
-
-    fn generate(&self, plan: &NodePlan, splot_config: &SplotConfig) -> Vec<UciBatchCommand> {
-        self.managers
-            .iter()
-            .flat_map(|manager| manager.generate_commands(plan, splot_config))
-            .collect()
-    }
-
-    fn changeset(
-        &self,
-        plan: &NodePlan,
-        splot_config: &SplotConfig,
-        current: &Snapshot,
-    ) -> Result<Changeset, PipelineError> {
-        let files = self.files();
-        let generated = self.generate(plan, splot_config);
-
-        // Checked before anything touches uci.
-        let duplicates = find_duplicate_sections(&generated);
-        if !duplicates.is_empty() {
-            return Err(PipelineError::DuplicateSections(duplicates));
-        }
-
-        let mut changes = delete_commands(current);
-        changes.extend(generated);
-
-        Ok(Changeset { files, changes })
-    }
-
-    /// The uci files the registered managers write.
-    fn files(&self) -> Vec<&'static str> {
-        self.get_files_used().collect()
-    }
-
-    fn get_files_used(&self) -> impl Iterator<Item = &'static str> {
-        self.managers.iter().map(|manager| manager.config_file())
-    }
+    Ok(Changeset {
+        files: rendered.files(),
+        changes,
+    })
 }
 
 /// Everything `apply` sends to uci: the changes — replacing splot's sections — and
@@ -207,11 +162,11 @@ impl Changeset {
             .chain(self.files.iter().map(|file| UciBatchCommand::commit(*file)))
     }
 
-    fn apply(&self) -> Result<(), PipelineError> {
+    fn apply(&self) -> Result<(), Error> {
         if let Err(cause) = uci::batch(&self.changes) {
             return Err(match revert(&self.files) {
-                Ok(()) => PipelineError::Rejected(cause),
-                Err(revert) => PipelineError::RevertFailed { cause, revert },
+                Ok(()) => Error::Rejected(cause),
+                Err(revert) => Error::RevertFailed { cause, revert },
             });
         }
 
@@ -221,7 +176,7 @@ impl Changeset {
             if let Err(cause) = uci::commit(file) {
                 let reverted = revert(&self.files[index..]).is_ok();
 
-                return Err(PipelineError::CommitFailed {
+                return Err(Error::CommitFailed {
                     file,
                     committed: self.files[..index].to_vec(),
                     reverted,
@@ -252,7 +207,7 @@ fn revert(files: &[&'static str]) -> Result<(), uci::Error> {
 /// uci silently merges two `set <file>.<section>='<type>'` of the same name into a
 /// single section — options combined, list values accumulated — so two different
 /// firewall rules would become one rule letting every source reach every
-/// destination. The pipeline refuses such a batch instead.
+/// destination. Applying refuses such a batch instead.
 pub(crate) fn find_duplicate_sections(commands: &[UciBatchCommand]) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut duplicates = Vec::new();
@@ -329,10 +284,20 @@ fn delete_commands(snapshot: &Snapshot) -> Vec<UciBatchCommand> {
 mod tests {
     use super::*;
     use crate::{
-        managers::{dhcp::DhcpManager, firewall::FirewallManager, network::NetworkManager},
+        backend::{
+            Backend,
+            openwrt::{OpenWrtBackend, splot_config::SplotConfig},
+        },
         plan,
         test_support::checked,
     };
+
+    fn rendered(yaml: &str, node: &str) -> Rendered {
+        let network = checked(yaml);
+        let plan = plan::plan(&network, &node.parse().unwrap()).unwrap();
+
+        OpenWrtBackend::new(SplotConfig::for_tests("FAKE_MESH_KEY")).render(&plan)
+    }
 
     fn set(path: &str, value: &str) -> UciBatchCommand {
         UciBatchCommand::set(path, value)
@@ -422,25 +387,16 @@ network.spl_wireguard_spl_mesh_Cabin=wireguard_spl_mesh"
         // The changes are staged in one `uci batch` and committed separately,
         // only once uci accepted every line. A commit among the changes would
         // write a file before that check.
-        let network = checked(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/splot.example.yml"
-        )));
-        let pipeline = UciPipeline::new()
-            .register(NetworkManager)
-            .register(FirewallManager)
-            .register(DhcpManager);
-        let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY");
-        for node in network.nodes() {
-            let node_name = node.name();
-            let plan = plan::plan(&network, node_name).unwrap();
-            let generated = pipeline.generate(&plan, &splot_config);
+        let example = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/splot.example.yml"));
+        for node in ["Home", "Cabin"] {
+            let rendered = rendered(example, node);
+            let generated: Vec<&UciBatchCommand> = rendered.commands().collect();
             assert!(!generated.is_empty());
             assert!(
                 !generated
                     .iter()
                     .any(|c| matches!(c, UciBatchCommand::Commit(_))),
-                "{node_name}"
+                "{node}"
             );
         }
     }
@@ -483,7 +439,7 @@ network.spl_wireguard_spl_mesh_Cabin=wireguard_spl_mesh"
         // `my-printer` and `my_printer` are distinct identifiers, but both map to
         // the uci section `spl_host_my_printer`. The guard must catch what the
         // generators produce, not just hand-built commands.
-        let network = checked(
+        let rendered = rendered(
             "
 meshNetwork: 10.100.0.0/24
 nodes:
@@ -503,10 +459,9 @@ nodes:
             ip: 192.168.1.21
             macs: AA:BB:CC:DD:EE:02
 ",
+            "Home",
         );
-        let plan = plan::plan(&network, &"Home".parse().unwrap()).unwrap();
-        let commands =
-            DhcpManager.generate_commands(&plan, &SplotConfig::for_tests("FAKE_MESH_KEY"));
+        let commands: Vec<UciBatchCommand> = rendered.commands().cloned().collect();
         assert_eq!(
             find_duplicate_sections(&commands),
             ["dhcp.spl_host_my_printer"]

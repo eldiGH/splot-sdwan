@@ -1,7 +1,11 @@
 //! Rules as uci `rule` sections.
 
 use crate::{
-    managers::{UciSection, UciSectionBuilder, firewall::consts::FIREWALL_FILE_NAME, naming},
+    backend::openwrt::{
+        firewall::FILE as FIREWALL_FILE_NAME,
+        naming,
+        section::{UciSection, UciSectionBuilder},
+    },
     model::host::HostRef,
     plan::firewall::rules::{Direction, Rule},
 };

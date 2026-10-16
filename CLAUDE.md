@@ -163,7 +163,7 @@ A hub is a network inside `meshNetwork` that a node sets aside for devices reach
 
 ### Scope
 
-Tests cover the **deterministic core**: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (`src/model/`: hosts, reference resolution, WAN targets), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), and UCI command/builder rendering. The process/IO layer (`uci` executor, `wg`, `splot_config`, `env`, `pipeline`, `main`) is **out of scope** for now — it shells out and touches the filesystem; revisit as integration tests later.
+Tests cover the **deterministic core**: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (`src/model/`: hosts, reference resolution, WAN targets), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), and UCI command/builder rendering. The process/IO layer (`uci` executor, `wg`, `splot_config`, `env`, the OpenWrt `apply`, `main`) is **out of scope** for now — it shells out and touches the filesystem; revisit as integration tests later.
 
 ### Placement
 
@@ -176,7 +176,7 @@ Tests are inline `#[cfg(test)] mod tests { use super::*; ... }` modules, always 
 
 ### Snapshots
 
-`example_config_snapshot` (in `src/managers/mod.rs`) pins the complete UCI output of all managers for every node of `splot.example.yml`, using [`insta`](https://insta.rs). Snapshot files live in `src/managers/snapshots/` and are committed. They record what splot generates today, known-wrong parts included.
+`example_config_snapshot` (in `src/backend/openwrt/mod.rs`) pins the complete uci output the OpenWrt backend renders for every node of `splot.example.yml`, using [`insta`](https://insta.rs). Snapshot files live in `src/backend/openwrt/snapshots/` and are committed. They record what splot generates today, known-wrong parts included.
 
 - **Any change to generator output fails this test on purpose.** Insta prints the line diff of the generated config; the diff is the review: "is this the config change I meant?"
 - **Accept an intended change** with `cargo insta review` (needs `cargo install cargo-insta`), or `INSTA_UPDATE=always cargo test` and then review the `.snap` diff in git. Never accept a snapshot change you haven't read.

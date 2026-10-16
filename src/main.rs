@@ -1,28 +1,27 @@
 use clap::Parser;
 
 use crate::{
+    backend::{
+        Backend,
+        openwrt::{OpenWrtBackend, splot_config::SplotConfig},
+    },
     cli::{Cli, Command},
     config::Config,
-    managers::{dhcp::DhcpManager, firewall::FirewallManager, network::NetworkManager},
     model::{Network, Validated, validator::types::ValidationWarning},
-    pipeline::UciPipeline,
 };
 use anyhow::{Context, bail};
 
+pub mod backend;
 pub mod cli;
 pub mod config;
 pub mod consts;
 pub mod env;
-pub mod managers;
 pub mod model;
-pub mod pipeline;
 pub mod plan;
 pub mod protocol;
-pub mod splot_config;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod types;
-pub mod uci;
 pub mod wg;
 
 fn main() -> anyhow::Result<()> {
@@ -44,7 +43,7 @@ fn main() -> anyhow::Result<()> {
 
     match command {
         Command::Apply { dry_run } => {
-            let splot_config = splot_config::SplotConfig::load()?;
+            let splot_config = SplotConfig::load()?;
             let own_public_key = wg::get_pubkey(splot_config.mesh_key())
                 .context("failed to derive this router's public key")?;
             let Some(plan) = network
@@ -56,15 +55,13 @@ fn main() -> anyhow::Result<()> {
                 );
             };
 
-            let pipeline = UciPipeline::new()
-                .register(NetworkManager)
-                .register(FirewallManager)
-                .register(DhcpManager);
+            let backend = OpenWrtBackend::new(splot_config);
+            let rendered = backend.render(&plan);
 
             if *dry_run {
-                pipeline.print(&plan, &splot_config)?;
+                backend.dry_run(&rendered)?;
             } else {
-                let changed = pipeline.run(&plan, &splot_config)?;
+                let changed = backend.apply(&rendered)?;
 
                 if changed.is_empty() {
                     println!("Nothing changed.");

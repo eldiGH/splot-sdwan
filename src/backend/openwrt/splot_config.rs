@@ -1,9 +1,9 @@
 use std::{fs, path::PathBuf};
 
+use super::uci::{self, UciBatchCommand};
 use crate::{
     env,
     types::wg_key::KeyFormatError,
-    uci::{self, UciBatchCommand},
     wg::{self, validate_private_key},
 };
 

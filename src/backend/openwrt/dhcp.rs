@@ -1,18 +1,16 @@
 use log::{Level, debug, info, log_enabled};
 
-use crate::{
-    managers::{UciManager, UciSection, UciSectionBuilder, naming},
-    plan::{NodePlan, dhcp::Lease},
-    splot_config::SplotConfig,
+use super::{
+    naming,
+    section::{UciSection, UciSectionBuilder},
     uci::UciBatchCommand,
 };
+use crate::plan::{NodePlan, dhcp::Lease};
 
-const FILE_NAME: &str = "dhcp";
-
-pub struct DhcpManager;
+pub(super) const FILE: &str = "dhcp";
 
 impl UciSection for Lease {
-    const FILE: &'static str = FILE_NAME;
+    const FILE: &'static str = FILE;
 
     fn section_type(&self) -> &str {
         "host"
@@ -30,36 +28,27 @@ impl UciSection for Lease {
     }
 }
 
-impl UciManager for DhcpManager {
-    fn config_file(&self) -> &'static str {
-        FILE_NAME
-    }
+/// The plan's DHCP section as the `dhcp` file's commands.
+pub(super) fn render(plan: &NodePlan) -> Vec<UciBatchCommand> {
+    let leases = &plan.dhcp.leases;
 
-    fn generate_commands(
-        &self,
-        plan: &NodePlan,
-        _splot_config: &SplotConfig,
-    ) -> Vec<UciBatchCommand> {
-        let leases = &plan.dhcp.leases;
-
-        info!("Generating DHCP config for node '{}'", plan.node);
-        info!("  {} static lease(s)", leases.len());
-        if log_enabled!(Level::Debug) {
-            for lease in leases {
-                debug!(
-                    "  Lease '{}': {} → {} MAC(s)",
-                    lease.host,
-                    lease.ip,
-                    lease.macs.len()
-                );
-            }
+    info!("Generating DHCP config for node '{}'", plan.node);
+    info!("  {} static lease(s)", leases.len());
+    if log_enabled!(Level::Debug) {
+        for lease in leases {
+            debug!(
+                "  Lease '{}': {} → {} MAC(s)",
+                lease.host,
+                lease.ip,
+                lease.macs.len()
+            );
         }
-
-        leases
-            .iter()
-            .flat_map(|lease| lease.to_uci_commands())
-            .collect()
     }
+
+    leases
+        .iter()
+        .flat_map(|lease| lease.to_uci_commands())
+        .collect()
 }
 
 #[cfg(test)]
@@ -86,11 +75,7 @@ nodes:
 ",
         );
         let plan = plan::plan(&network, &"Home".parse().unwrap()).unwrap();
-        let commands: Vec<String> = DhcpManager
-            .generate_commands(&plan, &SplotConfig::for_tests("AAAA"))
-            .iter()
-            .map(ToString::to_string)
-            .collect();
+        let commands: Vec<String> = render(&plan).iter().map(ToString::to_string).collect();
 
         assert_eq!(
             commands,

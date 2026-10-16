@@ -1,29 +1,12 @@
+//! A generated object as one uci section: its section name and its options.
+
 use std::{fmt::Display, iter};
 
-use crate::{plan::NodePlan, splot_config::SplotConfig, uci::UciBatchCommand};
+use super::{naming::UciSectionName, uci::UciBatchCommand};
 
-pub mod dhcp;
-pub mod firewall;
-pub mod naming;
-pub mod network;
-
-use naming::UciSectionName;
-
-/// Renders one concern of a node's plan as uci commands.
-pub trait UciManager {
-    /// `splot_config` holds the node's private key, which the plan doesn't.
-    fn generate_commands(
-        &self,
-        plan: &NodePlan,
-        splot_config: &SplotConfig,
-    ) -> Vec<UciBatchCommand>;
-
-    fn config_file(&self) -> &'static str;
-}
-
-/// A generated struct as one uci section. Its section name follows from what it
+/// A generated object as one uci section. Its section name follows from what it
 /// is: `spl_<section type>_<id>`.
-trait UciSection {
+pub(super) trait UciSection {
     /// The uci file the section lives in.
     const FILE: &'static str;
 
@@ -49,13 +32,13 @@ trait UciSection {
     }
 }
 
-struct UciSectionBuilder {
+pub(super) struct UciSectionBuilder {
     path: String,
     commands: Vec<UciBatchCommand>,
 }
 
 impl UciSectionBuilder {
-    fn new(file: &str, name: &UciSectionName, section_type: &str) -> Self {
+    pub(super) fn new(file: &str, name: &UciSectionName, section_type: &str) -> Self {
         let path = format!("{file}.{name}");
 
         let commands = vec![UciBatchCommand::set(&path, section_type)];
@@ -67,20 +50,20 @@ impl UciSectionBuilder {
         format!("{}.{prop_name}", self.path)
     }
 
-    fn set(mut self, prop_name: &str, value: impl Into<String>) -> Self {
+    pub(super) fn set(mut self, prop_name: &str, value: impl Into<String>) -> Self {
         self.commands
             .push(UciBatchCommand::set(self.prop(prop_name), value));
 
         self
     }
 
-    fn set_if_some(self, prop_name: &str, value: Option<impl Into<String>>) -> Self {
+    pub(super) fn set_if_some(self, prop_name: &str, value: Option<impl Into<String>>) -> Self {
         let Some(value) = value else { return self };
 
         self.set(prop_name, value)
     }
 
-    fn extend_list(
+    pub(super) fn extend_list(
         mut self,
         prop_name: &str,
         values: impl IntoIterator<Item = impl Display>,
@@ -104,60 +87,17 @@ impl UciSectionBuilder {
         self
     }
 
-    fn build(self) -> Vec<UciBatchCommand> {
+    pub(super) fn build(self) -> Vec<UciBatchCommand> {
         self.commands
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::Write;
-
     use super::*;
-    use crate::{plan, test_support};
 
     fn render(cmd: &UciBatchCommand) -> String {
         cmd.to_string()
-    }
-
-    // ── Snapshot of everything generated for the example config ────────────
-    //
-    // Pins the complete UCI output of all managers for every node of
-    // `splot.example.yml`, so any generator change shows up as a reviewable diff
-    // of the generated router config (`cargo insta review`). It records today's
-    // output as-is, known-wrong parts included: a fix shows up as a snapshot diff.
-    // Keys are fakes; the pipeline's own delete/commit lines need uci and are
-    // not part of it.
-
-    #[test]
-    fn example_config_snapshot() {
-        let network = test_support::checked(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/splot.example.yml"
-        )));
-
-        let managers: [(&str, &dyn UciManager); 3] = [
-            ("network", &network::NetworkManager),
-            ("firewall", &firewall::FirewallManager),
-            ("dhcp", &dhcp::DhcpManager),
-        ];
-
-        let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY");
-
-        for node in network.nodes() {
-            let node_name = node.name();
-            let plan = plan::plan(&network, node_name).unwrap();
-
-            let mut output = String::new();
-            for (label, manager) in managers {
-                writeln!(output, "# {label}").unwrap();
-                for command in manager.generate_commands(&plan, &splot_config) {
-                    writeln!(output, "{command}").unwrap();
-                }
-            }
-
-            insta::assert_snapshot!(format!("example_{node_name}"), output);
-        }
     }
 
     struct Example {

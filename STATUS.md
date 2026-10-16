@@ -18,7 +18,7 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 
 ### Splot config (persistent local state)
 
-- Local state file (`/etc/config/splot`) managed by `src/splot_config.rs` via the `SplotConfig` struct — stores the node's one private key, for the mesh interface (`splot.config.private_key`).
+- Local state file (`/etc/config/splot`) managed by `src/backend/openwrt/splot_config.rs` via the `SplotConfig` struct (the OpenWrt backend's key store) — stores the node's one private key, for the mesh interface (`splot.config.private_key`).
 - `SplotConfig::load()` reads and validates the key, generating and committing one on first run (idempotent init — handles missing file, section, or option uniformly).
 - A stored key is validated on load; a corrupt key is a hard error, never silently regenerated (regeneration would orphan the node's peers).
 - Designed to grow as more local-only state is needed (e.g., last-applied config snapshot for distributed-reload rollback — see IDEAS.md).
@@ -53,13 +53,13 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 - Plan objects carry identity (a `HostRef`, the service, a rule's direction), never a backend's name for them: the OpenWrt renderer derives uci section names and labels from it.
 - `NodePlan`'s `Display` is a plain-text view of everything in it, one object per line in config notation (`Home`, `Cabin.camera`), snapshot-tested per node of the example config.
 
-### Firewall (planned in `src/plan/firewall/`, rendered by `src/managers/firewall/`)
+### Firewall (planned in `src/plan/firewall/`, rendered by `src/backend/openwrt/firewall/`)
 
 - **Zones (`zones.rs`)**: splot's one managed zone, the mesh zone (`spl_mesh`), rendered as a `config zone` UCI section. Everything that arrives over WireGuard is in it, hub clients included. Default policy `input`/`forward` `DROP`, `output ACCEPT`; access granted only via explicit service rules.
 - **Rules (`rules.rs`)**: per-service `config rule` UCI sections for every host's services (node, device, hub client, global client), from the model's hosts: an ingress rule toward the host's addresses on this node, an egress rule toward its addresses on other nodes. A global client's `meshIp` gets no rule yet. Its sources are the service's resolved `allowFrom` as seen from this node (sources on the destination's own zone are filtered out, since they don't traverse this router; the mesh and hubs are routed, so nothing there is filtered). Rules currently match on `src_ip` / `dest_ip` with `src` / `dest` left as `*` — per-zone scoping is still pending (see [ROADMAP.md](ROADMAP.md)).
 - **Redirects (`redirect.rs`)**: `config redirect` (DNAT port-forward) UCI sections for services that declare `wan`. `wan.via` selects which routers expose the service via their `wanZone`; each forwards to the target the model resolved for it (see the `wan` pass above), in the mesh zone for mesh and hub addresses. Forwarding to a host on another node isn't right yet: the redirect names the destination zone as it is on the host's own node. `wan.sources` (the CIDR allowlist) is applied as the redirect's `src_ip`: empty/missing means publicly reachable, a non-empty list restricts the forward to those CIDRs.
 
-### WireGuard (planned in `src/plan/wireguard.rs`, rendered by `src/managers/network.rs`)
+### WireGuard (planned in `src/plan/wireguard.rs`, rendered by `src/backend/openwrt/network.rs`)
 
 - Generates the `config interface` UCI section for the node's one WireGuard interface, the mesh interface (`spl_mesh`).
 - Peer sections (`config wireguard_spl_mesh`):
@@ -68,7 +68,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
   - this node's own hub clients (peers on their hub node only).
 - Includes WireGuard-specific knobs: `listen_port`, `private_key`, `addresses` (the option OpenWrt's WireGuard handler reads; not `address`), `public_key`, `endpoint_host`, `endpoint_port`, `allowed_ips`, `persistent_keepalive`.
 
-### DHCP (planned in `src/plan/dhcp.rs`, rendered by `src/managers/dhcp.rs`)
+### DHCP (planned in `src/plan/dhcp.rs`, rendered by `src/backend/openwrt/dhcp.rs`)
 
 - Generates `config host` UCI sections for static DHCP leases.
 - Sources:
@@ -76,16 +76,21 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
   - Global clients with `macs` and zone IPs on the current node.
 - Lease ties MAC to the zone IP so the device gets a predictable address every connection.
 
-### Batch UCI command execution (`src/uci.rs`, `src/pipeline/`)
+### Backends (`src/backend/`)
 
-- `UciPipeline` runs registered managers in sequence on each apply. It is the whole OpenWrt apply — check, stage, commit, reload — so `main` only reports the result.
+- A `Backend` turns a node's plan into its platform's config: `render(&NodePlan)` (pure, snapshot-tested), `dry_run(&rendered)` (shows what `apply` would change, changing nothing) and `apply(&rendered)` (makes it live, returns what changed). `main` is load → validate → plan → backend.
+- The OpenWrt backend (`src/backend/openwrt/`) is the only one so far: it renders the plan as the `network`, `firewall` and `dhcp` uci files, applies them with uci (below) and reloads the services. Its key store is `SplotConfig`.
+
+### Applying on OpenWrt (`src/backend/openwrt/apply.rs`, `uci.rs`)
+
+- Apply is the whole OpenWrt apply — check, stage, commit, reload — so `main` only reports the result.
 - Apply refuses to start while `network`, `firewall` or `dhcp` has uncommitted uci changes. uci keeps staged changes in one place per file, shared by every uci user on the router, so splot would commit (or revert) someone else's changes together with its own.
 - It then stages everything (deleting splot's old sections, creating the new ones) in one `uci batch` without commits. `uci batch` exits 0 even when it rejects a line — it prints the error to stderr and carries on — so any stderr output counts as failure: splot reverts its staged changes and commits nothing.
 - Only then does it commit, file by file. Commits across files aren't atomic: if one fails (e.g. a full flash), the files before it keep the new config, and the error says which.
 - The uci module exposes plain functions (`get`, `show`, `has_changes`, `batch`, `commit`, `revert`) over a shared `run()` helper with typed errors (`uci::Error`): spawn failures, I/O errors, non-zero exits and rejected input (stderr output) are distinguished, and uci's exact `Entry not found` message is classified as legitimate absence (`Ok(None)`) rather than failure.
 - Dry-run output redacts private-key values (`UciBatchCommand::redacted()`); the real batch input is never redacted.
 
-### Reloading services after apply (`src/pipeline/reload.rs`)
+### Reloading services after apply (`src/backend/openwrt/reload.rs`)
 
 - `uci commit` only writes files. After a commit that changed anything (each file's `uci show` is compared before and after), splot reloads the affected services and reports any failure; nothing changed → no reload.
 - `reload_config` reloads every service whose config changed: fw4 for `firewall`, dnsmasq for `dhcp`, netifd for interface-level changes (key, port, addresses). procd runs these reloads a second later.
@@ -109,7 +114,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 - Validates stored private keys structurally (`validate_private_key` — length, base64 charset, padding).
 - Used during `splot_config` initialization and to identify the current node by matching the local pubkey against `node.publicKey` in the config.
 
-### UCI section naming (`managers/mod.rs` `UciSection`, `managers/naming.rs`)
+### UCI section naming (`src/backend/openwrt/section.rs` `UciSection`, `naming.rs`)
 
 - Section names are a uci concern. The OpenWrt renderers implement `UciSection` on the plan objects (the mesh interface and zone, rules, redirects, leases, and peers via `PeerSection`): its file, its uci section type, an id derived from the object's identity (what tells it apart from other sections of the same type), and its options. Other backends will name things their own way.
 - The section name is derived from that, the same way for every type: `spl_<section type>_<id>`, e.g. `spl_rule_in_Home_ssh`, `spl_redirect_Home_nas_https`, `spl_zone_mesh`, `spl_host_printer`, `spl_wireguard_spl_mesh_Phone`. uci has one namespace per file; the type keeps sections of different types apart. A rule's id includes its direction (`in`: traffic to this node's hosts; `out`: from local sources to other nodes); cross-node rules are namespaced by node name (`spl_rule_out_Home_printer_ssh`).
@@ -119,7 +124,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 
 ### Tests (`cargo test`)
 
-Unit-test suite over the deterministic core (~280 tests). Covers: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (hosts, reference resolution, WAN targets; `src/model/`), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), UCI command/builder rendering, the uci not-found classification and dry-run redaction, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, pipeline) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
+Unit-test suite over the deterministic core (~280 tests). Covers: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (hosts, reference resolution, WAN targets; `src/model/`), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), UCI command/builder rendering, the uci not-found classification and dry-run redaction, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, the OpenWrt apply) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
 
 ---
 

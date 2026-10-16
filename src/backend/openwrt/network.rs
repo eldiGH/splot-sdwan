@@ -1,20 +1,19 @@
 use log::{debug, info};
 
+use super::{
+    naming::{self, UciSectionName},
+    section::{UciSection, UciSectionBuilder},
+    uci::UciBatchCommand,
+};
 use crate::{
     consts,
-    managers::{
-        UciManager, UciSection, UciSectionBuilder,
-        naming::{self, UciSectionName},
-    },
     plan::{
         NodePlan,
         wireguard::{Endpoint, Peer, WireGuardPlan},
     },
-    splot_config::SplotConfig,
-    uci::UciBatchCommand,
 };
 
-const FILE_NAME: &str = "network";
+pub(super) const FILE: &str = "network";
 
 /// The mesh interface: the plan's interface, with the node's private key.
 struct MeshInterface<'a> {
@@ -23,7 +22,7 @@ struct MeshInterface<'a> {
 }
 
 impl UciSection for MeshInterface<'_> {
-    const FILE: &'static str = FILE_NAME;
+    const FILE: &'static str = FILE;
 
     fn section_type(&self) -> &str {
         "interface"
@@ -58,7 +57,7 @@ struct PeerSection<'a> {
 }
 
 impl UciSection for PeerSection<'_> {
-    const FILE: &'static str = FILE_NAME;
+    const FILE: &'static str = FILE;
 
     fn section_type(&self) -> &str {
         self.section_type
@@ -111,36 +110,26 @@ fn interface_commands(plan: &WireGuardPlan, private_key: &str) -> Vec<UciBatchCo
     commands
 }
 
-pub struct NetworkManager;
-
-impl UciManager for NetworkManager {
-    fn generate_commands(
-        &self,
-        plan: &NodePlan,
-        splot_config: &SplotConfig,
-    ) -> Vec<UciBatchCommand> {
-        info!("Generating network config for node '{}'", plan.node);
-        for peer in &plan.wireguard.peers {
-            debug!(
-                "  Mesh peer '{}': {} AllowedIPs",
-                peer.host,
-                peer.allowed_ips.len()
-            );
-        }
-        info!("  Mesh interface: {} peer(s)", plan.wireguard.peers.len());
-
-        interface_commands(&plan.wireguard, splot_config.mesh_key())
+/// The plan's WireGuard section as the `network` file's commands, with the node's
+/// private key.
+pub(super) fn render(plan: &NodePlan, private_key: &str) -> Vec<UciBatchCommand> {
+    info!("Generating network config for node '{}'", plan.node);
+    for peer in &plan.wireguard.peers {
+        debug!(
+            "  Mesh peer '{}': {} AllowedIPs",
+            peer.host,
+            peer.allowed_ips.len()
+        );
     }
+    info!("  Mesh interface: {} peer(s)", plan.wireguard.peers.len());
 
-    fn config_file(&self) -> &'static str {
-        FILE_NAME
-    }
+    interface_commands(&plan.wireguard, private_key)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{plan, test_support::checked, uci::UciBatchCommand};
+    use crate::{plan, test_support::checked};
 
     // Home has a hub with a client; Cabin's hub is empty.
     const FIXTURE: &str = "
