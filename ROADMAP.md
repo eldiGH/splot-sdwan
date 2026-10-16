@@ -172,19 +172,30 @@ Cleans up ~150 lines of nested-loop duplication across validators and generators
 
 Make `endpoint` optional. A node with no `endpoint` has no address peers can dial, so it is responsible for **initiating** the WireGuard handshake outward to the reachable nodes. WireGuard learns the initiator's source `ip:port` from the incoming handshake, so a reachable peer can then send back. For others to reach it at any time, its NAT mapping must stay open: that's splot's keepalive rule (only a host behind NAT that offers services sends keepalives).
 
+### What `endpoint` means
+
+`endpoint` is where other peers dial a node, and splot uses it for nothing else. So a node nobody can dial leaves it out, whatever the reason: NAT or CGNAT without a port forward, or a public address behind a firewall that drops unsolicited inbound UDP. To WireGuard those are the same: the node's own handshake opens the path, and the replies come back through it.
+
+An `endpoint` gives no protection by source address: WireGuard accepts an authenticated packet from any address and moves the peer's endpoint there (roaming). Leaving it out costs nothing in security; the keys (and preshared keys, if splot gets them) authenticate a peer.
+
 ### Config change
 
-- `endpoint: Ipv4Addr` → `Option<Ipv4Addr>` with `#[serde(default)]`. Omitted = the node is behind NAT.
+- `endpoint: Ipv4Addr` → `Option<Ipv4Addr>` with `#[serde(default)]`. Omitted = nobody can dial the node (behind NAT, or behind a firewall that drops inbound).
 
 ### Generation change
 
-- `network.rs` already models this downstream — `WgClient.endpoint_host` / `endpoint_port` are `Option` and rendered with `set_if_some`. The only change is to stop forcing `Some`: a peer entry for a node with no `endpoint` omits both `endpoint_host` and `endpoint_port`.
+- The plan's peer already carries an optional endpoint, and the OpenWrt renderer writes `endpoint_host` / `endpoint_port` only when there is one. The only change is to stop forcing `Some`: a peer entry for a node with no `endpoint` has none.
+- The keepalive rule's "behind NAT" comes from the missing `endpoint` (today the planner takes it as false for every node). For a node, "offers services" must then count everything reached through it (its zones' devices and its hub clients, not just services on the router), because other sites reach those through it.
 - The NAT'd node still binds its own `listen_port` locally (harmless); making `listen_port` optional too can come later if a real need appears.
 
 ### Validation change
 
 - **At least one node must have an `endpoint`** (when there are ≥2 nodes). If every node is behind NAT, no node can ever initiate and the mesh can never form — catch this as an error rather than emitting a silently-dead config.
+- **A node without an `endpoint` can't host a hub:** hub clients sit behind NAT themselves and must dial in. An error.
 
 ### Scope boundary
 
 This makes **NAT'd ↔ reachable** work fully — the common hub-and-spoke shape: one public gateway, the rest behind NAT. It does **not** solve **NAT'd ↔ NAT'd** direct connectivity: two endpoint-less nodes have no address for each other and neither can initiate, so no direct tunnel forms. That is a separate, harder problem analysed in [IDEAS.md → "Connectivity between two NAT'd nodes"](IDEAS.md). Until that lands, two NAT'd nodes can each reach the public node(s) but not each other directly.
+
+- **Global clients can't dial such a node either.** Their profiles, once splot renders them, have to send its networks through a reachable node, or leave them out.
+- **Two nodes that drop inbound but have known static addresses** could still connect directly if each knew the other's address and both sent keepalives: each firewall opens on its own outbound packet. Leaving `endpoint` out gives that up. It's rare; if it ever matters, it gets its own field rather than a second meaning for `endpoint`.
