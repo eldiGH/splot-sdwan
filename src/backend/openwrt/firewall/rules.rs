@@ -10,6 +10,13 @@ use crate::{
     plan::firewall::rules::{Direction, Rule},
 };
 
+fn direction(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Ingress => "in",
+        Direction::Egress => "out",
+    }
+}
+
 /// The host's part of a rule's id: a host inside a node by its local name on that
 /// node, and by both names elsewhere.
 fn host_id(host: &HostRef, direction: Direction) -> Vec<&str> {
@@ -29,21 +36,19 @@ impl UciSection for Rule {
     /// The direction is part of the id: one service can need an ingress and an
     /// egress rule on the same node (a global client with IPs on two nodes).
     fn id(&self) -> impl IntoIterator<Item = &str> {
-        let direction = match self.direction {
-            Direction::Ingress => "in",
-            Direction::Egress => "out",
-        };
-
-        let mut id = vec![direction];
+        let mut id = vec![direction(self.direction)];
         id.extend(host_id(&self.host, self.direction));
         id.push(self.service.as_ref());
         id
     }
 
+    /// The label is in the config's notation, so what LuCI shows can be searched
+    /// for in `splot.yml`: `[SPLOT] out: Cabin.camera rtsp`.
     fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
         let label = format!(
-            "{}_{}",
-            host_id(&self.host, self.direction).join("_"),
+            "{}: {} {}",
+            direction(self.direction),
+            self.host,
             self.service
         );
 
@@ -61,8 +66,48 @@ impl UciSection for Rule {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::{plan, test_support::checked};
+
+    fn camera_rule(direction: Direction) -> Rule {
+        Rule {
+            host: HostRef::Local {
+                node: "Cabin".parse().unwrap(),
+                name: "camera".parse().unwrap(),
+            },
+            service: "rtsp".parse().unwrap(),
+            direction,
+            sources: vec!["192.168.1.0/24".parse().unwrap()],
+            destinations: vec!["192.168.2.30/32".parse().unwrap()],
+            port: "554".parse().unwrap(),
+            proto: BTreeSet::from([crate::protocol::Protocol::Tcp]),
+        }
+    }
+
+    /// A rendered rule's `name` option.
+    fn label(rule: &Rule) -> String {
+        rule.to_uci_commands()
+            .iter()
+            .map(ToString::to_string)
+            .find(|command| command.contains(".name="))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_rule_is_labelled_in_config_notation_with_its_direction() {
+        // What LuCI shows can be searched for in splot.yml; the section names keep
+        // uci's character set.
+        assert_eq!(
+            label(&camera_rule(Direction::Egress)),
+            "set firewall.spl_rule_out_Cabin_camera_rtsp.name='[SPLOT] out: Cabin.camera rtsp'"
+        );
+        assert_eq!(
+            label(&camera_rule(Direction::Ingress)),
+            "set firewall.spl_rule_in_camera_rtsp.name='[SPLOT] in: Cabin.camera rtsp'"
+        );
+    }
 
     #[test]
     fn ingress_and_egress_rule_of_one_service_get_distinct_sections() {

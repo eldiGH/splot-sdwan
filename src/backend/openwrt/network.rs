@@ -75,10 +75,8 @@ impl UciSection for PeerSection<'_> {
         let peer = self.peer;
 
         section
-            .set(
-                "description",
-                naming::name_prefixed(peer.host.name().as_ref()),
-            )
+            // In the config's notation: `[SPLOT] Home.camera`.
+            .set("description", naming::name_prefixed(&peer.host.to_string()))
             .set("public_key", peer.public_key.as_str())
             .set("route_allowed_ips", if peer.routed { "1" } else { "0" })
             .set_if_some(
@@ -247,6 +245,20 @@ clients:
         assert!(has_cmd(
             &c,
             "add_list network.spl_wireguard_spl_mesh_camera.allowed_ips='10.100.49.10/32'"
+        ));
+    }
+
+    #[test]
+    fn a_peer_is_described_in_config_notation() {
+        let c = cmds();
+        // A hub client by its qualified name; the section keeps its local one.
+        assert!(has_cmd(
+            &c,
+            "set network.spl_wireguard_spl_mesh_camera.description='[SPLOT] Home.camera'"
+        ));
+        assert!(has_cmd(
+            &c,
+            "set network.spl_wireguard_spl_mesh_Cabin.description='[SPLOT] Cabin'"
         ));
     }
 

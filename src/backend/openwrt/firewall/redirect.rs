@@ -31,8 +31,9 @@ impl UciSection for Redirect {
         id
     }
 
+    /// The label is in the config's notation: `[SPLOT] Home.nas https`.
     fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
-        let label = format!("{}_{}", host_id(&self.host).join("_"), self.service);
+        let label = format!("{} {}", self.host, self.service);
 
         section
             .set("name", naming::name_prefixed(&label))
@@ -44,5 +45,44 @@ impl UciSection for Redirect {
             .set("dest_ip", self.dest_ip.to_string())
             .set("dest_port", self.internal_port.to_string())
             .extend_list("proto", &self.proto)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+    use crate::{protocol::Protocol, types::zone_ref::ZoneRef};
+
+    #[test]
+    fn a_redirect_is_labelled_in_config_notation() {
+        let redirect = Redirect {
+            host: HostRef::Local {
+                node: "Home".parse().unwrap(),
+                name: "nas".parse().unwrap(),
+            },
+            service: "https".parse().unwrap(),
+            wan_zone: "wan".parse().unwrap(),
+            external_port: "8443".parse().unwrap(),
+            sources: Vec::new(),
+            dest_zone: ZoneRef::Named("lan".parse().unwrap()),
+            dest_ip: "192.168.1.20".parse().unwrap(),
+            internal_port: "443".parse().unwrap(),
+            proto: BTreeSet::from([Protocol::Tcp]),
+        };
+        let commands: Vec<String> = redirect
+            .to_uci_commands()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+
+        assert!(
+            commands.contains(
+                &"set firewall.spl_redirect_Home_nas_https.name='[SPLOT] Home.nas https'"
+                    .to_owned()
+            ),
+            "{commands:?}"
+        );
     }
 }
