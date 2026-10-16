@@ -155,7 +155,7 @@ pub(super) fn print(rendered: &Rendered, private_key: &str) -> Result<(), Error>
 /// changes to splot's sections (see `diff`), read against what `uci export` shows.
 fn changeset(rendered: &Rendered) -> Result<Changeset, Error> {
     // Checked before anything touches uci.
-    let duplicates = find_duplicate_sections(&rendered.commands());
+    let duplicates = find_duplicate_sections(rendered);
     if !duplicates.is_empty() {
         return Err(Error::DuplicateSections(duplicates));
     }
@@ -168,7 +168,8 @@ fn changeset(rendered: &Rendered) -> Result<Changeset, Error> {
             Some(text) => export::parse(&text).map_err(|cause| Error::Export { file, cause })?,
             None => Vec::new(),
         };
-        let file_changes = diff::diff(file, &current, sections);
+        // Spelled in uci here, while the sections the changes point at are alive.
+        let file_changes = diff::commands(file, &current, &diff::diff(&current, sections));
 
         if !file_changes.is_empty() {
             files.push(*file);
@@ -179,8 +180,9 @@ fn changeset(rendered: &Rendered) -> Result<Changeset, Error> {
     Ok(Changeset { files, changes })
 }
 
-/// Everything `apply` sends to uci: the changes and the files they touch. The changes are staged in a single `uci batch` without
-/// commits; the files are committed only once uci accepted every line.
+/// Everything `apply` sends to uci: the changes and the files they touch. The
+/// changes are staged in a single `uci batch` without commits; the files are
+/// committed only once uci accepted every line.
 struct Changeset {
     files: Vec<&'static str>,
     changes: Vec<UciBatchCommand>,
@@ -235,25 +237,24 @@ fn revert(files: &[&'static str]) -> Result<(), uci::Error> {
     first_failure.map_or(Ok(()), Err)
 }
 
-/// Section paths (`<file>.<section>`) that are created more than once.
+/// Sections (`<file>.<section>`) rendered more than once in one file.
 ///
-/// uci silently merges two `set <file>.<section>='<type>'` of the same name into a
-/// single section — options combined, list values accumulated — so two different
-/// firewall rules would become one rule letting every source reach every
-/// destination. Applying refuses such a batch instead.
-pub(crate) fn find_duplicate_sections(commands: &[UciBatchCommand]) -> Vec<String> {
-    let mut seen = HashSet::new();
+/// uci silently merges two sections of the same name into one — options
+/// combined, list values accumulated — so two different firewall rules would
+/// become one rule letting every source reach every destination. Applying
+/// refuses such a config instead.
+fn find_duplicate_sections(rendered: &Rendered) -> Vec<String> {
     let mut duplicates = Vec::new();
 
-    for command in commands {
-        // A section is created by `set <file>.<section>`: exactly one dot.
-        // Options (`<file>.<section>.<option>`) have two.
-        if let UciBatchCommand::Set(path, _) = command
-            && path.matches('.').count() == 1
-            && !seen.insert(path.as_str())
-            && !duplicates.contains(path)
-        {
-            duplicates.push(path.clone());
+    for (file, sections) in &rendered.files {
+        let mut seen = HashSet::new();
+
+        for section in sections {
+            let path = format!("{file}.{}", section.name);
+
+            if !seen.insert(section.name.as_str()) && !duplicates.contains(&path) {
+                duplicates.push(path);
+            }
         }
     }
 
@@ -263,6 +264,7 @@ pub(crate) fn find_duplicate_sections(commands: &[UciBatchCommand]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::openwrt::section::Section;
     use crate::{
         backend::{
             Backend,
@@ -316,56 +318,49 @@ mod tests {
         );
     }
 
-    #[test]
-    fn generated_changes_contain_no_commit() {
-        // The changes are staged in one `uci batch` and committed separately,
-        // only once uci accepted every line. A commit among the changes would
-        // write a file before that check.
-        let example = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/splot.example.yml"));
-        for node in ["Home", "Cabin"] {
-            let rendered = rendered(example, node);
-            let generated = rendered.commands();
-            assert!(!generated.is_empty());
-            assert!(
-                !generated
-                    .iter()
-                    .any(|c| matches!(c, UciBatchCommand::Commit(_))),
-                "{node}"
-            );
+    /// A section with no options.
+    fn section(name: &str, section_type: &str) -> Section {
+        Section {
+            name: name.to_owned(),
+            section_type: section_type.to_owned(),
+            options: Vec::new(),
         }
     }
 
     #[test]
     fn distinct_sections_pass() {
-        let commands = [
-            set("firewall.spl_rule_in_Home_ssh", "rule"),
-            set("firewall.spl_rule_out_Home_ssh", "rule"),
-            set("network.spl_rule_in_Home_ssh", "interface"), // same name, other file
-        ];
-        assert!(find_duplicate_sections(&commands).is_empty());
+        let rendered = Rendered {
+            files: vec![
+                (
+                    "firewall",
+                    vec![
+                        section("spl_rule_in_Home_ssh", "rule"),
+                        section("spl_rule_out_Home_ssh", "rule"),
+                    ],
+                ),
+                // Same name, other file.
+                (
+                    "network",
+                    vec![section("spl_rule_in_Home_ssh", "interface")],
+                ),
+            ],
+        };
+        assert!(find_duplicate_sections(&rendered).is_empty());
     }
 
     #[test]
     fn duplicate_section_is_reported_once() {
-        let commands = [
-            set("firewall.spl_x", "rule"),
-            set("firewall.spl_x", "rule"),
-            set("firewall.spl_x", "redirect"),
-        ];
-        assert_eq!(find_duplicate_sections(&commands), ["firewall.spl_x"]);
-    }
-
-    #[test]
-    fn options_and_deletes_are_not_sections() {
-        // The same option set twice, or a delete followed by a set, is no clash.
-        let commands = [
-            UciBatchCommand::del("firewall.spl_x"),
-            set("firewall.spl_x", "rule"),
-            set("firewall.spl_x.dest_port", "22"),
-            set("firewall.spl_x.dest_port", "22"),
-            UciBatchCommand::add_list("firewall.spl_x.proto", "tcp"),
-        ];
-        assert!(find_duplicate_sections(&commands).is_empty());
+        let rendered = Rendered {
+            files: vec![(
+                "firewall",
+                vec![
+                    section("spl_x", "rule"),
+                    section("spl_x", "rule"),
+                    section("spl_x", "redirect"),
+                ],
+            )],
+        };
+        assert_eq!(find_duplicate_sections(&rendered), ["firewall.spl_x"]);
     }
 
     #[test]
@@ -395,9 +390,8 @@ nodes:
 ",
             "Home",
         );
-        let commands = rendered.commands();
         assert_eq!(
-            find_duplicate_sections(&commands),
+            find_duplicate_sections(&rendered),
             ["dhcp.spl_host_my_printer"]
         );
     }

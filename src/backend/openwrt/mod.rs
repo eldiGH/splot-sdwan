@@ -17,7 +17,6 @@ use crate::{backend::Backend, plan::NodePlan};
 pub use apply::Error;
 use section::{Section, Value};
 use splot_config::SplotConfig;
-use uci::UciBatchCommand;
 
 /// The node's config as uci sections, file by file, in the order splot commits
 /// the files.
@@ -29,14 +28,6 @@ impl Rendered {
     /// The uci files it writes.
     fn files(&self) -> Vec<&'static str> {
         self.files.iter().map(|(file, _)| *file).collect()
-    }
-
-    /// The commands that create every section, file by file.
-    fn commands(&self) -> Vec<UciBatchCommand> {
-        self.files
-            .iter()
-            .flat_map(|(file, sections)| sections.iter().flat_map(|section| section.commands(file)))
-            .collect()
     }
 
     /// The same config with the node's private key where the placeholder is.
@@ -152,7 +143,12 @@ mod tests {
 
         let filled = rendered.with_private_key("REAL_KEY");
 
-        let commands: Vec<String> = filled.commands().iter().map(ToString::to_string).collect();
+        let commands: Vec<String> = filled
+            .files
+            .iter()
+            .flat_map(|(file, sections)| sections.iter().flat_map(|section| section.commands(file)))
+            .map(|command| command.to_string())
+            .collect();
         assert_eq!(
             commands,
             [
@@ -207,7 +203,7 @@ mod tests {
             for (file, sections) in &backend.render(&plan).files {
                 let read_back = export::parse(&exported(sections)).unwrap();
                 assert_eq!(read_back, *sections, "{} {file}", node.name());
-                assert!(diff::diff(file, &read_back, sections).is_empty());
+                assert!(diff::diff(&read_back, sections).is_empty());
             }
         }
     }
