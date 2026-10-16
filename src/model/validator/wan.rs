@@ -371,7 +371,7 @@ clients:
 
     #[test]
     fn each_via_node_forwards_to_one_of_the_hosts_addresses() {
-        let (_, network) = checked(EXPOSED);
+        let network = checked(EXPOSED);
         let nas = exposure(
             &network,
             &HostRef::Local {

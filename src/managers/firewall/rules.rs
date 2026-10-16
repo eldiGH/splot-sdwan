@@ -1,7 +1,6 @@
 use std::fmt;
 
 use crate::{
-    config::Config,
     managers::{
         UciSection, UciSectionBuilder,
         firewall::{consts::FIREWALL_FILE_NAME, types::FirewallAction},
@@ -10,6 +9,7 @@ use crate::{
     model::{
         Network,
         host::{HostAddress, HostRef},
+        node::Node,
         service::{Service, Source},
     },
     protocol::Protocols,
@@ -171,16 +171,11 @@ pub fn get_firewall_ingress_rules(network: &Network, own_name: &Identifier) -> V
 }
 
 pub fn get_firewall_egress_rules(
-    config: &Config,
     network: &Network,
     own_name: &Identifier,
+    own_node: &Node,
 ) -> Vec<FirewallRule> {
-    let local_networks: Vec<Ipv4Network> = config
-        .nodes
-        .get(own_name)
-        .expect("own node not found - should be validated before running manager")
-        .networks()
-        .collect();
+    let local_networks: Vec<Ipv4Network> = own_node.networks().collect();
 
     host_rules(
         network,
@@ -200,7 +195,7 @@ mod tests {
     }
 
     fn ingress(yaml: &str, own: &str) -> Vec<FirewallRule> {
-        let (_, network) = checked(yaml);
+        let network = checked(yaml);
         get_firewall_ingress_rules(&network, &id(own))
     }
 
@@ -345,8 +340,8 @@ clients:
     }
 
     fn egress(yaml: &str, own: &str) -> Vec<FirewallRule> {
-        let (cfg, network) = checked(yaml);
-        get_firewall_egress_rules(&cfg, &network, &id(own))
+        let network = checked(yaml);
+        get_firewall_egress_rules(&network, &id(own), network.node(&id(own)).unwrap())
     }
 
     // Home-local workstation (tag `staff`) wants to reach Cabin's `web` service.

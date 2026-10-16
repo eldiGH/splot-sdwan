@@ -7,7 +7,6 @@ mod zones;
 use log::{Level, debug, info, log_enabled};
 
 use crate::{
-    config::Config,
     managers::{
         NodeContext, UciManager, UciSection,
         firewall::{
@@ -30,7 +29,6 @@ impl UciManager for FirewallManager {
 
     fn generate_commands(
         &self,
-        config: &Config,
         network: &Network,
         node_context: &NodeContext,
     ) -> Vec<UciBatchCommand> {
@@ -42,9 +40,9 @@ impl UciManager for FirewallManager {
         let zones = get_firewall_zones();
         let mut rules = get_firewall_ingress_rules(network, node_context.own_name);
         rules.extend(get_firewall_egress_rules(
-            config,
             network,
             node_context.own_name,
+            node_context.own_node,
         ));
 
         let redirects = get_firewall_redirects(network, node_context);

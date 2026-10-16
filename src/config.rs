@@ -111,18 +111,6 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn addresses(&self) -> impl Iterator<Item = Ipv4Interface> {
-        self.zones.values().map(|zone| zone.address)
-    }
-
-    /// What sits behind this node: its zones and its hub. Other nodes route these
-    /// through it.
-    pub fn networks(&self) -> impl Iterator<Item = Ipv4Network> {
-        self.addresses()
-            .map(|address| address.network())
-            .chain(self.hub.iter().map(|hub| hub.network))
-    }
-
     /// The node's hub clients; none when it has no hub.
     pub fn hub_clients(&self) -> impl Iterator<Item = (&Identifier, &NodeHubClient)> {
         self.hub.iter().flat_map(|hub| &hub.clients)
@@ -184,12 +172,6 @@ impl Config {
         );
 
         Ok(config)
-    }
-
-    pub fn find_node_by_public_key(&self, pubkey: &str) -> Option<(&Identifier, &Node)> {
-        self.nodes
-            .iter()
-            .find_map(|(name, node)| (node.public_key.as_str() == pubkey).then_some((name, node)))
     }
 
     pub fn services<'a>(&'a self) -> impl Iterator<Item = (&'a Service, ServiceHost<'a>)> {

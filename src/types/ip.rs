@@ -156,16 +156,6 @@ impl Ipv4Interface {
         self.prefix
     }
 
-    pub fn from_ip(ip: Ipv4Addr, prefix: u8) -> Result<Self, Ipv4InterfaceError> {
-        if prefix > 32 {
-            return Err(Ipv4InterfaceError::ParseCidrError(
-                ParseCidrError::InvalidPrefix(prefix.to_string()),
-            ));
-        }
-
-        validate_interface_addr(ip, prefix)
-    }
-
     pub fn is_in_same_network(&self, ip: Ipv4Addr) -> bool {
         let mask = self.mask();
 

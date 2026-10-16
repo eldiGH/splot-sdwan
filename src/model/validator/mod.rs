@@ -14,6 +14,7 @@ use crate::{
     config::Config,
     model::{
         host::{Host, HostRef},
+        node::Node,
         service::Service,
         validator::{
             entities::check_entities, names::validate_names, networks::check_networks,
@@ -27,6 +28,7 @@ use crate::{
 /// What the passes built from a config, out of the parts that passed their
 /// checks, and what they found.
 pub(super) struct Checked {
+    pub(super) nodes: BTreeMap<Identifier, Node>,
     pub(super) hosts: Vec<Host>,
     pub(super) services: BTreeMap<HostRef, BTreeMap<Identifier, Service>>,
     pub(super) report: ValidationReport,
@@ -42,7 +44,7 @@ pub(super) fn check(config: &Config) -> Checked {
 
     check_entities(config, &mut report);
 
-    let hosts = check_networks(config, &mut report);
+    let (nodes, hosts) = check_networks(config, &mut report);
 
     check_ports(config, &mut report);
 
@@ -55,6 +57,7 @@ pub(super) fn check(config: &Config) -> Checked {
     report.sort();
 
     Checked {
+        nodes,
         hosts,
         services,
         report,

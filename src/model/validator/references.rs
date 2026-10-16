@@ -327,7 +327,7 @@ clients:
 
     #[test]
     fn a_service_from_this_node_resolves_on_each_node() {
-        let (_, network) = checked(FIXTURE);
+        let network = checked(FIXTURE);
         let sources = network.services[&HostRef::Node(id("Home"))][&id("dns")].sources();
         let on = |node: &str| -> Vec<String> {
             sources

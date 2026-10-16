@@ -3,14 +3,14 @@ use std::{iter, net::Ipv4Addr};
 use log::{debug, info};
 
 use crate::{
-    config::{Config, Node},
     consts,
     managers::{
         NodeContext, UciManager, UciSection, UciSectionBuilder,
         naming::{self, UciSectionName},
     },
-    model::Network,
+    model::{Network, host::Place},
     types::{
+        identifier::Identifier,
         ip::{Ipv4Interface, Ipv4Network},
         port::Port,
         wg_key::WgPublicKey,
@@ -120,18 +120,59 @@ fn interface_commands(interface: &WgInterface) -> Vec<UciBatchCommand> {
     commands
 }
 
-fn build_mesh_clients(config: &Config) -> Vec<WgClient> {
-    config
-        .clients
+/// A peer for every other node: its endpoint, and its mesh IP and everything
+/// behind it.
+fn build_node_peers(network: &Network, own_name: &Identifier) -> Vec<WgClient> {
+    let mut peers = Vec::new();
+
+    for (node_name, node) in network.nodes() {
+        if node_name == own_name {
+            continue;
+        }
+
+        // Its hub network too, even while the hub has no clients.
+        let allowed_ips: Vec<Ipv4Network> = iter::once(Ipv4Network::host(node.mesh_address().ip()))
+            .chain(node.networks())
+            .collect();
+
+        debug!(
+            "  Mesh peer '{}': endpoint {}:{}, {} AllowedIPs",
+            node_name,
+            node.endpoint(),
+            node.listen_port(),
+            allowed_ips.len()
+        );
+
+        peers.push(WgClient {
+            description: node_name.to_string(),
+            public_key: node.public_key().clone(),
+            allowed_ips,
+            route_allowed_ips: true,
+            endpoint_host: Some(node.endpoint()),
+            endpoint_port: Some(node.listen_port()),
+        });
+    }
+
+    peers
+}
+
+/// A peer for each host with a key and an address `on` picks: global clients on
+/// the mesh, or this node's hub clients.
+fn build_client_peers(network: &Network, on: impl Fn(&Place) -> bool) -> Vec<WgClient> {
+    network
+        .hosts()
         .iter()
-        .filter_map(|(client_name, client)| {
-            let public_key = client.public_key.as_ref()?;
-            let mesh_ip = client.mesh_ip.as_ref()?;
+        .filter_map(|host| {
+            let public_key = host.public_key()?;
+            let address = host
+                .addresses()
+                .iter()
+                .find(|address| on(address.place()))?;
 
             Some(WgClient {
-                description: client_name.to_string(),
+                description: host.id().name().to_string(),
                 public_key: public_key.clone(),
-                allowed_ips: vec![Ipv4Network::host(*mesh_ip)],
+                allowed_ips: vec![Ipv4Network::host(address.ip())],
                 route_allowed_ips: false,
                 endpoint_host: None,
                 endpoint_port: None,
@@ -140,69 +181,27 @@ fn build_mesh_clients(config: &Config) -> Vec<WgClient> {
         .collect()
 }
 
-/// The node's own hub clients: peers on this node only. Every other node reaches
-/// them through this one, by the hub network in this node's peer entry.
-fn build_hub_clients(own_node: &Node) -> Vec<WgClient> {
-    own_node
-        .hub_clients()
-        .map(|(client_name, client)| WgClient {
-            description: client_name.to_string(),
-            public_key: client.public_key.clone(),
-            allowed_ips: vec![Ipv4Network::host(client.ip)],
-            route_allowed_ips: false,
-            endpoint_host: None,
-            endpoint_port: None,
-        })
-        .collect()
-}
+fn build_mesh_interface(network: &Network, node_context: &NodeContext) -> WgInterface {
+    let own_name = node_context.own_name;
+    let own_node = node_context.own_node;
 
-fn build_mesh_interface(node_context: &NodeContext, config: &Config) -> WgInterface {
-    info!(
-        "Generating network config for node '{}'",
-        node_context.own_name
-    );
+    info!("Generating network config for node '{own_name}'");
 
-    let mut clients = Vec::new();
-
-    for (node_name, node) in &config.nodes {
-        if node_name == node_context.own_name {
-            continue;
-        }
-
-        // Its hub network too, even while the hub has no clients.
-        let allowed_ips: Vec<Ipv4Network> = iter::once(Ipv4Network::host(node.mesh_ip))
-            .chain(node.networks())
-            .collect();
-
-        debug!(
-            "  Mesh peer '{}': endpoint {}:{}, {} AllowedIPs",
-            node_name,
-            node.endpoint,
-            node.listen_port,
-            allowed_ips.len()
-        );
-
-        clients.push(WgClient {
-            description: node_name.to_string(),
-            public_key: node.public_key.clone(),
-            allowed_ips,
-            route_allowed_ips: true,
-            endpoint_host: Some(node.endpoint),
-            endpoint_port: Some(node.listen_port),
-        });
-    }
-
-    clients.extend(build_mesh_clients(config));
-    clients.extend(build_hub_clients(node_context.own_node));
+    let mut clients = build_node_peers(network, own_name);
+    // Global clients: peers on every node.
+    clients.extend(build_client_peers(network, |place| *place == Place::Mesh));
+    // This node's hub clients: peers on this node only. Every other node reaches
+    // them through this one, by the hub network in this node's peer entry.
+    clients.extend(build_client_peers(
+        network,
+        |place| matches!(place, Place::Hub { node } if node == own_name),
+    ));
 
     info!("  Mesh interface: {} peer(s)", clients.len());
 
     WgInterface {
-        addresses: vec![
-            Ipv4Interface::from_ip(node_context.own_node.mesh_ip, config.mesh_network.prefix())
-                .expect("invalid prefix, should be validated"),
-        ],
-        listen_port: node_context.own_node.listen_port,
+        addresses: vec![own_node.mesh_address()],
+        listen_port: own_node.listen_port(),
         private_key: node_context.splot_config.mesh_key().to_owned(),
         name: consts::MESH_INTERFACE_NAME.to_owned(),
         clients,
@@ -214,11 +213,10 @@ pub struct NetworkManager;
 impl UciManager for NetworkManager {
     fn generate_commands(
         &self,
-        config: &Config,
-        _network: &Network,
+        network: &Network,
         node_context: &NodeContext,
     ) -> Vec<UciBatchCommand> {
-        interface_commands(&build_mesh_interface(node_context, config))
+        interface_commands(&build_mesh_interface(network, node_context))
     }
 
     fn config_file(&self) -> &'static str {
@@ -229,10 +227,7 @@ impl UciManager for NetworkManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        splot_config::SplotConfig, test_support::config, types::identifier::Identifier,
-        uci::UciBatchCommand,
-    };
+    use crate::{splot_config::SplotConfig, test_support::checked, uci::UciBatchCommand};
 
     // Home has a hub with a client; Cabin's hub is empty.
     const FIXTURE: &str = "
@@ -271,22 +266,22 @@ clients:
 
     const MESH_KEY: &str = "MESH_PRIVATE_AAAA";
 
-    fn mesh_interface_of(cfg: &Config, own: &str) -> WgInterface {
+    fn mesh_interface_of(network: &Network, own: &str) -> WgInterface {
         let own_name: Identifier = own.parse().unwrap();
         let splot_config = SplotConfig::for_tests(MESH_KEY);
 
         build_mesh_interface(
+            network,
             &NodeContext {
-                own_node: cfg.nodes.get(&own_name).unwrap(),
+                own_node: network.node(&own_name).unwrap(),
                 own_name: &own_name,
                 splot_config: &splot_config,
             },
-            cfg,
         )
     }
 
     fn cmds_for(yaml: &str, own: &str) -> Vec<UciBatchCommand> {
-        interface_commands(&mesh_interface_of(&config(yaml), own))
+        interface_commands(&mesh_interface_of(&checked(yaml), own))
     }
 
     fn cmds() -> Vec<UciBatchCommand> {
@@ -390,9 +385,9 @@ clients:
         // peers must never claim the same address.
         let example = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/splot.example.yml"));
         for yaml in [FIXTURE, example] {
-            let cfg = config(yaml);
-            for own in cfg.nodes.keys() {
-                let interface = mesh_interface_of(&cfg, own.as_ref());
+            let network = checked(yaml);
+            for (own, _) in network.nodes() {
+                let interface = mesh_interface_of(&network, own.as_ref());
                 let claims: Vec<(&str, Ipv4Network)> = interface
                     .clients
                     .iter()
@@ -414,6 +409,40 @@ clients:
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_global_client_is_a_peer_by_its_mesh_ip_only() {
+        // Laptop has a key but no mesh IP (a warning): it's on Cabin's lan, not a
+        // WireGuard peer.
+        let c = cmds_for(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    zones:
+      lan:
+        address: 192.168.2.1/24
+clients:
+  Laptop:
+    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+    macs: AA:BB:CC:DD:EE:01
+    ips:
+      Cabin: { lan: 192.168.2.50 }
+",
+            "Cabin",
+        );
+        assert!(has_cmd(&c, "spl_wireguard_spl_mesh_Home"), "node peer missing");
+        assert!(!has_cmd(&c, "spl_wireguard_spl_mesh_Laptop"));
     }
 
     #[test]

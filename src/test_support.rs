@@ -20,12 +20,10 @@ pub(crate) fn report(yaml: &str) -> ValidationReport {
     }
 }
 
-/// A fixture that must pass validation: its config, and the network it describes.
-pub(crate) fn checked(yaml: &str) -> (Config, Network) {
-    let config = config(yaml);
-
-    match model::validate(&config) {
-        Ok(validated) => (config, validated.network),
+/// A fixture that must pass validation, as the network it describes.
+pub(crate) fn checked(yaml: &str) -> Network {
+    match model::validate(&config(yaml)) {
+        Ok(validated) => validated.network,
         Err(report) => panic!(
             "test fixture doesn't validate: {:?}",
             report

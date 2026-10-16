@@ -3,7 +3,6 @@ use std::{collections::BTreeSet, net::Ipv4Addr};
 use log::{Level, debug, info, log_enabled};
 
 use crate::{
-    config::Config,
     managers::{NodeContext, UciManager, UciSection, UciSectionBuilder, naming},
     model::{Network, host::Place},
     types::{identifier::Identifier, mac::MacAddress},
@@ -68,7 +67,6 @@ impl UciManager for DhcpManager {
 
     fn generate_commands(
         &self,
-        _config: &Config,
         network: &Network,
         node_context: &NodeContext,
     ) -> Vec<UciBatchCommand> {
@@ -154,15 +152,14 @@ clients:
     }
 
     fn cmds() -> Vec<UciBatchCommand> {
-        let (config, network) = checked(FIXTURE);
+        let network = checked(FIXTURE);
         let own_name: Identifier = "Home".parse().unwrap();
         let splot_config = SplotConfig::for_tests("AAAA");
 
         DhcpManager.generate_commands(
-            &config,
             &network,
             &NodeContext {
-                own_node: config.nodes.get(&own_name).unwrap(),
+                own_node: network.node(&own_name).unwrap(),
                 own_name: &own_name,
                 splot_config: &splot_config,
             },

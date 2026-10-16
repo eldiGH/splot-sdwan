@@ -3,7 +3,6 @@ mod reload;
 use std::collections::HashSet;
 
 use crate::{
-    config::Config,
     consts,
     managers::{NodeContext, UciManager, naming},
     model::Network,
@@ -94,7 +93,6 @@ impl UciPipeline {
     /// reloads the services whose config changed. Returns the changed files.
     pub fn run(
         &self,
-        config: &Config,
         network: &Network,
         node_context: &NodeContext,
     ) -> Result<Vec<&'static str>, PipelineError> {
@@ -116,8 +114,7 @@ impl UciPipeline {
 
         let files = self.files();
         let before = snapshot(&files)?;
-        self.changeset(config, network, node_context, &before)?
-            .apply()?;
+        self.changeset(network, node_context, &before)?.apply()?;
         let after = snapshot(&files)?;
         let changed = changed_files(&before, &after);
 
@@ -133,7 +130,6 @@ impl UciPipeline {
     /// Prints what `run` would send to uci, and the reload after it.
     pub fn print(
         &self,
-        config: &Config,
         network: &Network,
         node_context: &NodeContext,
     ) -> Result<(), PipelineError> {
@@ -142,10 +138,7 @@ impl UciPipeline {
         let files = self.files();
         let current = snapshot(&files)?;
 
-        for command in self
-            .changeset(config, network, node_context, &current)?
-            .commands()
-        {
+        for command in self.changeset(network, node_context, &current)?.commands() {
             println!("{}", command.redacted());
         }
 
@@ -162,27 +155,21 @@ impl UciPipeline {
         Ok(())
     }
 
-    fn generate(
-        &self,
-        config: &Config,
-        network: &Network,
-        node_context: &NodeContext,
-    ) -> Vec<UciBatchCommand> {
+    fn generate(&self, network: &Network, node_context: &NodeContext) -> Vec<UciBatchCommand> {
         self.managers
             .iter()
-            .flat_map(|manager| manager.generate_commands(config, network, node_context))
+            .flat_map(|manager| manager.generate_commands(network, node_context))
             .collect()
     }
 
     fn changeset(
         &self,
-        config: &Config,
         network: &Network,
         node_context: &NodeContext,
         current: &Snapshot,
     ) -> Result<Changeset, PipelineError> {
         let files = self.files();
-        let generated = self.generate(config, network, node_context);
+        let generated = self.generate(network, node_context);
 
         // Checked before anything touches uci.
         let duplicates = find_duplicate_sections(&generated);
@@ -439,7 +426,7 @@ network.spl_wireguard_spl_mesh_Cabin=wireguard_spl_mesh"
         // The changes are staged in one `uci batch` and committed separately,
         // only once uci accepted every line. A commit among the changes would
         // write a file before that check.
-        let (config, network) = checked(include_str!(concat!(
+        let network = checked(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/splot.example.yml"
         )));
@@ -448,9 +435,8 @@ network.spl_wireguard_spl_mesh_Cabin=wireguard_spl_mesh"
             .register(FirewallManager)
             .register(DhcpManager);
         let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY");
-        for (node_name, node) in &config.nodes {
+        for (node_name, node) in network.nodes() {
             let generated = pipeline.generate(
-                &config,
                 &network,
                 &NodeContext {
                     own_name: node_name,
@@ -506,7 +492,7 @@ network.spl_wireguard_spl_mesh_Cabin=wireguard_spl_mesh"
         // `my-printer` and `my_printer` are distinct identifiers, but both map to
         // the uci section `spl_host_my_printer`. The guard must catch what the
         // generators produce, not just hand-built commands.
-        let (config, network) = checked(
+        let network = checked(
             "
 meshNetwork: 10.100.0.0/24
 nodes:
@@ -530,11 +516,10 @@ nodes:
         let own_name: Identifier = "Home".parse().unwrap();
         let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY");
         let commands = DhcpManager.generate_commands(
-            &config,
             &network,
             &NodeContext {
                 own_name: &own_name,
-                own_node: &config.nodes[&own_name],
+                own_node: network.node(&own_name).unwrap(),
                 splot_config: &splot_config,
             },
         );

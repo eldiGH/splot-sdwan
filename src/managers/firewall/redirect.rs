@@ -72,7 +72,7 @@ pub fn get_firewall_redirects(
     network: &Network,
     node_context: &NodeContext,
 ) -> Vec<FirewallRedirect> {
-    let Some(wan_zone) = &node_context.own_node.wan_zone else {
+    let Some(wan_zone) = node_context.own_node.wan_zone() else {
         return Vec::new();
     };
     let mut redirects = Vec::new();
@@ -106,14 +106,14 @@ mod tests {
     use crate::{splot_config::SplotConfig, test_support::checked, types::identifier::Identifier};
 
     fn redirects(yaml: &str, own: &str) -> Vec<FirewallRedirect> {
-        let (cfg, network) = checked(yaml);
+        let network = checked(yaml);
         let own_name: Identifier = own.parse().unwrap();
         let splot_config = SplotConfig::for_tests("AAAA");
 
         get_firewall_redirects(
             &network,
             &NodeContext {
-                own_node: cfg.nodes.get(&own_name).unwrap(),
+                own_node: network.node(&own_name).unwrap(),
                 own_name: &own_name,
                 splot_config: &splot_config,
             },

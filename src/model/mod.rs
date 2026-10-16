@@ -1,6 +1,7 @@
 //! The checked model: what a config becomes once it passed validation.
 
 pub mod host;
+pub mod node;
 pub mod service;
 pub mod validator;
 
@@ -8,6 +9,7 @@ use std::collections::BTreeMap;
 
 use crate::{config::Config, types::identifier::Identifier};
 use host::{Host, HostRef};
+use node::Node;
 use service::Service;
 use validator::{
     Checked,
@@ -17,11 +19,28 @@ use validator::{
 /// The network a config describes, once it passed validation. Only [`validate`]
 /// makes one, so everything that reads it can rely on what validation checked.
 pub struct Network {
+    nodes: BTreeMap<Identifier, Node>,
     hosts: Vec<Host>,
     services: BTreeMap<HostRef, BTreeMap<Identifier, Service>>,
 }
 
 impl Network {
+    /// Every node, by name.
+    pub fn nodes(&self) -> impl Iterator<Item = (&Identifier, &Node)> {
+        self.nodes.iter()
+    }
+
+    pub fn node(&self, name: &Identifier) -> Option<&Node> {
+        self.nodes.get(name)
+    }
+
+    /// The node with this public key. Keys are unique, so there's at most one.
+    pub fn find_node_by_public_key(&self, public_key: &str) -> Option<(&Identifier, &Node)> {
+        self.nodes
+            .iter()
+            .find(|(_, node)| node.public_key.as_str() == public_key)
+    }
+
     /// Every host, in config order: each node, its devices zone by zone and its hub
     /// clients, then the global clients.
     pub fn hosts(&self) -> &[Host] {
@@ -44,6 +63,7 @@ pub struct Validated {
 /// reported, not just the first.
 pub fn validate(config: &Config) -> Result<Validated, ValidationReport> {
     let Checked {
+        nodes,
         hosts,
         services,
         report,
@@ -51,7 +71,11 @@ pub fn validate(config: &Config) -> Result<Validated, ValidationReport> {
 
     if report.errors.is_empty() {
         Ok(Validated {
-            network: Network { hosts, services },
+            network: Network {
+                nodes,
+                hosts,
+                services,
+            },
             warnings: report.warnings,
         })
     } else {
@@ -63,7 +87,7 @@ pub fn validate(config: &Config) -> Result<Validated, ValidationReport> {
 mod tests {
     use super::*;
     use crate::{
-        model::host::{HostAddress, HostRef, Place},
+        model::host::{Host, HostAddress, HostRef, Place},
         test_support::{checked, config},
         types::identifier::Identifier,
     };
@@ -166,7 +190,7 @@ clients:
 
     #[test]
     fn hosts_come_in_config_order() {
-        let (_, network) = checked(HOSTS);
+        let network = checked(HOSTS);
         let ids: Vec<HostRef> = network.hosts().iter().map(|h| h.id().clone()).collect();
         assert_eq!(
             ids,
@@ -182,7 +206,7 @@ clients:
 
     #[test]
     fn every_address_has_its_subnet_and_its_place() {
-        let (_, network) = checked(HOSTS);
+        let network = checked(HOSTS);
         let [_, home, printer, camera, phone] = network.hosts() else {
             panic!("expected five hosts");
         };
@@ -212,8 +236,68 @@ clients:
     }
 
     #[test]
+    fn a_node_carries_what_the_mesh_needs_of_it() {
+        let network = checked(HOSTS);
+        let home = network.node(&id("Home")).unwrap();
+
+        assert_eq!(
+            home.public_key().as_str(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        );
+        assert_eq!(home.endpoint().to_string(), "1.2.3.4");
+        assert_eq!(home.listen_port().to_string(), "51820");
+        // Its mesh IP with the mesh network's prefix.
+        assert_eq!(home.mesh_address().to_string(), "10.100.0.1/16");
+        assert_eq!(
+            home.networks().map(|n| n.to_string()).collect::<Vec<_>>(),
+            ["192.168.1.0/24", "10.100.49.0/24"]
+        );
+
+        let cabin = network.node(&id("Cabin")).unwrap();
+        assert_eq!(cabin.networks().count(), 0);
+        assert!(network.node(&id("Phone")).is_none());
+    }
+
+    #[test]
+    fn a_node_is_found_by_its_public_key() {
+        let network = checked(HOSTS);
+        let found = network.find_node_by_public_key("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=");
+        assert_eq!(
+            found.map(|(name, _)| name.to_string()),
+            Some("Cabin".into())
+        );
+        // A hub client's key is no node's.
+        assert!(
+            network
+                .find_node_by_public_key("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn hub_and_global_clients_carry_their_public_keys() {
+        let network = checked(HOSTS);
+        let [cabin, _, printer, camera, phone] = network.hosts() else {
+            panic!("expected five hosts");
+        };
+        let key = |host: &Host| host.public_key().map(|key| key.as_str().to_owned());
+
+        assert_eq!(
+            key(camera).unwrap(),
+            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="
+        );
+        assert_eq!(
+            key(phone).unwrap(),
+            "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA="
+        );
+        // A node's key is on its node; a device has none.
+        assert!(key(cabin).is_none());
+        assert!(key(printer).is_none());
+    }
+
+    #[test]
     fn a_host_carries_its_macs_and_the_network_its_services() {
-        let (_, network) = checked(HOSTS);
+        let network = checked(HOSTS);
         let [_, home, printer, camera, phone] = network.hosts() else {
             panic!("expected five hosts");
         };

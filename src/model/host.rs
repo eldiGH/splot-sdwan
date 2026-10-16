@@ -4,7 +4,7 @@ use std::{collections::BTreeSet, net::Ipv4Addr};
 
 use crate::{
     config::ServiceHost,
-    types::{identifier::Identifier, ip::Ipv4Interface, mac::MacAddress},
+    types::{identifier::Identifier, ip::Ipv4Interface, mac::MacAddress, wg_key::WgPublicKey},
 };
 
 /// Which host it is, by the name an `allowFrom` refers to it with. A zone device
@@ -117,6 +117,9 @@ pub struct Host {
     pub(super) id: HostRef,
     pub(super) addresses: Vec<HostAddress>,
     pub(super) macs: BTreeSet<MacAddress>,
+    /// Its WireGuard key: a hub client's, or a global client's when it has one. A
+    /// node's is on its [`Node`](super::node::Node).
+    pub(super) public_key: Option<WgPublicKey>,
 }
 
 impl Host {
@@ -155,6 +158,10 @@ impl Host {
     /// them.
     pub fn macs(&self) -> &BTreeSet<MacAddress> {
         &self.macs
+    }
+
+    pub fn public_key(&self) -> Option<&WgPublicKey> {
+        self.public_key.as_ref()
     }
 }
 
@@ -214,6 +221,7 @@ mod tests {
             id,
             addresses,
             macs: BTreeSet::new(),
+            public_key: None,
         }
     }
 

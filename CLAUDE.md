@@ -172,7 +172,7 @@ Tests are inline `#[cfg(test)] mod tests { use super::*; ... }` modules, always 
 ### Fixtures
 
 - **Pure type parsers** are driven directly through `FromStr` with a small local `parse()` helper.
-- **Config-level tests** build a `Config` from a YAML string via `serde_norway::from_str` — this mirrors real loading and exercises the serde layer too. Shared helpers live in `src/test_support.rs` (`#[cfg(test)]`-only, `pub(crate)`): `config()`, `report()`, `checked()` (a fixture that must pass validation: its `Config` and the `Network` the generators take), and `has_error` / `has_warning` / `error_at` matchers. The matchers take closures because `ValidationError` / `ValidationWarning` don't derive `PartialEq` — match on the variant with `matches!(..)`.
+- **Config-level tests** build a `Config` from a YAML string via `serde_norway::from_str` — this mirrors real loading and exercises the serde layer too. Shared helpers live in `src/test_support.rs` (`#[cfg(test)]`-only, `pub(crate)`): `config()`, `report()`, `checked()` (a fixture that must pass validation, as the `Network` the generators take), and `has_error` / `has_warning` / `error_at` matchers. The matchers take closures because `ValidationError` / `ValidationWarning` don't derive `PartialEq` — match on the variant with `matches!(..)`.
 
 ### Snapshots
 

@@ -48,7 +48,8 @@ fn main() -> anyhow::Result<()> {
             let splot_config = splot_config::SplotConfig::load()?;
             let own_public_key = wg::get_pubkey(splot_config.mesh_key())
                 .context("failed to derive this router's public key")?;
-            let Some((own_name, own_node)) = config.find_node_by_public_key(&own_public_key) else {
+            let Some((own_name, own_node)) = network.find_node_by_public_key(&own_public_key)
+            else {
                 bail!(
                     "this router's public key was not found in the splot config - add this node and try again"
                 );
@@ -66,9 +67,9 @@ fn main() -> anyhow::Result<()> {
             };
 
             if *dry_run {
-                pipeline.print(&config, &network, &node_context)?;
+                pipeline.print(&network, &node_context)?;
             } else {
-                let changed = pipeline.run(&config, &network, &node_context)?;
+                let changed = pipeline.run(&network, &node_context)?;
 
                 if changed.is_empty() {
                     println!("Nothing changed.");
