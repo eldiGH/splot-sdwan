@@ -170,7 +170,7 @@ Cleans up ~150 lines of nested-loop duplication across validators and generators
 
 > **Status: planned.** Today `Node.endpoint` is a required `Ipv4Addr`, so every node must be publicly reachable. Nodes behind NAT (home routers behind ISP NAT or CGNAT, with no port forward) are a common case and aren't supported yet. Priority is a judgment call — this is a user-facing capability and arguably outranks the internal refactors above (items 4–5).
 
-Make `endpoint` optional. A node with no `endpoint` has no address peers can dial, so it is responsible for **initiating** the WireGuard handshake outward to the reachable nodes. WireGuard learns the initiator's source `ip:port` from the incoming handshake, so a reachable peer can then send back; `persistent_keepalive` (splot already sets `25` on every peer) keeps the NAT mapping open so return traffic keeps flowing.
+Make `endpoint` optional. A node with no `endpoint` has no address peers can dial, so it is responsible for **initiating** the WireGuard handshake outward to the reachable nodes. WireGuard learns the initiator's source `ip:port` from the incoming handshake, so a reachable peer can then send back. For others to reach it at any time, its NAT mapping must stay open: that's splot's keepalive rule (only a host behind NAT that offers services sends keepalives).
 
 ### Config change
 

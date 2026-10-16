@@ -34,6 +34,7 @@ Real network architecture (subnets, VLANs, NAT) is not an implementation detail 
 ### Top-level config shape
 
 - `meshNetwork` — the whole WireGuard mesh address space: the nodes' and global clients' `meshIp`, and the nodes' hub networks
+- `keepaliveInterval` — seconds between WireGuard keepalives, for the hosts that send them (see "Keepalive"); optional, default 25
 - `nodes` — map of routers participating in the mesh
 - `clients` — map of *global* clients: roaming things (phones, laptops) with optional MACs and per-node IPs, accessible across the mesh
 
@@ -156,6 +157,15 @@ A hub is a network inside `meshNetwork` that a node sets aside for devices reach
 - **Hub client vs global client:** a hub client is a peer on its hub node only; a global client with `meshIp` is a peer on every node.
 - **Firewall:** everything on a hub arrives over the mesh interface, so it's in splot's mesh zone; rules tell hub clients apart by source IP.
 - **References:** hub clients join the node's namespace (`Home.camera`); `Home.hub` and the hub's `tags` refer to the whole hub network, the way a zone's name and tags do; a bare node name includes it.
+
+### Keepalive
+
+A WireGuard keepalive is sent by the host it's set on, to its peers. It keeps that host's NAT mapping open, so whoever connects to it gets through.
+
+- **Off by default** on every node, global client and hub client. On a roaming device a keepalive wakes the radio (battery) and chases stale addresses. Site health is checked by pinging mesh IPs, not by "latest handshake".
+- **On only for a host behind NAT that offers services**, every `keepaliveInterval` seconds (default 25; `0` turns none on). A host that only dials out needs none: replies to what it starts come back anyway.
+- Every node has a public `endpoint` today, so no node sends keepalives. The rule's other cases are for client profiles and nodes behind NAT.
+- No per-host setting yet. One is planned for when client profiles exist, mainly to opt a host out.
 
 ---
 

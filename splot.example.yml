@@ -17,6 +17,11 @@
 # `meshIp` from it, and each node may set aside a hub network inside it.
 meshNetwork: 10.100.0.0/16
 
+# Seconds between WireGuard keepalives, for the hosts that send them: only a
+# host behind NAT that offers services does, to keep its NAT mapping open for
+# whoever connects to it. Optional, 25 by default; 0 turns none on.
+keepaliveInterval: 25
+
 # Global clients: roaming devices (phones, laptops) reachable across the
 # whole mesh. Tags applied here are usable in any service's `allowFrom`.
 clients:

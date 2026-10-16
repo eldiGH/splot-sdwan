@@ -133,7 +133,7 @@ Once `endpoint` is optional, a NAT'd node reaches any **publicly reachable** nod
 
 ### Who initiates?
 
-In every case the NAT'd node is the initiator — a node behind NAT can only ever dial *out*. For the relay approach below, both NAT'd nodes initiate to the relay (not to each other). The keepalive splot already sets holds each mapping open.
+In every case the NAT'd node is the initiator — a node behind NAT can only ever dial *out*. For the relay approach below, both NAT'd nodes initiate to the relay (not to each other). Keepalive holds each mapping open (splot's rule: a host behind NAT that offers services sends it).
 
 ### Option A — Relay through a reachable node (hub)
 

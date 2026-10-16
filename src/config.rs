@@ -143,10 +143,21 @@ impl Client {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
     pub mesh_network: Ipv4Network,
+    /// Seconds between the keepalives splot turns on by itself; 0 turns none on.
+    #[serde(default = "default_keepalive_interval")]
+    pub keepalive_interval: u16,
     pub nodes: BTreeMap<Identifier, Node>,
 
     #[serde(default)]
     pub clients: BTreeMap<Identifier, Client>,
+}
+
+/// Seconds between keepalives unless the config says otherwise: WireGuard's
+/// suggestion, which works with a wide variety of NATs and firewalls.
+const DEFAULT_KEEPALIVE_INTERVAL: u16 = 25;
+
+fn default_keepalive_interval() -> u16 {
+    DEFAULT_KEEPALIVE_INTERVAL
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -506,5 +517,14 @@ clients:
 "
         ));
         assert!(err.contains("unknown field `tag`"), "{err}");
+    }
+
+    #[test]
+    fn keepalive_interval_is_25_unless_set() {
+        assert_eq!(config(NODE).keepalive_interval, 25);
+        assert_eq!(
+            config(&format!("keepaliveInterval: 40\n{NODE}")).keepalive_interval,
+            40
+        );
     }
 }

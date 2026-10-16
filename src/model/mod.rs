@@ -5,7 +5,7 @@ pub mod node;
 pub mod service;
 pub mod validator;
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, num::NonZeroU16};
 
 use crate::{config::Config, types::identifier::Identifier};
 use host::{Host, HostRef};
@@ -22,6 +22,7 @@ pub struct Network {
     nodes: BTreeMap<Identifier, Node>,
     hosts: Vec<Host>,
     services: BTreeMap<HostRef, BTreeMap<Identifier, Service>>,
+    keepalive_interval: Option<NonZeroU16>,
 }
 
 impl Network {
@@ -45,6 +46,19 @@ impl Network {
     /// clients, then the global clients.
     pub fn hosts(&self) -> &[Host] {
         &self.hosts
+    }
+
+    /// Seconds between the keepalives splot turns on by itself; none when the
+    /// config turns them off.
+    pub fn keepalive_interval(&self) -> Option<NonZeroU16> {
+        self.keepalive_interval
+    }
+
+    /// Whether the host offers any service.
+    pub fn offers_services(&self, host: &HostRef) -> bool {
+        self.services
+            .get(host)
+            .is_some_and(|services| !services.is_empty())
     }
 
     /// The services `host` offers, by name.
@@ -75,6 +89,7 @@ pub fn validate(config: &Config) -> Result<Validated, ValidationReport> {
                 nodes,
                 hosts,
                 services,
+                keepalive_interval: NonZeroU16::new(config.keepalive_interval),
             },
             warnings: report.warnings,
         })
@@ -294,6 +309,25 @@ clients:
         // A node's key is on its node; a device has none.
         assert!(key(cabin).is_none());
         assert!(key(printer).is_none());
+    }
+
+    #[test]
+    fn a_host_offers_services_when_it_has_any() {
+        let (network, home) = (checked(HOSTS), HostRef::Node(id("Home")));
+        assert!(network.offers_services(&local("Home", "printer")));
+        assert!(!network.offers_services(&home));
+        assert!(!network.offers_services(&local("Home", "camera")));
+        assert!(!network.offers_services(&HostRef::Client(id("Nobody"))));
+    }
+
+    #[test]
+    fn a_keepalive_interval_of_0_turns_none_on() {
+        let interval = |yaml: &str| checked(yaml).keepalive_interval().map(NonZeroU16::get);
+        assert_eq!(
+            interval(&format!("keepaliveInterval: 40\n{HOSTS}")),
+            Some(40)
+        );
+        assert_eq!(interval(&format!("keepaliveInterval: 0\n{HOSTS}")), None);
     }
 
     #[test]

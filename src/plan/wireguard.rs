@@ -1,6 +1,6 @@
 //! The node's WireGuard: its mesh interface and the peers on it.
 
-use std::{fmt, iter, net::Ipv4Addr};
+use std::{fmt, iter, net::Ipv4Addr, num::NonZeroU16};
 
 use crate::{
     model::{
@@ -15,9 +15,18 @@ use crate::{
     },
 };
 
-/// Seconds between keepalives where a peer gets them.
-// TODO: the rule that decides which peers get keepalives replaces this.
-const KEEPALIVE: u16 = 25;
+/// The keepalive a host sends its peers, every `interval` seconds (the mesh's
+/// `keepaliveInterval`). Only a host behind NAT that offers services needs one:
+/// it keeps the host's NAT mapping open, so whoever connects to it gets through.
+/// A host that only dials out doesn't, and on a roaming device a keepalive
+/// drains the battery and chases stale addresses.
+fn keepalive(
+    behind_nat: bool,
+    offers_services: bool,
+    interval: Option<NonZeroU16>,
+) -> Option<NonZeroU16> {
+    interval.filter(|_| behind_nat && offers_services)
+}
 
 /// The node's mesh interface. Its private key isn't here: the backend holds it.
 #[derive(Debug)]
@@ -40,8 +49,8 @@ pub struct Peer {
     pub routed: bool,
     pub endpoint: Option<Endpoint>,
     /// Seconds between keepalives this node sends the peer; none when it sends
-    /// none.
-    pub keepalive: Option<u16>,
+    /// none (see `keepalive`).
+    pub keepalive: Option<NonZeroU16>,
 }
 
 /// Where a peer is reached.
@@ -53,7 +62,7 @@ pub struct Endpoint {
 
 /// A peer for every other node: its endpoint, and its mesh IP and everything
 /// behind it (its hub network too, even while the hub has no clients).
-fn node_peers(network: &Network, own: &Node) -> Vec<Peer> {
+fn node_peers(network: &Network, own: &Node, keepalive: Option<NonZeroU16>) -> Vec<Peer> {
     network
         .nodes()
         .filter(|node| node.name() != own.name())
@@ -68,13 +77,17 @@ fn node_peers(network: &Network, own: &Node) -> Vec<Peer> {
                 host: node.endpoint(),
                 port: node.listen_port(),
             }),
-            keepalive: Some(KEEPALIVE),
+            keepalive,
         })
         .collect()
 }
 
 /// A peer for each host with a key and an address `on` picks.
-fn client_peers(network: &Network, on: impl Fn(&Place) -> bool) -> Vec<Peer> {
+fn client_peers(
+    network: &Network,
+    on: impl Fn(&Place) -> bool,
+    keepalive: Option<NonZeroU16>,
+) -> Vec<Peer> {
     network
         .hosts()
         .iter()
@@ -91,21 +104,35 @@ fn client_peers(network: &Network, on: impl Fn(&Place) -> bool) -> Vec<Peer> {
                 allowed_ips: vec![Ipv4Network::host(address.ip())],
                 routed: false,
                 endpoint: None,
-                keepalive: Some(KEEPALIVE),
+                keepalive,
             })
         })
         .collect()
 }
 
 pub(super) fn plan(network: &Network, own: &Node) -> WireGuardPlan {
-    let mut peers = node_peers(network, own);
+    // What this node sends every peer. Every node has a public endpoint (nodes
+    // behind NAT aren't supported yet), so none sends keepalives.
+    let behind_nat = false;
+    let keepalive = keepalive(
+        behind_nat,
+        network.offers_services(&HostRef::Node(own.name().clone())),
+        network.keepalive_interval(),
+    );
+
+    let mut peers = node_peers(network, own, keepalive);
     // Global clients: peers on every node, by their mesh IP.
-    peers.extend(client_peers(network, |place| *place == Place::Mesh));
+    peers.extend(client_peers(
+        network,
+        |place| *place == Place::Mesh,
+        keepalive,
+    ));
     // This node's hub clients: peers on this node only. Every other node reaches
     // them through this one, by the hub network in this node's peer entry.
     peers.extend(client_peers(
         network,
         |place| matches!(place, Place::Hub { node } if node == own.name()),
+        keepalive,
     ));
 
     WireGuardPlan {
@@ -212,6 +239,37 @@ clients:
             .iter()
             .map(|peer| format!("{}: {}", peer.host, super::super::list(&peer.allowed_ips)))
             .collect()
+    }
+
+    #[test]
+    fn keepalive_only_for_a_host_behind_nat_that_offers_services() {
+        // Only such a host must keep its NAT mapping open for whoever connects to
+        // it; a keepalive anywhere else wakes roaming devices for nothing.
+        let every_40s = NonZeroU16::new(40);
+        assert_eq!(keepalive(true, true, every_40s), every_40s);
+        assert_eq!(keepalive(true, false, every_40s), None);
+        assert_eq!(keepalive(false, true, every_40s), None);
+        assert_eq!(keepalive(false, false, every_40s), None);
+    }
+
+    #[test]
+    fn without_an_interval_no_host_sends_keepalives() {
+        assert_eq!(keepalive(true, true, None), None);
+    }
+
+    #[test]
+    fn no_peer_entry_on_a_node_has_a_keepalive() {
+        // Nodes aren't behind NAT, whatever they offer (the example's Home offers
+        // ssh); and a node never keeps a roaming client's NAT open.
+        let example = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/splot.example.yml"));
+        for yaml in [FIXTURE, example] {
+            let network = checked(yaml);
+            for own in network.nodes() {
+                for peer in plan(&network, own).peers {
+                    assert_eq!(peer.keepalive, None, "on {}: {}", own.name(), peer.host);
+                }
+            }
+        }
     }
 
     #[test]

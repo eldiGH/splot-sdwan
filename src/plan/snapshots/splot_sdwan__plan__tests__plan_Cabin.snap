@@ -6,8 +6,8 @@ expression: plan.to_string()
 
 [wireguard]
 interface: listen 51820, address 10.100.0.2/16
-peer Home: key ReplaceHomePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.1/32, 192.168.1.0/24, 10.100.10.0/24], routed, endpoint 203.0.113.10:51820, keepalive 25s
-peer Phone: key ReplacePhonePublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.100/32], keepalive 25s
+peer Home: key ReplaceHomePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.1/32, 192.168.1.0/24, 10.100.10.0/24], routed, endpoint 203.0.113.10:51820
+peer Phone: key ReplacePhonePublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.100/32]
 
 [firewall]
 mesh zone: input drop, output accept, forward drop

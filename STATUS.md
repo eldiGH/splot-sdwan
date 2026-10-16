@@ -47,7 +47,7 @@ Validation is how the checked model (`src/model/`) gets built: `model::validate(
 
 What one node has to do, by concern, worked out from the `Network`, with no platform in it: `plan::plan(&Network, node) -> Option<NodePlan>`, where `NodePlan { wireguard, firewall, dhcp }`. Each section comes from its own pure planner function, which takes the `Network` and the node (looked up once, by `plan`, so a planner only ever sees one of this network's nodes); DNS joins once it's implemented.
 
-- **`wireguard`**: the mesh interface (listen port, mesh address) and its peers: every other node (routed, with its endpoint), every global client with a mesh IP, and this node's hub clients. Each peer carries its keepalive. No private key: the backend holds it.
+- **`wireguard`**: the mesh interface (listen port, mesh address) and its peers: every other node (routed, with its endpoint), every global client with a mesh IP, and this node's hub clients. Each peer carries its keepalive, which follows one rule: only a host behind NAT that offers services sends keepalives (every `keepaliveInterval` seconds, 25 by default; `0` turns none on), to keep its NAT mapping open for whoever connects to it. Every node has a public endpoint, so no peer entry on a node has one; the rule's other cases are for client profiles and nodes behind NAT, once those exist. No private key: the backend holds it.
 - **`firewall`**: the mesh zone's policy (input and forward drop, output accept), the rules (ingress, then egress), and the redirects.
 - **`dhcp`**: a lease for every address a host with MACs has on this node's zones.
 - Plan objects carry identity (a `HostRef`, the service, a rule's direction), never a backend's name for them: the OpenWrt renderer derives uci section names and labels from it.
@@ -66,7 +66,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
   - each remote node, with `AllowedIPs` = its `meshIp`, its zones and its hub network (even while the hub is empty);
   - each global client with `meshIp`;
   - this node's own hub clients (peers on their hub node only).
-- Includes WireGuard-specific knobs: `listen_port`, `private_key`, `addresses` (the option OpenWrt's WireGuard handler reads; not `address`), `public_key`, `endpoint_host`, `endpoint_port`, `allowed_ips`, `persistent_keepalive`.
+- Includes WireGuard-specific knobs: `listen_port`, `private_key`, `addresses` (the option OpenWrt's WireGuard handler reads; not `address`), `public_key`, `endpoint_host`, `endpoint_port`, `allowed_ips`, and `persistent_keepalive` only for a peer the plan gives a keepalive (none today; a missing option is netifd's "off").
 
 ### DHCP (planned in `src/plan/dhcp.rs`, rendered by `src/backend/openwrt/dhcp.rs`)
 

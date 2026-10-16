@@ -8,17 +8,19 @@ The config file (`splot.yml`) describes the entire mesh network. Every router in
 
 ```yaml
 meshNetwork: 10.0.0.0/16
+keepaliveInterval: 25
 nodes:
   <nodeName>: { ... }
 clients:
   <clientName>: { ... }
 ```
 
-| Field         | Type                    | Required | Description                                                                       |
-| ------------- | ----------------------- | -------- | --------------------------------------------------------------------------------- |
-| `meshNetwork` | CIDR (`x.x.x.x/prefix`) | yes      | The whole WireGuard mesh address space: every `meshIp` and every hub network.     |
-| `nodes`       | map of name → Node      | yes      | Routers participating in the mesh.                                                |
-| `clients`     | map of name → Client    | no       | Roaming devices accessible across the mesh (phones, laptops). Global, cross-node. |
+| Field               | Type                    | Required | Description                                                                                                                                                                                                     |
+| ------------------- | ----------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `meshNetwork`       | CIDR (`x.x.x.x/prefix`) | yes      | The whole WireGuard mesh address space: every `meshIp` and every hub network.                                                                                                                                   |
+| `keepaliveInterval` | integer (seconds)       | no       | Seconds between WireGuard keepalives, for the hosts that send them: only a host behind NAT that offers services does, to keep its NAT mapping open for whoever connects to it. Default `25`; `0` turns none on. |
+| `nodes`             | map of name → Node      | yes      | Routers participating in the mesh.                                                                                                                                                                              |
+| `clients`           | map of name → Client    | no       | Roaming devices accessible across the mesh (phones, laptops). Global, cross-node.                                                                                                                               |
 
 ---
 
