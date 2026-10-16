@@ -1,19 +1,26 @@
-//! Applying the rendered config: stage it in one `uci batch`, commit it file by
-//! file, then reload the services whose config changed.
+//! Applying the rendered config: stage what differs from the current config in
+//! one `uci batch`, commit the files that change, then reload their services.
 
 use std::collections::HashSet;
 
 use super::{
-    Rendered, naming,
+    Rendered, diff,
+    export::{self, ParseError},
+    naming, network,
     reload::{self, Reload},
     uci::{self, UciBatchCommand},
 };
-use crate::consts;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     Uci(#[from] uci::Error),
+    #[error("can't read the current uci config of {file}")]
+    Export {
+        file: &'static str,
+        #[source]
+        cause: ParseError,
+    },
     #[error("failed to ask netifd how WireGuard picks up changed peers")]
     Netifd(#[source] reload::Error),
     #[error(transparent)]
@@ -69,18 +76,17 @@ fn commit_failed_message(file: &str, committed: &[&str], reverted: bool) -> Stri
 }
 
 /// Applies the rendered config and makes it live: refuses to start while its
-/// files have uncommitted changes, stages and commits splot's changes, then
-/// reloads the services whose config changed. Returns the changed files.
+/// files have uncommitted changes, stages what differs from the current config,
+/// commits the files that change, then reloads their services. Returns those
+/// files; none when the config already matches.
 pub(super) fn run(rendered: &Rendered) -> Result<Vec<&'static str>, Error> {
-    let files = rendered.files();
-
     // uci keeps uncommitted changes in one place per file, shared by every uci
     // user on the router: committing or reverting ours would commit or revert
     // theirs too. So don't start while there are any.
     let mut pending = Vec::new();
-    for file in &files {
+    for file in rendered.files() {
         if uci::has_changes(file)? {
-            pending.push(*file);
+            pending.push(file);
         }
     }
     if !pending.is_empty() {
@@ -90,33 +96,53 @@ pub(super) fn run(rendered: &Rendered) -> Result<Vec<&'static str>, Error> {
     // Asked before anything is written.
     let peer_update = reload::peer_update().map_err(Error::Netifd)?;
 
-    let before = snapshot(&files)?;
-    changeset(rendered, &before)?.apply()?;
-    let after = snapshot(&files)?;
-    let changed = changed_files(&before, &after);
+    let changeset = changeset(rendered)?;
+    if changeset.files.is_empty() {
+        return Ok(Vec::new());
+    }
+    changeset.apply()?;
 
-    if let Some(reload) = Reload::new(&changed, naming::mesh_interface().to_string(), peer_update) {
+    if let Some(reload) = Reload::new(
+        &changeset.files,
+        naming::mesh_interface().to_string(),
+        peer_update,
+    ) {
         reload.run()?;
     }
 
-    Ok(changed)
+    Ok(changeset.files)
 }
 
-/// Prints what `run` would send to uci, and the reload after it.
-pub(super) fn print(rendered: &Rendered) -> Result<(), Error> {
+/// Prints what `run` would send to uci, and the reload after it. `private_key` is
+/// in the rendered config, so the diff is exact; it's printed as the placeholder.
+pub(super) fn print(rendered: &Rendered, private_key: &str) -> Result<(), Error> {
     let peer_update = reload::peer_update().map_err(Error::Netifd)?;
+    let changeset = changeset(rendered)?;
 
-    let files = rendered.files();
-    let current = snapshot(&files)?;
+    if changeset.files.is_empty() {
+        println!("# Nothing to change.");
+        return Ok(());
+    }
 
-    for command in changeset(rendered, &current)?.commands() {
-        println!("{command}");
+    for command in changeset.commands() {
+        match command {
+            UciBatchCommand::Set(path, value) if value == private_key => {
+                println!(
+                    "{}",
+                    UciBatchCommand::set(path, network::PRIVATE_KEY_PLACEHOLDER)
+                );
+            }
+            command => println!("{command}"),
+        }
     }
 
     // As comments, so the output stays a valid `uci batch` script.
-    if let Some(reload) = Reload::new(&files, naming::mesh_interface().to_string(), peer_update) {
-        println!("# Then, if anything changed, splot reloads the services;");
-        println!("# the network and WireGuard lines only if network changed:");
+    if let Some(reload) = Reload::new(
+        &changeset.files,
+        naming::mesh_interface().to_string(),
+        peer_update,
+    ) {
+        println!("# Then splot reloads the services:");
         for command in reload.commands() {
             println!("#   {command}");
         }
@@ -125,28 +151,35 @@ pub(super) fn print(rendered: &Rendered) -> Result<(), Error> {
     Ok(())
 }
 
-/// What replaces splot's sections in `current`: deletes for the old ones, then
-/// the rendered ones.
-fn changeset(rendered: &Rendered, current: &Snapshot) -> Result<Changeset, Error> {
-    let generated = rendered.commands();
-
+/// What turns the current config into the rendered one: for every file, the
+/// changes to splot's sections (see `diff`), read against what `uci export` shows.
+fn changeset(rendered: &Rendered) -> Result<Changeset, Error> {
     // Checked before anything touches uci.
-    let duplicates = find_duplicate_sections(&generated);
+    let duplicates = find_duplicate_sections(&rendered.commands());
     if !duplicates.is_empty() {
         return Err(Error::DuplicateSections(duplicates));
     }
 
-    let mut changes = delete_commands(current);
-    changes.extend(generated);
+    let mut files = Vec::new();
+    let mut changes = Vec::new();
 
-    Ok(Changeset {
-        files: rendered.files(),
-        changes,
-    })
+    for (file, sections) in &rendered.files {
+        let current = match uci::export(file)? {
+            Some(text) => export::parse(&text).map_err(|cause| Error::Export { file, cause })?,
+            None => Vec::new(),
+        };
+        let file_changes = diff::diff(file, &current, sections);
+
+        if !file_changes.is_empty() {
+            files.push(*file);
+            changes.extend(file_changes);
+        }
+    }
+
+    Ok(Changeset { files, changes })
 }
 
-/// Everything `apply` sends to uci: the changes — replacing splot's sections — and
-/// the files they touch. The changes are staged in a single `uci batch` without
+/// Everything `apply` sends to uci: the changes and the files they touch. The changes are staged in a single `uci batch` without
 /// commits; the files are committed only once uci accepted every line.
 struct Changeset {
     files: Vec<&'static str>,
@@ -227,59 +260,6 @@ pub(crate) fn find_duplicate_sections(commands: &[UciBatchCommand]) -> Vec<Strin
     duplicates
 }
 
-/// Each file's `uci show` output, or `None` when uci doesn't know the file.
-type Snapshot = Vec<(&'static str, Option<String>)>;
-
-fn snapshot(files: &[&'static str]) -> Result<Snapshot, uci::Error> {
-    files
-        .iter()
-        .map(|file| Ok((*file, uci::show(file)?)))
-        .collect()
-}
-
-/// The files whose config differs between the two snapshots.
-fn changed_files(before: &Snapshot, after: &Snapshot) -> Vec<&'static str> {
-    before
-        .iter()
-        .zip(after)
-        .filter(|((_, old), (_, new))| old != new)
-        .map(|((file, _), _)| *file)
-        .collect()
-}
-
-/// A delete for every splot-owned section (`<file>.spl_…`) in the snapshot.
-fn delete_commands(snapshot: &Snapshot) -> Vec<UciBatchCommand> {
-    let mut delete_commands: Vec<UciBatchCommand> = Vec::new();
-
-    for (file, output) in snapshot {
-        let Some(output) = output else {
-            continue;
-        };
-        let prefix = format!("{}.{}", file, consts::SPLOT_SECTION_PREFIX);
-
-        for line in output.lines() {
-            if line.starts_with(&prefix) {
-                let rest = &line[prefix.len()..];
-
-                let Some(pos) = rest.find(['=', '.']) else {
-                    continue;
-                };
-
-                if rest.as_bytes()[pos] == b'.' {
-                    continue;
-                }
-
-                let full = &line[..prefix.len() + pos];
-                let command = UciBatchCommand::del(full);
-
-                delete_commands.push(command);
-            }
-        }
-    }
-
-    delete_commands
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,52 +281,6 @@ mod tests {
 
     fn set(path: &str, value: &str) -> UciBatchCommand {
         UciBatchCommand::set(path, value)
-    }
-
-    #[test]
-    fn deletes_splot_sections_only() {
-        let snapshot: Snapshot = vec![
-            (
-                "network",
-                Some(
-                    "network.loopback=interface
-network.loopback.proto='static'
-network.split_lan=interface
-network.spl_mesh=interface
-network.spl_mesh.proto='wireguard'
-network.spl_wireguard_spl_mesh_Cabin=wireguard_spl_mesh"
-                        .to_owned(),
-                ),
-            ),
-            ("dhcp", None), // no such file yet
-        ];
-        let rendered: Vec<String> = delete_commands(&snapshot)
-            .iter()
-            .map(|c| c.to_string())
-            .collect();
-        assert_eq!(
-            rendered,
-            [
-                "delete network.spl_mesh",
-                "delete network.spl_wireguard_spl_mesh_Cabin",
-            ]
-        );
-    }
-
-    #[test]
-    fn changed_files_are_those_whose_config_differs() {
-        let before: Snapshot = vec![
-            ("network", Some("network.spl_mesh=interface".to_owned())),
-            ("firewall", Some("firewall.spl_zone_mesh=zone".to_owned())),
-            ("dhcp", None),
-        ];
-        let after: Snapshot = vec![
-            ("network", Some("network.spl_mesh=interface".to_owned())),
-            ("firewall", Some("firewall.spl_zone_lan=zone".to_owned())),
-            ("dhcp", Some("dhcp.spl_host_nas=host".to_owned())),
-        ];
-        assert_eq!(changed_files(&before, &after), ["firewall", "dhcp"]);
-        assert!(changed_files(&before, &before).is_empty());
     }
 
     #[test]

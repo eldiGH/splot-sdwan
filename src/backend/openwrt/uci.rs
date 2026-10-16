@@ -11,6 +11,8 @@ pub enum UciBatchCommand {
     Del(String),
     Add(String, String),
     AddList(String, String),
+    /// Moves a section to a position among all sections of its file.
+    Reorder(String, usize),
     Commit(Option<String>),
 }
 
@@ -31,6 +33,10 @@ impl UciBatchCommand {
         Self::AddList(path.into(), val.into())
     }
 
+    pub fn reorder(path: impl Into<String>, position: usize) -> Self {
+        Self::Reorder(path.into(), position)
+    }
+
     pub fn commit(config: impl Into<String>) -> Self {
         Self::Commit(Some(config.into()))
     }
@@ -49,6 +55,7 @@ impl std::fmt::Display for UciBatchCommand {
             Self::Del(path) => write!(f, "delete {path}"),
             Self::Add(config, section) => write!(f, "add {config} {section}"),
             Self::AddList(path, val) => write!(f, "add_list {path}='{val}'"),
+            Self::Reorder(path, position) => write!(f, "reorder {path}={position}"),
 
             Self::Commit(config) => {
                 if let Some(config) = config {
@@ -175,8 +182,9 @@ pub fn has_changes(file: &str) -> Result<bool, Error> {
     Ok(changes.is_some_and(|changes| !changes.is_empty()))
 }
 
-pub fn show(file: &str) -> Result<Option<String>, Error> {
-    optional(run(&["show", file], None).map(|output| output.stdout))
+/// The file as `uci export` prints it; `None` when uci doesn't know the file.
+pub fn export(file: &str) -> Result<Option<String>, Error> {
+    optional(run(&["export", file], None).map(|output| output.stdout))
 }
 
 pub fn get(path: &str) -> Result<Option<String>, Error> {

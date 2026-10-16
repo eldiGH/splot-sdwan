@@ -161,18 +161,41 @@ check_version() {
 			"$(printf '%s\n' "$output" | sed -E 's/^.{24} //; s/\[[0-9]+\]//' | sort -u | head -10)"
 	fi
 
-	output=$(run 'splot --config /tmp/splot.yml apply' 2>&1) || true
-	if [ "$(printf '%s' "$output" | tail -1)" = "Nothing changed." ]; then
-		pass "second apply changes nothing"
+	local before after
+	# Applying an unchanged config stages nothing, so uci rewrites no file.
+	# stdout only: the log goes to stderr.
+	output=$(run 'splot --config /tmp/splot.yml apply --dry-run 2>/dev/null') || true
+	if [ "$output" = "# Nothing to change." ]; then
+		pass "dry run of an unchanged node stages nothing"
 	else
-		fail "second apply changes nothing" "$output"
+		fail "dry run of an unchanged node stages nothing" "$output"
+	fi
+
+	# A commit writes a new file over the old one: its inode changes. (BusyBox
+	# here has no stat.)
+	local files='/etc/config/network /etc/config/firewall /etc/config/dhcp'
+	before=$(run "ls -i $files; md5sum $files")
+	output=$(run 'splot --config /tmp/splot.yml apply' 2>&1) || true
+	after=$(run "ls -i $files; md5sum $files")
+	if [ "$(printf '%s' "$output" | tail -1)" = "Nothing changed." ] && [ "$before" = "$after" ]; then
+		pass "second apply changes nothing, files untouched"
+	else
+		fail "second apply changes nothing, files untouched" "$output"$'\n'"before: $before"$'\n'"after: $after"
 	fi
 
 	# A peer change: Cabin's endpoint moves. WireGuard must see it without a reboot.
-	local renew before after
+	local renew
 	renew=$(run 'ubus call network get_proto_handlers | jsonfilter -e @.wireguard.renew_available')
 	before=$(run 'cat /sys/class/net/spl_mesh/ifindex 2>/dev/null') || true
 	run "sed -i 's/$CABIN_ENDPOINT/203.0.113.21/' /tmp/splot.yml"
+	# Only that peer's endpoint is staged, then the network file is committed.
+	output=$(run 'splot --config /tmp/splot.yml apply --dry-run 2>/dev/null' | grep -v '^#') || true
+	expected="set network.spl_wireguard_spl_mesh_Cabin.endpoint_host='203.0.113.21'"$'\n'"commit network"
+	if [ "$output" = "$expected" ]; then
+		pass "peer change stages only that peer"
+	else
+		fail "peer change stages only that peer" "$output"
+	fi
 	if ! output=$(run 'splot --config /tmp/splot.yml apply' 2>&1); then
 		fail "peer update: apply" "$output"
 	else

@@ -3,6 +3,8 @@
 
 mod apply;
 mod dhcp;
+mod diff;
+mod export;
 mod firewall;
 mod naming;
 mod network;
@@ -87,7 +89,9 @@ impl Backend for OpenWrtBackend {
     }
 
     fn dry_run(&self, rendered: &Rendered) -> Result<(), Error> {
-        apply::print(rendered)
+        let private_key = self.splot_config.mesh_key();
+
+        apply::print(&rendered.with_private_key(private_key), private_key)
     }
 
     fn apply(&self, rendered: &Rendered) -> Result<Vec<String>, Error> {
@@ -160,6 +164,52 @@ mod tests {
             ]
         );
         assert_eq!(filled.files(), ["network", "dhcp"]);
+    }
+
+    /// `sections` the way `uci export` prints them.
+    fn exported(sections: &[Section]) -> String {
+        let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+        let mut text = String::from("package file\n");
+
+        for section in sections {
+            writeln!(
+                text,
+                "\nconfig {} {}",
+                section.section_type,
+                quote(&section.name)
+            )
+            .unwrap();
+            for (option, value) in &section.options {
+                match value {
+                    Value::Single(value) => writeln!(text, "\toption {option} {}", quote(value)),
+                    Value::List(values) => values
+                        .iter()
+                        .try_for_each(|value| writeln!(text, "\tlist {option} {}", quote(value))),
+                }
+                .unwrap();
+            }
+        }
+
+        text
+    }
+
+    #[test]
+    fn what_splot_wrote_reads_back_as_nothing_to_change() {
+        // Once the rendered config is in uci, the next apply finds nothing to stage.
+        let network = test_support::checked(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/splot.example.yml"
+        )));
+        let backend = OpenWrtBackend::new(SplotConfig::for_tests("FAKE_MESH_KEY"));
+
+        for node in network.nodes() {
+            let plan = plan::plan(&network, node.name()).unwrap();
+            for (file, sections) in &backend.render(&plan).files {
+                let read_back = export::parse(&exported(sections)).unwrap();
+                assert_eq!(read_back, *sections, "{} {file}", node.name());
+                assert!(diff::diff(file, &read_back, sections).is_empty());
+            }
+        }
     }
 
     #[test]
