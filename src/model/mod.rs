@@ -26,8 +26,8 @@ pub struct Network {
 
 impl Network {
     /// Every node, by name.
-    pub fn nodes(&self) -> impl Iterator<Item = (&Identifier, &Node)> {
-        self.nodes.iter()
+    pub fn nodes(&self) -> impl Iterator<Item = &Node> {
+        self.nodes.values()
     }
 
     pub fn node(&self, name: &Identifier) -> Option<&Node> {
@@ -35,10 +35,10 @@ impl Network {
     }
 
     /// The node with this public key. Keys are unique, so there's at most one.
-    pub fn find_node_by_public_key(&self, public_key: &str) -> Option<(&Identifier, &Node)> {
+    pub fn find_node_by_public_key(&self, public_key: &str) -> Option<&Node> {
         self.nodes
-            .iter()
-            .find(|(_, node)| node.public_key.as_str() == public_key)
+            .values()
+            .find(|node| node.public_key.as_str() == public_key)
     }
 
     /// Every host, in config order: each node, its devices zone by zone and its hub
@@ -240,6 +240,7 @@ clients:
         let network = checked(HOSTS);
         let home = network.node(&id("Home")).unwrap();
 
+        assert_eq!(home.name().as_ref(), "Home");
         assert_eq!(
             home.public_key().as_str(),
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -263,7 +264,7 @@ clients:
         let network = checked(HOSTS);
         let found = network.find_node_by_public_key("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=");
         assert_eq!(
-            found.map(|(name, _)| name.to_string()),
+            found.map(|node| node.name().to_string()),
             Some("Cabin".into())
         );
         // A hub client's key is no node's.

@@ -12,6 +12,7 @@ use crate::types::{
 /// One of the mesh's routers, as the other nodes and its own config see it.
 #[derive(Debug)]
 pub struct Node {
+    pub(super) name: Identifier,
     pub(super) public_key: WgPublicKey,
     pub(super) endpoint: Ipv4Addr,
     pub(super) listen_port: Port,
@@ -26,6 +27,10 @@ pub struct Node {
 }
 
 impl Node {
+    pub fn name(&self) -> &Identifier {
+        &self.name
+    }
+
     pub fn public_key(&self) -> &WgPublicKey {
         &self.public_key
     }

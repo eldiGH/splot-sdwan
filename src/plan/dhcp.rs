@@ -6,8 +6,9 @@ use crate::{
     model::{
         Network,
         host::{HostRef, Place},
+        node::Node,
     },
-    types::{identifier::Identifier, mac::MacAddress},
+    types::mac::MacAddress,
 };
 
 #[derive(Debug)]
@@ -25,7 +26,7 @@ pub struct Lease {
 
 /// A lease for each address a host with MACs has on this node's zones: the
 /// node's devices, and global clients on its zones.
-pub(super) fn plan(network: &Network, own_name: &Identifier) -> DhcpPlan {
+pub(super) fn plan(network: &Network, own: &Node) -> DhcpPlan {
     let leases = network
         .hosts()
         .iter()
@@ -34,7 +35,7 @@ pub(super) fn plan(network: &Network, own_name: &Identifier) -> DhcpPlan {
             host.addresses()
                 .iter()
                 .filter(|address| {
-                    matches!(address.place(), Place::Zone { node, .. } if node == own_name)
+                    matches!(address.place(), Place::Zone { node, .. } if node == own.name())
                 })
                 .map(|address| Lease {
                     host: host.id().clone(),
@@ -107,7 +108,8 @@ clients:
 
     /// Home's leases, one line each.
     fn leases() -> Vec<String> {
-        let plan = plan(&checked(FIXTURE), &"Home".parse().unwrap());
+        let network = checked(FIXTURE);
+        let plan = plan(&network, network.node(&"Home".parse().unwrap()).unwrap());
         plan.to_string().lines().map(str::to_owned).collect()
     }
 

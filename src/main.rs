@@ -49,7 +49,7 @@ fn main() -> anyhow::Result<()> {
                 .context("failed to derive this router's public key")?;
             let Some(plan) = network
                 .find_node_by_public_key(&own_public_key)
-                .and_then(|(own_name, _)| plan::plan(&network, own_name))
+                .and_then(|node| plan::plan(&network, node.name()))
             else {
                 bail!(
                     "this router's public key was not found in the splot config - add this node and try again"

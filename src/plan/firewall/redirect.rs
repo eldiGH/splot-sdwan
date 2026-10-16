@@ -42,12 +42,8 @@ fn dest_zone(place: &Place) -> ZoneRef {
 
 /// A redirect for every service exposed through this node, to what it forwards
 /// the service to. None when the node has no `wanZone`.
-pub(super) fn redirects(
-    network: &Network,
-    own_name: &Identifier,
-    own_node: &Node,
-) -> Vec<Redirect> {
-    let Some(wan_zone) = own_node.wan_zone() else {
+pub(super) fn redirects(network: &Network, own: &Node) -> Vec<Redirect> {
+    let Some(wan_zone) = own.wan_zone() else {
         return Vec::new();
     };
     let mut redirects = Vec::new();
@@ -55,7 +51,7 @@ pub(super) fn redirects(
     for host in network.hosts() {
         for (service_name, service) in network.services_of(host) {
             let Some(wan) = service.wan() else { continue };
-            let Some(target) = wan.target(own_name) else {
+            let Some(target) = wan.target(own.name()) else {
                 continue;
             };
 
@@ -102,7 +98,7 @@ mod tests {
         let network = checked(yaml);
         let own_name: Identifier = own.parse().unwrap();
 
-        super::redirects(&network, &own_name, network.node(&own_name).unwrap())
+        super::redirects(&network, network.node(&own_name).unwrap())
     }
 
     #[test]

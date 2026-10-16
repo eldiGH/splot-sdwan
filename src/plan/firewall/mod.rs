@@ -6,10 +6,7 @@ pub mod rules;
 
 use std::fmt;
 
-use crate::{
-    model::{Network, node::Node},
-    types::identifier::Identifier,
-};
+use crate::model::{Network, node::Node};
 use redirect::Redirect;
 use rules::Rule;
 
@@ -39,9 +36,9 @@ pub enum Verdict {
     Drop,
 }
 
-pub(super) fn plan(network: &Network, own_name: &Identifier, own_node: &Node) -> FirewallPlan {
-    let mut rules = rules::ingress_rules(network, own_name);
-    rules.extend(rules::egress_rules(network, own_name, own_node));
+pub(super) fn plan(network: &Network, own: &Node) -> FirewallPlan {
+    let mut rules = rules::ingress_rules(network, own);
+    rules.extend(rules::egress_rules(network, own));
 
     FirewallPlan {
         // Access is granted only by rules.
@@ -51,7 +48,7 @@ pub(super) fn plan(network: &Network, own_name: &Identifier, own_node: &Node) ->
             forward: Verdict::Drop,
         },
         rules,
-        redirects: redirect::redirects(network, own_name, own_node),
+        redirects: redirect::redirects(network, own),
     }
 }
 

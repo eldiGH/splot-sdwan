@@ -24,14 +24,16 @@ pub struct NodePlan {
     pub dhcp: DhcpPlan,
 }
 
-/// The plan for `node`; none when the network has no such node.
+/// The plan for the node named `node`; none when the network has no such node.
+/// The planners take the node itself, so they only ever see one of this
+/// network's.
 pub fn plan(network: &Network, node: &Identifier) -> Option<NodePlan> {
-    let own_node = network.node(node)?;
+    let node = network.node(node)?;
 
     Some(NodePlan {
-        node: node.clone(),
-        wireguard: wireguard::plan(network, node, own_node),
-        firewall: firewall::plan(network, node, own_node),
+        node: node.name().clone(),
+        wireguard: wireguard::plan(network, node),
+        firewall: firewall::plan(network, node),
         dhcp: dhcp::plan(network, node),
     })
 }
@@ -79,9 +81,9 @@ mod tests {
             "/splot.example.yml"
         )));
 
-        for (node_name, _) in network.nodes() {
-            let plan = plan(&network, node_name).unwrap();
-            insta::assert_snapshot!(format!("plan_{node_name}"), plan.to_string());
+        for node in network.nodes() {
+            let plan = plan(&network, node.name()).unwrap();
+            insta::assert_snapshot!(format!("plan_{}", node.name()), plan.to_string());
         }
     }
 

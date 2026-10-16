@@ -45,12 +45,12 @@ fn rule(
     service_name: &Identifier,
     service: &Service,
     dest_addresses: &[&HostAddress],
-    own_name: &Identifier,
+    own: &Node,
     src_ip_filter: Option<&[Ipv4Network]>,
 ) -> Option<Rule> {
     let sources: Vec<Ipv4Network> = service
         .sources()
-        .on(own_name)
+        .on(own.name())
         .map(Source::network)
         // skip same-LAN sources — they don't traverse this router's firewall
         .filter(|network| {
@@ -93,12 +93,12 @@ fn rule(
 fn host_rules(
     network: &Network,
     direction: Direction,
-    own_name: &Identifier,
+    own: &Node,
     src_ip_filter: Option<&[Ipv4Network]>,
 ) -> Vec<Rule> {
     let on = |node: &Identifier| match direction {
-        Direction::Ingress => node == own_name,
-        Direction::Egress => node != own_name,
+        Direction::Ingress => node == own.name(),
+        Direction::Egress => node != own.name(),
     };
     let mut rules = Vec::new();
 
@@ -116,7 +116,7 @@ fn host_rules(
                 service_name,
                 service,
                 &addresses,
-                own_name,
+                own,
                 src_ip_filter,
             ));
         }
@@ -125,14 +125,14 @@ fn host_rules(
     rules
 }
 
-pub(super) fn ingress_rules(network: &Network, own_name: &Identifier) -> Vec<Rule> {
-    host_rules(network, Direction::Ingress, own_name, None)
+pub(super) fn ingress_rules(network: &Network, own: &Node) -> Vec<Rule> {
+    host_rules(network, Direction::Ingress, own, None)
 }
 
-pub(super) fn egress_rules(network: &Network, own_name: &Identifier, own_node: &Node) -> Vec<Rule> {
-    let local_networks: Vec<Ipv4Network> = own_node.networks().collect();
+pub(super) fn egress_rules(network: &Network, own: &Node) -> Vec<Rule> {
+    let local_networks: Vec<Ipv4Network> = own.networks().collect();
 
-    host_rules(network, Direction::Egress, own_name, Some(&local_networks))
+    host_rules(network, Direction::Egress, own, Some(&local_networks))
 }
 
 impl fmt::Display for Rule {
@@ -164,7 +164,8 @@ mod tests {
     }
 
     fn ingress(yaml: &str, own: &str) -> Vec<Rule> {
-        ingress_rules(&checked(yaml), &id(own))
+        let network = checked(yaml);
+        ingress_rules(&network, network.node(&id(own)).unwrap())
     }
 
     #[test]
@@ -309,7 +310,7 @@ clients:
 
     fn egress(yaml: &str, own: &str) -> Vec<Rule> {
         let network = checked(yaml);
-        egress_rules(&network, &id(own), network.node(&id(own)).unwrap())
+        egress_rules(&network, network.node(&id(own)).unwrap())
     }
 
     // Home-local workstation (tag `staff`) wants to reach Cabin's `web` service.

@@ -184,6 +184,7 @@ fn check_node(
     let (hub, hub_clients) = check_hub(config, node_name, node, hub_networks, report);
 
     let built = mesh.map(|mesh| Node {
+        name: node_name.clone(),
         public_key: node.public_key.clone(),
         endpoint: node.endpoint,
         listen_port: node.listen_port,

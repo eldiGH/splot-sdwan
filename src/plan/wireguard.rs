@@ -9,7 +9,6 @@ use crate::{
         node::Node,
     },
     types::{
-        identifier::Identifier,
         ip::{Ipv4Interface, Ipv4Network},
         port::Port,
         wg_key::WgPublicKey,
@@ -54,12 +53,12 @@ pub struct Endpoint {
 
 /// A peer for every other node: its endpoint, and its mesh IP and everything
 /// behind it (its hub network too, even while the hub has no clients).
-fn node_peers(network: &Network, own_name: &Identifier) -> Vec<Peer> {
+fn node_peers(network: &Network, own: &Node) -> Vec<Peer> {
     network
         .nodes()
-        .filter(|(node_name, _)| *node_name != own_name)
-        .map(|(node_name, node)| Peer {
-            host: HostRef::Node(node_name.clone()),
+        .filter(|node| node.name() != own.name())
+        .map(|node| Peer {
+            host: HostRef::Node(node.name().clone()),
             public_key: node.public_key().clone(),
             allowed_ips: iter::once(Ipv4Network::host(node.mesh_address().ip()))
                 .chain(node.networks())
@@ -98,20 +97,20 @@ fn client_peers(network: &Network, on: impl Fn(&Place) -> bool) -> Vec<Peer> {
         .collect()
 }
 
-pub(super) fn plan(network: &Network, own_name: &Identifier, own_node: &Node) -> WireGuardPlan {
-    let mut peers = node_peers(network, own_name);
+pub(super) fn plan(network: &Network, own: &Node) -> WireGuardPlan {
+    let mut peers = node_peers(network, own);
     // Global clients: peers on every node, by their mesh IP.
     peers.extend(client_peers(network, |place| *place == Place::Mesh));
     // This node's hub clients: peers on this node only. Every other node reaches
     // them through this one, by the hub network in this node's peer entry.
     peers.extend(client_peers(
         network,
-        |place| matches!(place, Place::Hub { node } if node == own_name),
+        |place| matches!(place, Place::Hub { node } if node == own.name()),
     ));
 
     WireGuardPlan {
-        listen_port: own_node.listen_port(),
-        address: own_node.mesh_address(),
+        listen_port: own.listen_port(),
+        address: own.mesh_address(),
         peers,
     }
 }
@@ -159,7 +158,7 @@ impl fmt::Display for Peer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::checked;
+    use crate::{test_support::checked, types::identifier::Identifier};
 
     // Home has a hub with a client; Cabin's hub is empty. Phone is a global
     // client; Laptop has a key but no mesh IP (only an IP on Cabin's lan).
@@ -204,7 +203,7 @@ clients:
 
     fn plan_for(yaml: &str, own: &str) -> WireGuardPlan {
         let network = checked(yaml);
-        plan(&network, &id(own), network.node(&id(own)).unwrap())
+        plan(&network, network.node(&id(own)).unwrap())
     }
 
     /// Each peer as `host: allowed IPs`.
@@ -275,8 +274,9 @@ clients:
         let example = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/splot.example.yml"));
         for yaml in [FIXTURE, example] {
             let network = checked(yaml);
-            for (own, own_node) in network.nodes() {
-                let plan = plan(&network, own, own_node);
+            for own_node in network.nodes() {
+                let own = own_node.name();
+                let plan = plan(&network, own_node);
                 let claims: Vec<(&HostRef, Ipv4Network)> = plan
                     .peers
                     .iter()

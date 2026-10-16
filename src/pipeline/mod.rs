@@ -431,7 +431,8 @@ network.spl_wireguard_spl_mesh_Cabin=wireguard_spl_mesh"
             .register(FirewallManager)
             .register(DhcpManager);
         let splot_config = SplotConfig::for_tests("FAKE_MESH_KEY");
-        for (node_name, _) in network.nodes() {
+        for node in network.nodes() {
+            let node_name = node.name();
             let plan = plan::plan(&network, node_name).unwrap();
             let generated = pipeline.generate(&plan, &splot_config);
             assert!(!generated.is_empty());
