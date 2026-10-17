@@ -80,11 +80,15 @@ impl UciSection for PeerSection<'_> {
             )
             .set_if_some(
                 "endpoint_host",
-                peer.endpoint.map(|Endpoint { host, .. }| host.to_string()),
+                peer.endpoint
+                    .as_ref()
+                    .map(|Endpoint { host, .. }| host.to_string()),
             )
             .set_if_some(
                 "endpoint_port",
-                peer.endpoint.map(|Endpoint { port, .. }| port.to_string()),
+                peer.endpoint
+                    .as_ref()
+                    .map(|Endpoint { port, .. }| port.to_string()),
             )
             .extend_list("allowed_ips", &peer.allowed_ips)
     }
@@ -209,6 +213,19 @@ clients:
             &cmds(),
             "network.spl_wireguard_spl_mesh_Cabin='wireguard_spl_mesh'"
         ));
+    }
+
+    #[test]
+    fn a_peer_endpoint_is_its_address_or_its_name() {
+        assert!(has_cmd(&cmds(), "spl_mesh_Cabin.endpoint_host='5.6.7.8'"));
+
+        let yaml = FIXTURE.replace("endpoint: 5.6.7.8", "endpoint: cabin.example.net");
+        let c = cmds_for(&yaml, "Home");
+        assert!(has_cmd(
+            &c,
+            "spl_mesh_Cabin.endpoint_host='cabin.example.net'"
+        ));
+        assert!(has_cmd(&c, "spl_mesh_Cabin.endpoint_port='51820'"));
     }
 
     #[test]

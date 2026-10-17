@@ -186,7 +186,7 @@ fn check_node(
     let built = mesh.map(|mesh| Node {
         name: node_name.clone(),
         public_key: node.public_key.clone(),
-        endpoint: node.endpoint,
+        endpoint: node.endpoint.clone(),
         listen_port: node.listen_port,
         mesh_address: mesh.interface,
         zones,

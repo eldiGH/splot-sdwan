@@ -1,8 +1,9 @@
 //! Nodes: the mesh's routers.
 
-use std::{collections::BTreeMap, net::Ipv4Addr};
+use std::collections::BTreeMap;
 
 use crate::types::{
+    endpoint::EndpointHost,
     identifier::Identifier,
     ip::{Ipv4Interface, Ipv4Network},
     port::Port,
@@ -14,7 +15,7 @@ use crate::types::{
 pub struct Node {
     pub(super) name: Identifier,
     pub(super) public_key: WgPublicKey,
-    pub(super) endpoint: Ipv4Addr,
+    pub(super) endpoint: EndpointHost,
     pub(super) listen_port: Port,
     /// Its mesh IP with the mesh network's prefix: the address of its mesh
     /// interface.
@@ -35,8 +36,8 @@ impl Node {
         &self.public_key
     }
 
-    pub fn endpoint(&self) -> Ipv4Addr {
-        self.endpoint
+    pub fn endpoint(&self) -> &EndpointHost {
+        &self.endpoint
     }
 
     pub fn listen_port(&self) -> Port {

@@ -21,8 +21,10 @@ VERSIONS=("${@:-${DEFAULT_VERSIONS[@]}}")
 TARGET=x86_64-unknown-linux-musl
 BINARY=target/$TARGET/release/splot-sdwan
 
-# Cabin's endpoint in splot.example.yml; changed to test a live peer update.
-CABIN_ENDPOINT=203.0.113.20
+# Cabin's endpoint in splot.example.yml, a name, and the address the container
+# resolves it to. The name is changed to an address to test a live peer update.
+CABIN_ENDPOINT=cabin.example.net
+CABIN_ADDRESS=203.0.113.20
 
 failures=0
 pass() { printf '  PASS  %s\n' "$1"; }
@@ -69,8 +71,11 @@ check_version() {
 	fi
 
 	# The node's key, and the example config with Home's public key filled in.
+	# The example's endpoint name resolves through /etc/hosts: there's no public
+	# DNS for it, and a name that doesn't resolve keeps the mesh interface down.
 	podman cp "$BINARY" "$container:/usr/bin/splot"
 	podman cp splot.example.yml "$container:/tmp/splot.example.yml"
+	run "echo '$CABIN_ADDRESS $CABIN_ENDPOINT' >>/etc/hosts"
 	run '
 		touch /etc/config/splot
 		key=$(wg genkey)
@@ -148,6 +153,13 @@ check_version() {
 			fail "WireGuard $interface: up, peers, address" "$output"
 		fi
 	done
+
+	# Cabin is dialled by name: WireGuard got the address the name resolves to.
+	if run 'wg show spl_mesh endpoints' | grep -qF "$CABIN_ADDRESS:"; then
+		pass "WireGuard dials a peer by name (resolved to $CABIN_ADDRESS)"
+	else
+		fail "WireGuard dials a peer by name (resolved to $CABIN_ADDRESS)" "$(run 'wg show spl_mesh endpoints' 2>&1)"
+	fi
 
 	# Errors the daemons logged since the apply. A dnsmasq reload makes procd log
 	# "Got unexpected signal 1" in this container even on a stock config, without

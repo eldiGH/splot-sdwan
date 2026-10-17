@@ -14,6 +14,7 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 - `deny_unknown_fields` on every config struct: a misspelled key anywhere is a parse error naming the config path, the unknown key, the valid keys, and the line/column.
 - Typed IP / network handling via `src/types/ip.rs` (`Ipv4Addr`, `Ipv4Interface`, `Ipv4Network` with subnet membership / overlap predicates).
 - Typed MAC handling via `src/types/mac.rs`.
+- Typed node endpoints via `src/types/endpoint.rs` (`EndpointHost`): an IPv4 address or a DNS name (labels of letters, digits and hyphens, at most 63 characters each and 253 in all). A name whose last label is all digits is rejected: no top-level domain is, so it's a mistyped IP.
 - Typed WireGuard public keys via `src/types/wg_key.rs` (`WgPublicKey`): 44 characters of canonical base64 ending in `=` — the same check stored private keys go through, and the same rule `wg` itself enforces.
 
 ### Splot config (persistent local state)
@@ -39,7 +40,7 @@ Validation is how the checked model (`src/model/`) gets built: `model::validate(
 
 - The passes build the model's pieces while they check: what fails a check is reported and left out, and a `Network` exists only when nothing failed. Each piece is built once, whole, by the pass that knows all of it; nothing is filled in later.
 - **Hosts** (`src/model/host.rs`), built by the `networks` pass: every node, zone device, hub client and global client, in config order, as a `HostRef` (its identity: `Node`, `Local { node, name }` or `Client`), its addresses, its MACs and its WireGuard key (hub and global clients). Each address is its IP with the prefix of the subnet it's on, checked to be a host there, and where it lives (`Zone { node, zone }`, `Hub { node }` or `Mesh`).
-- **Nodes** (`src/model/node.rs`), built by the same pass: each router's name, key, endpoint and listen port, its mesh address (its mesh IP with the mesh network's prefix, checked), its zones' subnets, its hub network and its `wanZone`. A node whose mesh IP fails its check is left out; a zone or hub that fails its checks is left out of the node.
+- **Nodes** (`src/model/node.rs`), built by the same pass: each router's name, key, endpoint (an address or a DNS name) and listen port, its mesh address (its mesh IP with the mesh network's prefix, checked), its zones' subnets, its hub network and its `wanZone`. A node whose mesh IP fails its check is left out; a zone or hub that fails its checks is left out of the node.
 - **Services** (`src/model/service.rs`), each built whole by the `services` pass and kept in the `Network` by its host: the service's port, protocols, sources and WAN exposure. The sources are its `allowFrom` resolved to the networks each reference names, with where each lives: explicit tags, bare node names (the node's zone subnets and hub network), global client names (all their IPs), qualified `{Node}.{LocalName}` forms (including `{Node}.hub`), and `$node`, which resolves on each node to that router's own address on each of its zones. An unknown reference is an error; a network two references name is listed once. The WAN exposure is: for every `wan.via` node, the host address it forwards to (a node's mesh IP; a device's or hub client's IP; a global client's mesh IP, else its IP on that node's zone, or the zone a qualified `{Node}.{Zone}` names), and the allowed source CIDRs. A target whose address failed its own check is left out, with no second error.
 - The planner reads only the `Network`; `main` finds its own node there (by public key, until `--node`). The raw `Config` is read by validation alone.
 
@@ -66,7 +67,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
   - each remote node, with `AllowedIPs` = its `meshIp`, its zones and its hub network (even while the hub is empty);
   - each global client with `meshIp`;
   - this node's own hub clients (peers on their hub node only).
-- Includes WireGuard-specific knobs: `listen_port`, `private_key`, `addresses` (the option OpenWrt's WireGuard handler reads; not `address`), `public_key`, `endpoint_host`, `endpoint_port`, `allowed_ips`, and `persistent_keepalive` only for a peer the plan gives a keepalive (none today; a missing option is netifd's "off").
+- Includes WireGuard-specific knobs: `listen_port`, `private_key`, `addresses` (the option OpenWrt's WireGuard handler reads; not `address`), `public_key`, `endpoint_host` (an address or a name: OpenWrt resolves a name when the interface comes up, and one that doesn't resolve keeps the whole interface down, every peer with it), `endpoint_port`, `allowed_ips`, and `persistent_keepalive` only for a peer the plan gives a keepalive (none today; a missing option is netifd's "off").
 
 ### DHCP (planned in `src/plan/dhcp.rs`, rendered by `src/backend/openwrt/dhcp.rs`)
 
@@ -127,7 +128,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 
 ### Tests (`cargo test`)
 
-Unit-test suite over the deterministic core (~280 tests). Covers: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (hosts, reference resolution, WAN targets; `src/model/`), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), UCI command/builder rendering, the uci not-found classification and the private-key fill-in, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, the OpenWrt apply) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
+Unit-test suite over the deterministic core (~330 tests). Covers: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (hosts, reference resolution, WAN targets; `src/model/`), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), UCI command/builder rendering, the uci not-found classification and the private-key fill-in, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, the OpenWrt apply) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
 
 ---
 

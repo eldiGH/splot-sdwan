@@ -1,6 +1,6 @@
 //! The node's WireGuard: its mesh interface and the peers on it.
 
-use std::{fmt, iter, net::Ipv4Addr, num::NonZeroU16};
+use std::{fmt, iter, num::NonZeroU16};
 
 use crate::{
     model::{
@@ -9,6 +9,7 @@ use crate::{
         node::Node,
     },
     types::{
+        endpoint::EndpointHost,
         ip::{Ipv4Interface, Ipv4Network},
         port::Port,
         wg_key::WgPublicKey,
@@ -54,9 +55,9 @@ pub struct Peer {
 }
 
 /// Where a peer is reached.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Endpoint {
-    pub host: Ipv4Addr,
+    pub host: EndpointHost,
     pub port: Port,
 }
 
@@ -74,7 +75,7 @@ fn node_peers(network: &Network, own: &Node, keepalive: Option<NonZeroU16>) -> V
                 .collect(),
             routed: true,
             endpoint: Some(Endpoint {
-                host: node.endpoint(),
+                host: node.endpoint().clone(),
                 port: node.listen_port(),
             }),
             keepalive,
@@ -171,7 +172,7 @@ impl fmt::Display for Peer {
         if self.routed {
             write!(f, ", routed")?;
         }
-        if let Some(Endpoint { host, port }) = self.endpoint {
+        if let Some(Endpoint { host, port }) = &self.endpoint {
             write!(f, ", endpoint {host}:{port}")?;
         }
         if let Some(keepalive) = self.keepalive {
@@ -308,7 +309,7 @@ clients:
         };
 
         assert!(cabin.routed);
-        let endpoint = cabin.endpoint.unwrap();
+        let endpoint = cabin.endpoint.as_ref().unwrap();
         assert_eq!(
             format!("{}:{}", endpoint.host, endpoint.port),
             "5.6.7.8:51821"
@@ -322,6 +323,19 @@ clients:
             assert!(!client.routed, "{}", client.host);
             assert!(client.endpoint.is_none(), "{}", client.host);
         }
+    }
+
+    #[test]
+    fn a_node_dialled_by_name_keeps_its_name() {
+        // OpenWrt resolves the name when the interface comes up.
+        let yaml = FIXTURE.replace("endpoint: 5.6.7.8", "endpoint: cabin.example.net");
+        let plan = plan_for(&yaml, "Home");
+        let endpoint = plan.peers[0].endpoint.as_ref().unwrap();
+        assert_eq!(plan.peers[0].host.to_string(), "Cabin");
+        assert_eq!(
+            format!("{}:{}", endpoint.host, endpoint.port),
+            "cabin.example.net:51821"
+        );
     }
 
     #[test]

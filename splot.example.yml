@@ -100,7 +100,11 @@ nodes:
   # Remote site. No WAN exposure of its own — reachable over the mesh.
   Cabin:
     publicKey: ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 203.0.113.20
+    # Its public IP changes, so peers dial it by name. The name must resolve
+    # through public DNS, never through the mesh: the tunnel can't need itself
+    # to come up. On OpenWrt, a peer name that doesn't resolve keeps the whole
+    # mesh interface down, not just that peer.
+    endpoint: cabin.example.net
     listenPort: 51820
     meshIp: 10.100.0.2
 

@@ -10,6 +10,7 @@ use crate::{
             ClientLoc, ConfigLocation, DeviceLoc, HubClientLoc, HubLoc, NodeLoc, ServiceLoc,
             ZoneLoc,
         },
+        endpoint::EndpointHost,
         identifier::Identifier,
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
@@ -95,7 +96,7 @@ pub struct NodeZone {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Node {
     pub public_key: WgPublicKey,
-    pub endpoint: Ipv4Addr,
+    pub endpoint: EndpointHost,
     pub listen_port: Port,
     pub mesh_ip: Ipv4Addr,
 
@@ -517,6 +518,26 @@ clients:
 "
         ));
         assert!(err.contains("unknown field `tag`"), "{err}");
+    }
+
+    #[test]
+    fn an_endpoint_is_an_ip_or_a_host_name() {
+        let endpoint = |value: &str| {
+            serde_norway::from_str::<Config>(&NODE.replace("1.2.3.4", value))
+                .map(|config| config.nodes[&id("Home")].endpoint.to_string())
+                .map_err(|err| err.to_string())
+        };
+        assert_eq!(endpoint("203.0.113.10").unwrap(), "203.0.113.10");
+        assert_eq!(
+            endpoint("wg.home.example.net").unwrap(),
+            "wg.home.example.net"
+        );
+
+        let err = endpoint("203.0.113.300").unwrap_err();
+        assert!(
+            err.contains("neither an IPv4 address nor a host name"),
+            "{err}"
+        );
     }
 
     #[test]
