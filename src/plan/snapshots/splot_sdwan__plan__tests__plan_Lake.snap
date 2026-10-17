@@ -1,0 +1,16 @@
+---
+source: src/plan/mod.rs
+expression: plan.to_string()
+---
+# Lake
+
+[wireguard]
+interface: listen 51820, address 10.100.0.3/16
+peer Cabin: key ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.2/32, 192.168.2.0/24], routed, endpoint cabin.example.net:51820, keepalive 25s
+peer Home: key ReplaceHomePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.1/32, 192.168.1.0/24, 10.100.10.0/24], routed, endpoint 203.0.113.10:51820, keepalive 25s
+peer Phone: key ReplacePhonePublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.100/32]
+
+[firewall]
+mesh zone: input drop, output accept, forward drop
+
+[dhcp]

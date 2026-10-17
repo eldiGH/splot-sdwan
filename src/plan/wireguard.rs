@@ -17,16 +17,17 @@ use crate::{
 };
 
 /// The keepalive a host sends its peers, every `interval` seconds (the mesh's
-/// `keepaliveInterval`). Only a host behind NAT that offers services needs one:
-/// it keeps the host's NAT mapping open, so whoever connects to it gets through.
-/// A host that only dials out doesn't, and on a roaming device a keepalive
-/// drains the battery and chases stale addresses.
+/// `keepaliveInterval`). Only a host nobody can dial (behind NAT, or a firewall
+/// that drops what comes in) that others connect to needs one: it keeps the
+/// host's NAT mapping open, so whoever connects to it gets through. A host that
+/// only dials out doesn't, and on a roaming device a keepalive drains the
+/// battery and chases stale addresses.
 fn keepalive(
-    behind_nat: bool,
-    offers_services: bool,
+    dialable: bool,
+    others_connect: bool,
     interval: Option<NonZeroU16>,
 ) -> Option<NonZeroU16> {
-    interval.filter(|_| behind_nat && offers_services)
+    interval.filter(|_| !dialable && others_connect)
 }
 
 /// The node's mesh interface. Its private key isn't here: the backend holds it.
@@ -49,8 +50,9 @@ pub struct Peer {
     /// sits behind another node does; a client's own IP is on the mesh already.
     pub routed: bool,
     pub endpoint: Option<Endpoint>,
-    /// Seconds between keepalives this node sends the peer; none when it sends
-    /// none (see `keepalive`).
+    /// Seconds between keepalives this node sends the peer (see `keepalive`).
+    /// Only a peer it dials, one with an endpoint, gets them: a peer without one
+    /// decides for itself.
     pub keepalive: Option<NonZeroU16>,
 }
 
@@ -62,33 +64,35 @@ pub struct Endpoint {
 }
 
 /// A peer for every other node: its endpoint, and its mesh IP and everything
-/// behind it (its hub network too, even while the hub has no clients).
+/// behind it (its hub network too, even while the hub has no clients). The
+/// keepalive goes only to the nodes with an endpoint.
 fn node_peers(network: &Network, own: &Node, keepalive: Option<NonZeroU16>) -> Vec<Peer> {
     network
         .nodes()
         .filter(|node| node.name() != own.name())
-        .map(|node| Peer {
-            host: HostRef::Node(node.name().clone()),
-            public_key: node.public_key().clone(),
-            allowed_ips: iter::once(Ipv4Network::host(node.mesh_address().ip()))
-                .chain(node.networks())
-                .collect(),
-            routed: true,
-            endpoint: Some(Endpoint {
-                host: node.endpoint().clone(),
+        .map(|node| {
+            let endpoint = node.endpoint().map(|host| Endpoint {
+                host: host.clone(),
                 port: node.listen_port(),
-            }),
-            keepalive,
+            });
+
+            Peer {
+                host: HostRef::Node(node.name().clone()),
+                public_key: node.public_key().clone(),
+                allowed_ips: iter::once(Ipv4Network::host(node.mesh_address().ip()))
+                    .chain(node.networks())
+                    .collect(),
+                routed: true,
+                keepalive: keepalive.filter(|_| endpoint.is_some()),
+                endpoint,
+            }
         })
         .collect()
 }
 
-/// A peer for each host with a key and an address `on` picks.
-fn client_peers(
-    network: &Network,
-    on: impl Fn(&Place) -> bool,
-    keepalive: Option<NonZeroU16>,
-) -> Vec<Peer> {
+/// A peer for each host with a key and an address `on` picks. A client has no
+/// endpoint, so it gets no keepalive.
+fn client_peers(network: &Network, on: impl Fn(&Place) -> bool) -> Vec<Peer> {
     network
         .hosts()
         .iter()
@@ -105,35 +109,26 @@ fn client_peers(
                 allowed_ips: vec![Ipv4Network::host(address.ip())],
                 routed: false,
                 endpoint: None,
-                keepalive,
+                keepalive: None,
             })
         })
         .collect()
 }
 
 pub(super) fn plan(network: &Network, own: &Node) -> WireGuardPlan {
-    // What this node sends every peer. Every node has a public endpoint (nodes
-    // behind NAT aren't supported yet), so none sends keepalives.
-    let behind_nat = false;
-    let keepalive = keepalive(
-        behind_nat,
-        network.offers_services(&HostRef::Node(own.name().clone())),
-        network.keepalive_interval(),
-    );
+    // What this node sends the peers it dials. Others connect to every node: the
+    // nodes ping each other's mesh IPs (allowed by default), whatever services
+    // they offer.
+    let keepalive = keepalive(own.endpoint().is_some(), true, network.keepalive_interval());
 
     let mut peers = node_peers(network, own, keepalive);
     // Global clients: peers on every node, by their mesh IP.
-    peers.extend(client_peers(
-        network,
-        |place| *place == Place::Mesh,
-        keepalive,
-    ));
+    peers.extend(client_peers(network, |place| *place == Place::Mesh));
     // This node's hub clients: peers on this node only. Every other node reaches
     // them through this one, by the hub network in this node's peer entry.
     peers.extend(client_peers(
         network,
         |place| matches!(place, Place::Hub { node } if node == own.name()),
-        keepalive,
     ));
 
     WireGuardPlan {
@@ -243,34 +238,102 @@ clients:
     }
 
     #[test]
-    fn keepalive_only_for_a_host_behind_nat_that_offers_services() {
+    fn keepalive_only_for_a_host_nobody_can_dial_that_others_connect_to() {
         // Only such a host must keep its NAT mapping open for whoever connects to
         // it; a keepalive anywhere else wakes roaming devices for nothing.
         let every_40s = NonZeroU16::new(40);
-        assert_eq!(keepalive(true, true, every_40s), every_40s);
-        assert_eq!(keepalive(true, false, every_40s), None);
-        assert_eq!(keepalive(false, true, every_40s), None);
+        assert_eq!(keepalive(false, true, every_40s), every_40s);
         assert_eq!(keepalive(false, false, every_40s), None);
+        assert_eq!(keepalive(true, true, every_40s), None);
+        assert_eq!(keepalive(true, false, every_40s), None);
     }
 
     #[test]
     fn without_an_interval_no_host_sends_keepalives() {
-        assert_eq!(keepalive(true, true, None), None);
+        assert_eq!(keepalive(false, true, None), None);
     }
 
     #[test]
-    fn no_peer_entry_on_a_node_has_a_keepalive() {
-        // Nodes aren't behind NAT, whatever they offer (the example's Home offers
-        // ssh); and a node never keeps a roaming client's NAT open.
+    fn a_node_others_can_dial_sends_no_keepalive() {
+        // Whatever it offers (the example's Home offers ssh); and a node never
+        // keeps a roaming client's NAT open.
         let example = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/splot.example.yml"));
         for yaml in [FIXTURE, example] {
             let network = checked(yaml);
-            for own in network.nodes() {
+            for own in network.nodes().filter(|node| node.endpoint().is_some()) {
                 for peer in plan(&network, own).peers {
                     assert_eq!(peer.keepalive, None, "on {}: {}", own.name(), peer.host);
                 }
             }
         }
+    }
+
+    /// The fixture with Lake, a node nobody can dial (no endpoint).
+    fn with_lake(fixture: &str) -> String {
+        fixture.replace(
+            "\nclients:",
+            "
+  Lake:
+    publicKey: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFA=
+    listenPort: 51820
+    meshIp: 10.100.0.3
+clients:",
+        )
+    }
+
+    #[test]
+    fn a_node_nobody_can_dial_keeps_its_mapping_open() {
+        // The other nodes ping it (allowed by default), so others always connect
+        // to it, services or not. It keeps alive toward the peers it dials, the
+        // ones with an endpoint; Pond and Phone have none and decide for
+        // themselves.
+        let yaml = with_lake(FIXTURE).replace(
+            "\nclients:",
+            "
+  Pond:
+    publicKey: GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGA=
+    listenPort: 51820
+    meshIp: 10.100.0.4
+clients:",
+        );
+        let keepalives = |yaml: &str| -> Vec<(String, Option<u16>)> {
+            plan_for(yaml, "Lake")
+                .peers
+                .iter()
+                .map(|peer| (peer.host.to_string(), peer.keepalive.map(NonZeroU16::get)))
+                .collect()
+        };
+        let expected = |seconds: Option<u16>| {
+            [
+                ("Cabin".to_string(), seconds),
+                ("Home".to_string(), seconds),
+                ("Pond".to_string(), None),
+                ("Phone".to_string(), None),
+            ]
+        };
+        assert_eq!(keepalives(&yaml), expected(Some(25)));
+        assert_eq!(
+            keepalives(&format!("keepaliveInterval: 40\n{yaml}")),
+            expected(Some(40))
+        );
+        assert_eq!(
+            keepalives(&format!("keepaliveInterval: 0\n{yaml}")),
+            expected(None)
+        );
+    }
+
+    #[test]
+    fn a_node_nobody_can_dial_is_a_routed_peer_without_endpoint() {
+        // The others learn where it is from its handshake.
+        let plan = plan_for(&with_lake(FIXTURE), "Home");
+        let lake = plan
+            .peers
+            .iter()
+            .find(|peer| peer.host.to_string() == "Lake")
+            .unwrap();
+        assert!(lake.endpoint.is_none());
+        assert!(lake.routed);
+        assert_eq!(lake.keepalive, None);
     }
 
     #[test]

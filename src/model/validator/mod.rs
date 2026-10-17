@@ -1,3 +1,4 @@
+mod endpoints;
 mod entities;
 mod names;
 mod networks;
@@ -17,9 +18,9 @@ use crate::{
         node::Node,
         service::Service,
         validator::{
-            entities::check_entities, names::validate_names, networks::check_networks,
-            ports::check_ports, services::check_services, tags::validate_tags,
-            types::ValidationReport, wan::check_wan_zones,
+            endpoints::check_endpoints, entities::check_entities, names::validate_names,
+            networks::check_networks, ports::check_ports, services::check_services,
+            tags::validate_tags, types::ValidationReport, wan::check_wan_zones,
         },
     },
     types::{allow_from_ref::AllowFromRef, identifier::Identifier},
@@ -45,6 +46,7 @@ pub(super) fn check(config: &Config) -> Checked {
     check_entities(config, &mut report);
 
     let (nodes, hosts) = check_networks(config, &mut report);
+    check_endpoints(config, &mut report);
 
     check_ports(config, &mut report);
 

@@ -110,6 +110,15 @@ pub enum ValidationError {
         at: ConfigLocation,
     },
 
+    // endpoints
+    NoDialableNode {
+        at: ConfigLocation,
+    },
+
+    HubOnUndialableNode {
+        at: ConfigLocation,
+    },
+
     // ports
     PortCollision {
         port: PortOrRange,
@@ -269,6 +278,14 @@ impl fmt::Display for ValidationError {
                     "{at}: node '{node_name}' has no network named '{network_name}'"
                 )
             }
+            Self::NoDialableNode { at } => write!(
+                f,
+                "{at}: no node has an endpoint - at least one must, or no node can dial another and the mesh never forms"
+            ),
+            Self::HubOnUndialableNode { at } => write!(
+                f,
+                "{at}: the node has a hub but no endpoint - hub clients dial their hub node, so it needs one"
+            ),
             Self::PortCollision { port, at, with } => {
                 write!(f, "{at}: port {port} collides with {with}")
             }
@@ -326,6 +343,8 @@ impl ValidationError {
             Self::NodeMissing { at, .. } => at,
             Self::DuplicatePublicKey { at, .. } => at,
             Self::NodeNetworkMissing { at, .. } => at,
+            Self::NoDialableNode { at } => at,
+            Self::HubOnUndialableNode { at } => at,
             Self::PortCollision { at, .. } => at,
             Self::PublicKeyMissing { at, .. } => at,
             Self::TagWithNameCollision { at, .. } => at,
@@ -344,17 +363,33 @@ impl ValidationError {
 
 pub enum ValidationWarning {
     // entities
-    UnusedMac { at: ConfigLocation },
+    UnusedMac {
+        at: ConfigLocation,
+    },
 
-    UnusedPublicKey { at: ConfigLocation },
+    UnusedPublicKey {
+        at: ConfigLocation,
+    },
 
-    UnreachableClient { at: ConfigLocation },
+    UnreachableClient {
+        at: ConfigLocation,
+    },
 
     // references
-    UnreachableService { at: ConfigLocation },
+    UnreachableService {
+        at: ConfigLocation,
+    },
+
+    // endpoints
+    NoDirectTunnel {
+        other: Identifier,
+        at: ConfigLocation,
+    },
 
     // wan
-    UnusedWanZone { at: ConfigLocation },
+    UnusedWanZone {
+        at: ConfigLocation,
+    },
 }
 
 impl fmt::Display for ValidationWarning {
@@ -374,6 +409,10 @@ impl fmt::Display for ValidationWarning {
                 f,
                 "{at}: service has neither 'allowFrom' nor 'wan' — no source can reach it"
             ),
+            Self::NoDirectTunnel { other, at } => write!(
+                f,
+                "{at}: neither this node nor '{other}' has an endpoint, so neither can dial the other - they have no direct tunnel"
+            ),
             Self::UnusedWanZone { at } => write!(
                 f,
                 "{at}: wanZone is declared but no service exposes this node in 'wan.via' — either reference this node from a service's wan.via, or remove wanZone"
@@ -389,6 +428,7 @@ impl ValidationWarning {
             Self::UnreachableService { at } => at,
             Self::UnusedMac { at } => at,
             Self::UnusedPublicKey { at } => at,
+            Self::NoDirectTunnel { at, .. } => at,
             Self::UnusedWanZone { at } => at,
         }
     }

@@ -40,7 +40,7 @@ Real network architecture (subnets, VLANs, NAT) is not an implementation detail 
 
 Each node carries:
 
-- mesh metadata (`publicKey`, `endpoint`, `listenPort`, `meshIp`)
+- mesh metadata (`publicKey`, `endpoint` (optional, see "Endpoint"), `listenPort`, `meshIp`)
 - `zones` — map of downstream networks the router serves (LAN, VLANs). The map key is the OpenWRT zone name on that router. Splot does not manage these zones in OpenWRT — the operator configures them — splot only references them when generating rules.
 - `hub` — a network inside `meshNetwork` for devices that reach the mesh through this node alone (hub clients). See "Hubs".
 - `services` — services exposed by the router itself
@@ -158,13 +158,24 @@ A hub is a network inside `meshNetwork` that a node sets aside for devices reach
 - **Firewall:** everything on a hub arrives over the mesh interface, so it's in splot's mesh zone; rules tell hub clients apart by source IP.
 - **References:** hub clients join the node's namespace (`Home.camera`); `Home.hub` and the hub's `tags` refer to the whole hub network, the way a zone's name and tags do; a bare node name includes it.
 
+### Endpoint
+
+A node's `endpoint` (an IPv4 address or a DNS name) is where the other peers dial it, and nothing else.
+
+- **A node nobody can dial leaves it out:** behind NAT or CGNAT with no port forward, or a public address behind a firewall that drops what comes in. To WireGuard those are the same. Such a node dials the others; they learn its address from its handshake.
+- **No security in it:** WireGuard accepts an authenticated packet from any address and moves the peer's endpoint there (roaming). The keys authenticate.
+- **What follows:** at least one node needs an endpoint (an error otherwise); a node without one can't host a hub, since hub clients dial their hub node (an error); two nodes without one have no tunnel between them (a warning; relaying through a reachable node is future work).
+- **Names** must resolve through public DNS, never through the mesh. On OpenWrt a peer name that doesn't resolve keeps the whole mesh interface down, every peer with it.
+
 ### Keepalive
 
 A WireGuard keepalive is sent by the host it's set on, to its peers. It keeps that host's NAT mapping open, so whoever connects to it gets through.
 
 - **Off by default** on every node, global client and hub client. On a roaming device a keepalive wakes the radio (battery) and chases stale addresses. Site health is checked by pinging mesh IPs, not by "latest handshake".
-- **On only for a host behind NAT that offers services**, every `keepaliveInterval` seconds (default 25; `0` turns none on). A host that only dials out needs none: replies to what it starts come back anyway.
-- Every node has a public `endpoint` today, so no node sends keepalives. The rule's other cases are for client profiles and nodes behind NAT.
+- **On only for a host nobody can dial that others connect to**, every `keepaliveInterval` seconds (default 25; `0` turns none on). A host that only dials out needs none: replies to what it starts come back anyway.
+  - A node without an `endpoint` always sends them: the other nodes ping its mesh IP (allowed by default), so others always connect to it. A router runs on mains power, so it costs nothing.
+  - A global or hub client can't be dialled either; it sends them only if it offers services. That side applies once splot renders client profiles.
+- **Only toward the peers a host dials**, the ones with an endpoint. A peer without one (a client, a node nobody can dial) never gets a keepalive in another host's config: it can't be sent to anyway, and that peer decides for itself.
 - No per-host setting yet. One is planned for when client profiles exist, mainly to opt a host out.
 
 ---

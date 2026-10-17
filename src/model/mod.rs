@@ -54,13 +54,6 @@ impl Network {
         self.keepalive_interval
     }
 
-    /// Whether the host offers any service.
-    pub fn offers_services(&self, host: &HostRef) -> bool {
-        self.services
-            .get(host)
-            .is_some_and(|services| !services.is_empty())
-    }
-
     /// The services `host` offers, by name.
     pub fn services_of(&self, host: &Host) -> impl Iterator<Item = (&Identifier, &Service)> {
         self.services.get(host.id()).into_iter().flatten()
@@ -260,7 +253,7 @@ clients:
             home.public_key().as_str(),
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         );
-        assert_eq!(home.endpoint().to_string(), "1.2.3.4");
+        assert_eq!(home.endpoint().unwrap().to_string(), "1.2.3.4");
         assert_eq!(home.listen_port().to_string(), "51820");
         // Its mesh IP with the mesh network's prefix.
         assert_eq!(home.mesh_address().to_string(), "10.100.0.1/16");
@@ -309,15 +302,6 @@ clients:
         // A node's key is on its node; a device has none.
         assert!(key(cabin).is_none());
         assert!(key(printer).is_none());
-    }
-
-    #[test]
-    fn a_host_offers_services_when_it_has_any() {
-        let (network, home) = (checked(HOSTS), HostRef::Node(id("Home")));
-        assert!(network.offers_services(&local("Home", "printer")));
-        assert!(!network.offers_services(&home));
-        assert!(!network.offers_services(&local("Home", "camera")));
-        assert!(!network.offers_services(&HostRef::Client(id("Nobody"))));
     }
 
     #[test]

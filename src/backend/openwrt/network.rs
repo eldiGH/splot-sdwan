@@ -229,6 +229,29 @@ clients:
     }
 
     #[test]
+    fn a_node_nobody_can_dial_has_no_endpoint_and_sends_keepalives() {
+        let yaml = FIXTURE.replace(
+            "\nclients:",
+            "
+  Lake:
+    publicKey: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFA=
+    listenPort: 51820
+    meshIp: 10.100.0.3
+clients:",
+        );
+
+        let c = cmds_for(&yaml, "Home");
+        assert!(has_cmd(&c, "network.spl_wireguard_spl_mesh_Lake="));
+        assert!(!has_cmd(&c, "spl_mesh_Lake.endpoint"));
+        assert!(!has_cmd(&c, "persistent_keepalive"));
+
+        let c = cmds_for(&yaml, "Lake");
+        assert!(has_cmd(&c, "spl_mesh_Home.persistent_keepalive='25'"));
+        assert!(!has_cmd(&c, "spl_mesh_Phone.persistent_keepalive"));
+        assert!(has_cmd(&c, "spl_mesh_Home.endpoint_host='1.2.3.4'"));
+    }
+
+    #[test]
     fn mesh_interface_address_is_in_addresses() {
         // OpenWrt's WireGuard handler reads `addresses`; with `address` the
         // interface came up without an IP.

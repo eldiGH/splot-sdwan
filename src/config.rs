@@ -96,7 +96,9 @@ pub struct NodeZone {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Node {
     pub public_key: WgPublicKey,
-    pub endpoint: EndpointHost,
+    /// Where the other nodes dial it; none when nobody can (behind NAT, or a
+    /// firewall that drops what comes in).
+    pub endpoint: Option<EndpointHost>,
     pub listen_port: Port,
     pub mesh_ip: Ipv4Addr,
 
@@ -524,7 +526,13 @@ clients:
     fn an_endpoint_is_an_ip_or_a_host_name() {
         let endpoint = |value: &str| {
             serde_norway::from_str::<Config>(&NODE.replace("1.2.3.4", value))
-                .map(|config| config.nodes[&id("Home")].endpoint.to_string())
+                .map(|config| {
+                    config.nodes[&id("Home")]
+                        .endpoint
+                        .as_ref()
+                        .unwrap()
+                        .to_string()
+                })
                 .map_err(|err| err.to_string())
         };
         assert_eq!(endpoint("203.0.113.10").unwrap(), "203.0.113.10");
@@ -538,6 +546,12 @@ clients:
             err.contains("neither an IPv4 address nor a host name"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn a_node_may_have_no_endpoint() {
+        let config = config(&NODE.replace("    endpoint: 1.2.3.4\n", ""));
+        assert!(config.nodes[&id("Home")].endpoint.is_none());
     }
 
     #[test]

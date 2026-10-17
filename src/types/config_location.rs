@@ -5,6 +5,8 @@ use crate::types::identifier::Identifier;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConfigLocation {
     MeshNetwork,
+    /// The nodes as a whole.
+    Nodes,
     Node(Identifier, NodeLoc),
     Client(Identifier, ClientLoc),
 }
@@ -13,6 +15,7 @@ impl Display for ConfigLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MeshNetwork => write!(f, "meshNetwork"),
+            Self::Nodes => write!(f, "nodes"),
             Self::Node(node_id, node_loc) => write!(f, "nodes.{node_id}{node_loc}"),
             Self::Client(client_id, client_loc) => write!(f, "clients.{client_id}{client_loc}"),
         }

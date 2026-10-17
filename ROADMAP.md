@@ -168,9 +168,9 @@ Cleans up ~150 lines of nested-loop duplication across validators and generators
 
 ## 6. Nodes behind NAT (optional `endpoint`)
 
-> **Status: planned.** Today `Node.endpoint` is a required `Ipv4Addr`, so every node must be publicly reachable. Nodes behind NAT (home routers behind ISP NAT or CGNAT, with no port forward) are a common case and aren't supported yet. Priority is a judgment call — this is a user-facing capability and arguably outranks the internal refactors above (items 4–5).
+> **Status: implemented.** `endpoint` is optional: a node without one dials the others and keeps its NAT mapping open with keepalives. The validation below is in place. NAT'd ↔ NAT'd stays out of scope (see "Scope boundary"). The rest of this section is the spec it was built to.
 
-Make `endpoint` optional. A node with no `endpoint` has no address peers can dial, so it is responsible for **initiating** the WireGuard handshake outward to the reachable nodes. WireGuard learns the initiator's source `ip:port` from the incoming handshake, so a reachable peer can then send back. For others to reach it at any time, its NAT mapping must stay open: that's splot's keepalive rule (only a host behind NAT that offers services sends keepalives).
+Make `endpoint` optional. A node with no `endpoint` has no address peers can dial, so it is responsible for **initiating** the WireGuard handshake outward to the reachable nodes. WireGuard learns the initiator's source `ip:port` from the incoming handshake, so a reachable peer can then send back. For others to reach it at any time, its NAT mapping must stay open: that's splot's keepalive rule (a node without an endpoint always sends keepalives).
 
 ### What `endpoint` means
 
@@ -180,18 +180,19 @@ An `endpoint` gives no protection by source address: WireGuard accepts an authen
 
 ### Config change
 
-- `endpoint: Ipv4Addr` → `Option<Ipv4Addr>` with `#[serde(default)]`. Omitted = nobody can dial the node (behind NAT, or behind a firewall that drops inbound).
+- `endpoint` → optional (an address or a DNS name, see CONFIG.md). Omitted = nobody can dial the node (behind NAT, or behind a firewall that drops inbound).
 
 ### Generation change
 
 - The plan's peer already carries an optional endpoint, and the OpenWrt renderer writes `endpoint_host` / `endpoint_port` only when there is one. The only change is to stop forcing `Some`: a peer entry for a node with no `endpoint` has none.
-- The keepalive rule's "behind NAT" comes from the missing `endpoint` (today the planner takes it as false for every node). For a node, "offers services" must then count everything reached through it (its zones' devices and its hub clients, not just services on the router), because other sites reach those through it.
+- The keepalive rule's "nobody can dial it" comes from the missing `endpoint`. Such a node always sends keepalives, services or not: the other nodes ping its mesh IP (allowed by default), and other sites reach what's behind it through it.
 - The NAT'd node still binds its own `listen_port` locally (harmless); making `listen_port` optional too can come later if a real need appears.
 
 ### Validation change
 
 - **At least one node must have an `endpoint`** (when there are ≥2 nodes). If every node is behind NAT, no node can ever initiate and the mesh can never form — catch this as an error rather than emitting a silently-dead config.
 - **A node without an `endpoint` can't host a hub:** hub clients sit behind NAT themselves and must dial in. An error.
+- **Two nodes without an `endpoint`** have no tunnel between them (see "Scope boundary"): a warning for each such pair.
 
 ### Scope boundary
 
