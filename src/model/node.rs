@@ -18,6 +18,8 @@ pub struct Node {
     /// Where the other nodes dial it; none when nobody can.
     pub(super) endpoint: Option<EndpointHost>,
     pub(super) listen_port: Port,
+    /// Whether its pairs use a preshared key (when the other end wants one too).
+    pub(super) psk: bool,
     /// Its mesh IP with the mesh network's prefix: the address of its mesh
     /// interface.
     pub(super) mesh_address: Ipv4Interface,
@@ -43,6 +45,10 @@ impl Node {
 
     pub fn listen_port(&self) -> Port {
         self.listen_port
+    }
+
+    pub fn psk(&self) -> bool {
+        self.psk
     }
 
     pub fn mesh_address(&self) -> Ipv4Interface {

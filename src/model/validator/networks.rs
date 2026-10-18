@@ -7,7 +7,7 @@ use std::{
 use crate::{
     config::{self, Client, Config},
     model::{
-        host::{Host, HostAddress, HostRef, Place},
+        host::{Host, HostAddress, HostRef, Place, WgPeer},
         node::Node,
         validator::types::{ValidationError, ValidationReport},
     },
@@ -176,7 +176,7 @@ fn check_node(
                 },
                 addresses: address.into_iter().collect(),
                 macs: device.macs.clone().into(),
-                public_key: None,
+                wg_peer: None,
             });
         }
     }
@@ -186,6 +186,7 @@ fn check_node(
     let built = mesh.map(|mesh| Node {
         name: node_name.clone(),
         public_key: node.public_key.clone(),
+        psk: node.psk,
         endpoint: node.endpoint.clone(),
         listen_port: node.listen_port,
         mesh_address: mesh.interface,
@@ -197,7 +198,7 @@ fn check_node(
         id: HostRef::Node(node_name.clone()),
         addresses,
         macs: BTreeSet::new(),
-        public_key: None,
+        wg_peer: None,
     };
     let hosts = iter::once(node_host)
         .chain(devices)
@@ -254,7 +255,10 @@ fn check_hub(
             },
             addresses: address.into_iter().collect(),
             macs: BTreeSet::new(),
-            public_key: Some(client.public_key.clone()),
+            wg_peer: Some(WgPeer {
+                public_key: client.public_key.clone(),
+                psk: client.psk,
+            }),
         });
     }
 
@@ -314,7 +318,10 @@ fn client_host(
         id: HostRef::Client(client_name.clone()),
         addresses,
         macs: client.macs.clone().into(),
-        public_key: client.public_key.clone(),
+        wg_peer: client.public_key.clone().map(|public_key| WgPeer {
+            public_key,
+            psk: client.psk,
+        }),
     }
 }
 

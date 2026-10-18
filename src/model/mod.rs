@@ -268,6 +268,39 @@ clients:
     }
 
     #[test]
+    fn nodes_and_clients_with_a_key_say_whether_they_use_psks() {
+        let psks = |yaml: &str| {
+            let network = checked(yaml);
+            let [_, _, _, camera, phone] = network.hosts() else {
+                panic!("expected five hosts");
+            };
+            let psk = |host: &Host| host.wg_peer().unwrap().psk();
+            [
+                network.node(&id("Home")).unwrap().psk(),
+                network.node(&id("Cabin")).unwrap().psk(),
+                psk(camera),
+                psk(phone),
+            ]
+        };
+        assert_eq!(psks(HOSTS), [true; 4]);
+
+        let off = HOSTS
+            .replace(
+                "    endpoint: 5.6.7.8\n",
+                "    endpoint: 5.6.7.8\n    psk: false\n",
+            )
+            .replace(
+                "          ip: 10.100.49.10\n",
+                "          ip: 10.100.49.10\n          psk: false\n",
+            )
+            .replace(
+                "    meshIp: 10.100.1.10\n",
+                "    meshIp: 10.100.1.10\n    psk: false\n",
+            );
+        assert_eq!(psks(&off), [true, false, false, false]);
+    }
+
+    #[test]
     fn a_node_is_found_by_its_public_key() {
         let network = checked(HOSTS);
         let found = network.find_node_by_public_key("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=");
@@ -289,7 +322,10 @@ clients:
         let [cabin, _, printer, camera, phone] = network.hosts() else {
             panic!("expected five hosts");
         };
-        let key = |host: &Host| host.public_key().map(|key| key.as_str().to_owned());
+        let key = |host: &Host| {
+            host.wg_peer()
+                .map(|wg_peer| wg_peer.public_key().as_str().to_owned())
+        };
 
         assert_eq!(
             key(camera).unwrap(),

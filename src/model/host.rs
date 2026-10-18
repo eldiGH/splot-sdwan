@@ -127,9 +127,27 @@ pub struct Host {
     pub(super) id: HostRef,
     pub(super) addresses: Vec<HostAddress>,
     pub(super) macs: BTreeSet<MacAddress>,
-    /// Its WireGuard key: a hub client's, or a global client's when it has one. A
-    /// node's is on its [`Node`](super::node::Node).
-    pub(super) public_key: Option<WgPublicKey>,
+    /// Its side of the WireGuard pairs it's in: a hub client's, or a global
+    /// client's when it has a key. A node's is on its [`Node`](super::node::Node).
+    pub(super) wg_peer: Option<WgPeer>,
+}
+
+/// A host's side of its WireGuard pairs: its key, and whether its pairs use a
+/// preshared key (when the other end wants one too).
+#[derive(Debug)]
+pub struct WgPeer {
+    pub(super) public_key: WgPublicKey,
+    pub(super) psk: bool,
+}
+
+impl WgPeer {
+    pub fn public_key(&self) -> &WgPublicKey {
+        &self.public_key
+    }
+
+    pub fn psk(&self) -> bool {
+        self.psk
+    }
 }
 
 impl Host {
@@ -170,8 +188,8 @@ impl Host {
         &self.macs
     }
 
-    pub fn public_key(&self) -> Option<&WgPublicKey> {
-        self.public_key.as_ref()
+    pub fn wg_peer(&self) -> Option<&WgPeer> {
+        self.wg_peer.as_ref()
     }
 }
 
@@ -242,7 +260,7 @@ mod tests {
             id,
             addresses,
             macs: BTreeSet::new(),
-            public_key: None,
+            wg_peer: None,
         }
     }
 

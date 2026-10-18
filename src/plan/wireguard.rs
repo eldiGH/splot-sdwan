@@ -50,6 +50,8 @@ pub struct Peer {
     /// sits behind another node does; a client's own IP is on the mesh already.
     pub routed: bool,
     pub endpoint: Option<Endpoint>,
+    /// Whether the pair uses a preshared key: only when both ends want one.
+    pub psk: bool,
     /// Seconds between keepalives this node sends the peer (see `keepalive`).
     /// Only a peer it dials, one with an endpoint, gets them: a peer without one
     /// decides for itself.
@@ -83,6 +85,7 @@ fn node_peers(network: &Network, own: &Node, keepalive: Option<NonZeroU16>) -> V
                     .chain(node.networks())
                     .collect(),
                 routed: true,
+                psk: own.psk() && node.psk(),
                 keepalive: keepalive.filter(|_| endpoint.is_some()),
                 endpoint,
             }
@@ -92,12 +95,12 @@ fn node_peers(network: &Network, own: &Node, keepalive: Option<NonZeroU16>) -> V
 
 /// A peer for each host with a key and an address `on` picks. A client has no
 /// endpoint, so it gets no keepalive.
-fn client_peers(network: &Network, on: impl Fn(&Place) -> bool) -> Vec<Peer> {
+fn client_peers(network: &Network, own: &Node, on: impl Fn(&Place) -> bool) -> Vec<Peer> {
     network
         .hosts()
         .iter()
         .filter_map(|host| {
-            let public_key = host.public_key()?;
+            let wg_peer = host.wg_peer()?;
             let address = host
                 .addresses()
                 .iter()
@@ -105,10 +108,11 @@ fn client_peers(network: &Network, on: impl Fn(&Place) -> bool) -> Vec<Peer> {
 
             Some(Peer {
                 host: host.id().clone(),
-                public_key: public_key.clone(),
+                public_key: wg_peer.public_key().clone(),
                 allowed_ips: vec![Ipv4Network::host(address.ip())],
                 routed: false,
                 endpoint: None,
+                psk: own.psk() && wg_peer.psk(),
                 keepalive: None,
             })
         })
@@ -123,11 +127,12 @@ pub(super) fn plan(network: &Network, own: &Node) -> WireGuardPlan {
 
     let mut peers = node_peers(network, own, keepalive);
     // Global clients: peers on every node, by their mesh IP.
-    peers.extend(client_peers(network, |place| *place == Place::Mesh));
+    peers.extend(client_peers(network, own, |place| *place == Place::Mesh));
     // This node's hub clients: peers on this node only. Every other node reaches
     // them through this one, by the hub network in this node's peer entry.
     peers.extend(client_peers(
         network,
+        own,
         |place| matches!(place, Place::Hub { node } if node == own.name()),
     ));
 
@@ -172,6 +177,9 @@ impl fmt::Display for Peer {
         }
         if let Some(keepalive) = self.keepalive {
             write!(f, ", keepalive {keepalive}s")?;
+        }
+        if self.psk {
+            write!(f, ", psk")?;
         }
 
         Ok(())
@@ -399,6 +407,39 @@ clients:",
             format!("{}:{}", endpoint.host, endpoint.port),
             "cabin.example.net:51821"
         );
+    }
+
+    #[test]
+    fn a_pair_has_a_psk_only_when_both_ends_want_one() {
+        // A PSK has to exist on both ends, so one end turning it off is enough.
+        let psks = |yaml: &str, own: &str| -> Vec<String> {
+            plan_for(yaml, own)
+                .peers
+                .iter()
+                .map(|peer| format!("{}: {}", peer.host, peer.psk))
+                .collect()
+        };
+        assert_eq!(
+            psks(FIXTURE, "Home"),
+            ["Cabin: true", "Phone: true", "Home.camera: true"]
+        );
+
+        // Cabin and the camera turn it off.
+        let yaml = FIXTURE
+            .replace(
+                "    endpoint: 5.6.7.8\n",
+                "    endpoint: 5.6.7.8\n    psk: false\n",
+            )
+            .replace(
+                "          ip: 10.100.49.10\n",
+                "          ip: 10.100.49.10\n          psk: false\n",
+            );
+        assert_eq!(
+            psks(&yaml, "Home"),
+            ["Cabin: false", "Phone: true", "Home.camera: false"]
+        );
+        // From Cabin's side too: its own choice covers all its pairs.
+        assert_eq!(psks(&yaml, "Cabin"), ["Home: false", "Phone: false"]);
     }
 
     #[test]

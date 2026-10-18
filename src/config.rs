@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, fs::File, net::Ipv4Addr, path::Path};
 use serde::Deserialize;
 
 use crate::{
+    consts,
     protocol::Protocol,
     types::{
         allow_from_ref::AllowFromRef,
@@ -60,6 +61,10 @@ pub struct NodeZoneDevice {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeHubClient {
     pub public_key: WgPublicKey,
+    /// Whether its pairs use a preshared key; a pair has one only when both ends
+    /// want it.
+    #[serde(default = "default_psk")]
+    pub psk: bool,
     pub ip: Ipv4Addr,
 
     #[serde(default)]
@@ -100,6 +105,10 @@ pub struct Node {
     /// firewall that drops what comes in).
     pub endpoint: Option<EndpointHost>,
     pub listen_port: Port,
+    /// Whether its pairs use a preshared key; a pair has one only when both ends
+    /// want it.
+    #[serde(default = "default_psk")]
+    pub psk: bool,
     pub mesh_ip: Ipv4Addr,
 
     #[serde(default)]
@@ -125,6 +134,10 @@ impl Node {
 pub struct Client {
     pub mesh_ip: Option<Ipv4Addr>,
     pub public_key: Option<WgPublicKey>,
+    /// Whether its pairs use a preshared key; a pair has one only when both ends
+    /// want it.
+    #[serde(default = "default_psk")]
+    pub psk: bool,
 
     #[serde(default)]
     pub macs: OneOrManyUnique<MacAddress>,
@@ -155,12 +168,14 @@ pub struct Config {
     pub clients: BTreeMap<Identifier, Client>,
 }
 
-/// Seconds between keepalives unless the config says otherwise: WireGuard's
-/// suggestion, which works with a wide variety of NATs and firewalls.
-const DEFAULT_KEEPALIVE_INTERVAL: u16 = 25;
+// serde takes a default as a function; the values are in `consts`.
 
 fn default_keepalive_interval() -> u16 {
-    DEFAULT_KEEPALIVE_INTERVAL
+    consts::DEFAULT_KEEPALIVE_INTERVAL
+}
+
+fn default_psk() -> bool {
+    consts::DEFAULT_PSK
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -552,6 +567,48 @@ clients:
     fn a_node_may_have_no_endpoint() {
         let config = config(&NODE.replace("    endpoint: 1.2.3.4\n", ""));
         assert!(config.nodes[&id("Home")].endpoint.is_none());
+    }
+
+    #[test]
+    fn every_wireguard_peer_uses_a_psk_unless_turned_off() {
+        let yaml = format!(
+            "{NODE}
+    hub:
+      network: 10.100.0.128/25
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.0.130
+clients:
+  Phone:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    meshIp: 10.100.0.100
+"
+        );
+        let psks = |config: Config| {
+            let home = &config.nodes[&id("Home")];
+            [
+                home.psk,
+                home.hub_clients().next().unwrap().1.psk,
+                config.clients[&id("Phone")].psk,
+            ]
+        };
+        assert_eq!(psks(config(&yaml)), [true; 3]);
+
+        let off = yaml
+            .replace(
+                "    endpoint: 1.2.3.4\n",
+                "    endpoint: 1.2.3.4\n    psk: false\n",
+            )
+            .replace(
+                "          ip: 10.100.0.130\n",
+                "          ip: 10.100.0.130\n          psk: false\n",
+            )
+            .replace(
+                "    meshIp: 10.100.0.100\n",
+                "    meshIp: 10.100.0.100\n    psk: false\n",
+            );
+        assert_eq!(psks(config(&off)), [false; 3]);
     }
 
     #[test]

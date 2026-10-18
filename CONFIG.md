@@ -46,6 +46,7 @@ HomeRouter:
 | `publicKey`     | string                     | yes      | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients). splot uses this to identify which node it's running on.                                                                                                                            |
 | `endpoint`      | IPv4 address or DNS name   | no       | Where other mesh nodes dial this node: its public IP, or a DNS name that resolves to it (labels of letters, digits and hyphens). Leave it out when nobody can dial the node (behind NAT or CGNAT with no port forward, or behind a firewall that drops what comes in): it then dials the others, and keeps its NAT mapping open with keepalives so they can reach it too. At least one node needs an endpoint; a node without one can't host a [hub](#hub), and two nodes without one have no tunnel between them (a warning). A name must resolve through public DNS, never through the mesh: the tunnel can't need itself to come up. Peers resolve it when their mesh interface comes up, so a changed address reaches them the next time it does; on OpenWrt a name that doesn't resolve keeps that whole interface down, not just this peer. |
 | `listenPort`    | integer                    | yes      | WireGuard listen port for the mesh interface.                                                                                                                                                                     |
+| `psk`           | boolean                    | no       | Whether this node's WireGuard pairs use a preshared key. Default `true`; a pair has one only when both ends want it. See [Preshared keys](#preshared-keys). |
 | `meshIp`        | IPv4 address               | yes      | This node's IP on the mesh WireGuard interface (within `meshNetwork`).                                                                                                                                            |
 | `zones`         | map of name → Zone         | no       | Downstream networks the router serves (LAN, VLANs).                                                                                                                                                               |
 | `hub`           | Hub                        | no       | A network inside `meshNetwork` for devices that reach the mesh through this node alone. See [Hub](#hub).                                                                                                         |
@@ -145,6 +146,7 @@ lte-cam:
 | Field       | Type                      | Required | Description                                                                                                         |
 | ----------- | ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
 | `publicKey` | string                    | yes      | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients). |
+| `psk`       | boolean                   | no       | Whether this client's WireGuard pair with its hub node uses a preshared key. Default `true`. See [Preshared keys](#preshared-keys). |
 | `ip`        | IPv4 address              | yes      | The client's IP. Must lie inside the hub's `network` (not its network or broadcast address) and be unique in it.     |
 | `tags`      | string or list of strings | no       | Explicit tags assigned to this client.                                                                              |
 | `services`  | map of name → Service     | no       | Services exposed by this client and accessible through the mesh.                                                    |
@@ -175,10 +177,21 @@ Phone:
 | ----------- | --------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `meshIp`    | IPv4 address                                        | no       | The client's IP on the mesh interface (within `meshNetwork`). Set when the client connects directly to the mesh via WireGuard.       |
 | `publicKey` | string                                              | no       | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients). Required if `meshIp` is set — otherwise the client can't be a WireGuard peer.                          |
+| `psk`       | boolean                                             | no       | For a client with a `publicKey`: whether its WireGuard pairs use a preshared key. Default `true`. See [Preshared keys](#preshared-keys). |
 | `macs`      | MAC string or list                                  | no       | MAC addresses. Used to generate static DHCP leases for the client's zone IPs on each node.                                           |
 | `ips`       | map of nodeName → (map of localName → IPv4 address) | no       | The client's IPs on each node, keyed by zone name within that node. See [Tags](#tags) for resolution.                                |
 | `services`  | map of name → Service                               | no       | Services exposed by this client.                                                                                                     |
 | `tags`      | string or list of strings                           | no       | Explicit tags assigned to this client.                                                                                               |
+
+---
+
+## Preshared keys
+
+Every WireGuard pair (node and node, node and client) uses a preshared key (PSK) by default: a secret both ends share, mixed into the handshake. Against today's attackers it adds nothing (the keys already authenticate both ends); it protects recorded traffic against a future quantum computer breaking the key exchange.
+
+- A pair has one only when **both ends want it**. `psk: false` on a node, a hub client or a global client turns it off for all of that host's pairs: a PSK must exist on both ends, so one end is enough. Meant for WireGuard clients without a field for one, or profiles typed in by hand.
+- Each pair has its own PSK; the same key goes on both ends.
+- Not applied yet: the OpenWrt backend will fill them in from each node's key store.
 
 ---
 

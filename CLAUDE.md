@@ -178,6 +178,16 @@ A WireGuard keepalive is sent by the host it's set on, to its peers. It keeps th
 - **Only toward the peers a host dials**, the ones with an endpoint. A peer without one (a client, a node nobody can dial) never gets a keepalive in another host's config: it can't be sent to anyway, and that peer decides for itself.
 - No per-host setting yet. One is planned for when client profiles exist, mainly to opt a host out.
 
+### Preshared keys
+
+A WireGuard pair can also share a preshared key (PSK). It adds nothing against today's attackers (the keys authenticate both ends), but protects recorded traffic against a future quantum computer breaking the key exchange.
+
+- **On by default for every pair.** A pair has one only when both ends want it: `psk: false` on either end (a node, hub client or global client) turns it off for all of that host's pairs. A PSK must exist on both ends, so one end is enough. For WireGuard clients without a PSK field, or profiles typed in by hand.
+- **The default was chosen once:** turning it on later would silently add PSKs to existing pairs, and each such tunnel would stay down until both ends held one.
+- **One per pair, never derived from a single mesh secret:** one compromised node would give away every pair's PSK.
+- **Kept on the nodes** (the key store, like the private key) and filled in at apply; the plan and what's rendered hold placeholders. Placed by hand at first; later the controller generates a missing one and writes it to both ends in the same run.
+- **Apply refuses when a pair needs a PSK the node doesn't have.** Rendering the peer without one breaks the promise (and won't handshake if the other end has one); leaving the peer out drops its routes, so that site's traffic would leave by the default route, unencrypted.
+
 ---
 
 ## Testing

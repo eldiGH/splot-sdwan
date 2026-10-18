@@ -92,6 +92,9 @@ nodes:
         lte-cam:
           publicKey: ReplaceLteCamPublicKeyAAAAAAAAAAAAAAAAAAAAA=
           ip: 10.100.10.10
+          # Every pair uses a preshared key unless one end turns it off; this
+          # camera's built-in WireGuard client has no field for one.
+          psk: false
           services:
             rtsp:
               port: 554
