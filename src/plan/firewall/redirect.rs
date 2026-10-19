@@ -9,6 +9,7 @@ use crate::{
         host::{HostRef, Place},
         node::Node,
     },
+    plan::{list, proto_port},
     protocol::Protocol,
     types::{identifier::Identifier, ip::Ipv4Network, port::PortOrRange, zone_ref::ZoneRef},
 };
@@ -80,8 +81,8 @@ impl fmt::Display for Redirect {
             self.host,
             self.service,
             self.wan_zone,
-            super::super::proto_port(&self.proto, &self.external_port),
-            super::super::list(&self.sources),
+            proto_port(&self.proto, &self.external_port),
+            list(&self.sources),
             self.dest_zone,
             self.dest_ip,
             self.internal_port

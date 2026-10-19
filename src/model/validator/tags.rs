@@ -21,17 +21,15 @@ fn add_tags<'a>(
 ) {
     for tag in tags {
         let reference = AllowFromRef::Bare(tag.clone());
-        if global_refs.contains(&reference) {
-            let AllowFromRef::Bare(tag) = reference else {
-                unreachable!()
-            };
-            report
-                .errors
-                .push(ValidationError::TagWithNameCollision { tag, at: locate() });
-            continue;
-        }
 
-        tags_set.insert(reference);
+        if global_refs.contains(&reference) {
+            report.errors.push(ValidationError::TagWithNameCollision {
+                tag: tag.clone(),
+                at: locate(),
+            });
+        } else {
+            tags_set.insert(reference);
+        }
     }
 }
 

@@ -247,6 +247,7 @@ pub enum Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::openwrt::{export, section::Value};
 
     fn render(cmd: &UciBatchCommand) -> String {
         cmd.to_string()
@@ -316,13 +317,10 @@ mod tests {
             "spaces and ; set x.y=z",
         ] {
             let text = format!("package f\n\nconfig t 's'\n\toption o {}\n", quoted(value));
-            let sections = super::super::export::parse(&text).unwrap();
+            let sections = export::parse(&text).unwrap();
             assert_eq!(
                 sections[0].options,
-                [(
-                    "o".to_owned(),
-                    super::super::section::Value::Single(value.to_owned())
-                )],
+                [("o".to_owned(), Value::Single(value.to_owned()))],
                 "{value}"
             );
         }

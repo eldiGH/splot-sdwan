@@ -196,7 +196,7 @@ impl fmt::Display for Peer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test_support::checked, types::identifier::Identifier};
+    use crate::{plan::list, test_support::checked, types::identifier::Identifier};
 
     // Home has a hub with a client; Cabin's hub is empty. Phone is a global
     // client; Laptop has a key but no mesh IP (only an IP on Cabin's lan).
@@ -248,7 +248,7 @@ clients:
     fn peers(plan: &WireGuardPlan) -> Vec<String> {
         plan.peers
             .iter()
-            .map(|peer| format!("{}: {}", peer.host, super::super::list(&peer.allowed_ips)))
+            .map(|peer| format!("{}: {}", peer.host, list(&peer.allowed_ips)))
             .collect()
     }
 

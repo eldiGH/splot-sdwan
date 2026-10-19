@@ -1,21 +1,13 @@
 //! Redirects as uci `redirect` sections.
 
+use super::qualified_host_id;
 use crate::{
     backend::openwrt::{
         naming,
         section::{UciSection, UciSectionBuilder},
     },
-    model::host::HostRef,
     plan::firewall::redirect::Redirect,
 };
-
-/// The host's part of a redirect's id: a host inside a node with the node's name.
-fn host_id(host: &HostRef) -> Vec<&str> {
-    match host {
-        HostRef::Local { node, name } => vec![node.as_ref(), name.as_ref()],
-        _ => vec![host.name().as_ref()],
-    }
-}
 
 impl UciSection for Redirect {
     fn section_type(&self) -> &str {
@@ -23,7 +15,7 @@ impl UciSection for Redirect {
     }
 
     fn id(&self) -> impl IntoIterator<Item = &str> {
-        let mut id = host_id(&self.host);
+        let mut id = qualified_host_id(&self.host);
         id.push(self.service.as_ref());
         id
     }
@@ -50,7 +42,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
-    use crate::{protocol::Protocol, types::zone_ref::ZoneRef};
+    use crate::{model::host::HostRef, protocol::Protocol, types::zone_ref::ZoneRef};
 
     #[test]
     fn a_redirect_is_labelled_in_config_notation() {

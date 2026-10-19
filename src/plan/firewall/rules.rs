@@ -10,6 +10,7 @@ use crate::{
         node::Node,
         service::{Service, Source},
     },
+    plan::{list, proto_port},
     protocol::Protocol,
     types::{identifier::Identifier, ip::Ipv4Network, port::PortOrRange},
 };
@@ -147,9 +148,9 @@ impl fmt::Display for Rule {
             "accept {direction} {} {}: {} from {} to {}",
             self.host,
             self.service,
-            super::super::proto_port(&self.proto, &self.port),
-            super::super::list(&self.sources),
-            super::super::list(&self.destinations)
+            proto_port(&self.proto, &self.port),
+            list(&self.sources),
+            list(&self.destinations)
         )
     }
 }

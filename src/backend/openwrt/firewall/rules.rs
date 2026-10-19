@@ -1,5 +1,6 @@
 //! Rules as uci `rule` sections.
 
+use super::qualified_host_id;
 use crate::{
     backend::openwrt::{
         naming,
@@ -19,9 +20,9 @@ fn direction(direction: Direction) -> &'static str {
 /// The host's part of a rule's id: a host inside a node by its local name on that
 /// node, and by both names elsewhere.
 fn host_id(host: &HostRef, direction: Direction) -> Vec<&str> {
-    match (host, direction) {
-        (HostRef::Local { node, name }, Direction::Egress) => vec![node.as_ref(), name.as_ref()],
-        _ => vec![host.name().as_ref()],
+    match direction {
+        Direction::Ingress => vec![host.name().as_ref()],
+        Direction::Egress => qualified_host_id(host),
     }
 }
 

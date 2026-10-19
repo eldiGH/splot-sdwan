@@ -7,10 +7,22 @@ use std::iter;
 use log::{Level, debug, info, log_enabled};
 
 use super::section::{Section, UciSection};
-use crate::plan::{NodePlan, firewall::Verdict};
+use crate::{
+    model::host::HostRef,
+    plan::{NodePlan, firewall::Verdict},
+};
 use zones::MeshZone;
 
 pub(super) const FILE: &str = "firewall";
+
+/// A host's part of a section id, with its node's name when it's inside a node,
+/// so it can't clash with another node's host of the same name.
+fn qualified_host_id(host: &HostRef) -> Vec<&str> {
+    match host {
+        HostRef::Local { node, name } => vec![node.as_ref(), name.as_ref()],
+        _ => vec![host.name().as_ref()],
+    }
+}
 
 /// A verdict as fw4 spells it.
 fn target(verdict: Verdict) -> &'static str {
