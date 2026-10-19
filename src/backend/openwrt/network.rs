@@ -2,6 +2,7 @@ use log::{debug, info};
 
 use super::{
     naming::{self, UciSectionName},
+    secret::{Secret, Slot},
     section::{Section, UciSection, UciSectionBuilder},
 };
 use crate::{
@@ -14,10 +15,10 @@ use crate::{
 
 pub(super) const FILE: &str = "network";
 
-/// What the rendered config holds where the node's private key goes. The plan has
-/// no key, so neither has what's rendered from it: `apply` fills it in from the
-/// key store. Not a valid key, so it can't pass for one.
-pub(super) const PRIVATE_KEY_PLACEHOLDER: &str = "<private key>";
+/// The interface's option that holds the node's private key. The plan has no
+/// key, so neither has what's rendered from it: a placeholder, which `apply`
+/// fills in from the key store.
+const PRIVATE_KEY: &str = "private_key";
 
 /// The mesh interface.
 struct MeshInterface<'a> {
@@ -43,7 +44,7 @@ impl UciSection for MeshInterface<'_> {
     fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
         section
             .set("proto", "wireguard")
-            .set("private_key", PRIVATE_KEY_PLACEHOLDER)
+            .set(PRIVATE_KEY, Secret::PrivateKey.placeholder())
             .set("listen_port", self.plan.listen_port.to_string())
             // Not `address`: OpenWrt's WireGuard handler reads `addresses`.
             .extend_list("addresses", [self.plan.address])
@@ -112,8 +113,8 @@ fn interface_sections(plan: &WireGuardPlan) -> Vec<Section> {
 }
 
 /// The plan's WireGuard section as the `network` file's sections, with a
-/// placeholder for the node's private key.
-pub(super) fn render(plan: &NodePlan) -> Vec<Section> {
+/// placeholder for each secret, and where they are.
+pub(super) fn render(plan: &NodePlan) -> (Vec<Section>, Vec<Slot>) {
     info!("Generating network config for node '{}'", plan.node);
     for peer in &plan.wireguard.peers {
         debug!(
@@ -124,7 +125,14 @@ pub(super) fn render(plan: &NodePlan) -> Vec<Section> {
     }
     info!("  Mesh interface: {} peer(s)", plan.wireguard.peers.len());
 
-    interface_sections(&plan.wireguard)
+    let secrets = vec![Slot {
+        file: FILE,
+        section: naming::mesh_interface().to_string(),
+        option: PRIVATE_KEY,
+        secret: Secret::PrivateKey,
+    }];
+
+    (interface_sections(&plan.wireguard), secrets)
 }
 
 #[cfg(test)]
@@ -269,7 +277,7 @@ clients:",
         // not the snapshot, not the dry run.
         assert!(has_cmd(
             &cmds(),
-            &format!("set network.spl_mesh.private_key='{PRIVATE_KEY_PLACEHOLDER}'")
+            "set network.spl_mesh.private_key='<private key>'"
         ));
     }
 

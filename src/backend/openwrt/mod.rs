@@ -9,19 +9,23 @@ mod firewall;
 mod naming;
 mod network;
 mod reload;
+mod secret;
 mod section;
 pub mod splot_config;
 pub mod uci;
 
 use crate::{backend::Backend, plan::NodePlan};
 pub use apply::Error;
+use secret::{Secret, Slot};
 use section::{Section, Value};
 use splot_config::SplotConfig;
 
 /// The node's config as uci sections, file by file, in the order splot commits
-/// the files.
+/// the files, with placeholders where its secrets go.
 pub struct Rendered {
     files: Vec<(&'static str, Vec<Section>)>,
+    /// Where its secrets go: apply fills them in, the dry run masks them again.
+    secrets: Vec<Slot>,
 }
 
 impl Rendered {
@@ -30,25 +34,30 @@ impl Rendered {
         self.files.iter().map(|(file, _)| *file).collect()
     }
 
-    /// The same config with the node's private key where the placeholder is.
-    fn with_private_key(&self, private_key: &str) -> Self {
-        let fill = |(option, value): &(String, Value)| match value {
-            Value::Single(value) if value == network::PRIVATE_KEY_PLACEHOLDER => {
-                (option.clone(), Value::Single(private_key.to_owned()))
-            }
-            _ => (option.clone(), value.clone()),
-        };
-        let fill_section = |section: &Section| Section {
-            options: section.options.iter().map(fill).collect(),
-            ..section.clone()
+    /// The same config with the node's secrets in their slots.
+    fn with_secrets(&self, private_key: &str) -> Self {
+        let value = |secret: &Secret| match secret {
+            Secret::PrivateKey => private_key,
         };
 
+        let mut files = self.files.clone();
+        for slot in &self.secrets {
+            let option = files
+                .iter_mut()
+                .filter(|(file, _)| *file == slot.file)
+                .flat_map(|(_, sections)| sections.iter_mut())
+                .filter(|section| section.name == slot.section)
+                .flat_map(|section| section.options.iter_mut())
+                .find(|(option, _)| option == slot.option);
+
+            if let Some((_, option_value)) = option {
+                *option_value = Value::Single(value(&slot.secret).to_owned());
+            }
+        }
+
         Self {
-            files: self
-                .files
-                .iter()
-                .map(|(file, sections)| (*file, sections.iter().map(fill_section).collect()))
-                .collect(),
+            files,
+            secrets: self.secrets.clone(),
         }
     }
 }
@@ -70,23 +79,24 @@ impl Backend for OpenWrtBackend {
     type Error = Error;
 
     fn render(&self, plan: &NodePlan) -> Rendered {
+        let (network, secrets) = network::render(plan);
+
         Rendered {
             files: vec![
-                (network::FILE, network::render(plan)),
+                (network::FILE, network),
                 (firewall::FILE, firewall::render(plan)),
                 (dhcp::FILE, dhcp::render(plan)),
             ],
+            secrets,
         }
     }
 
     fn dry_run(&self, rendered: &Rendered) -> Result<(), Error> {
-        let private_key = self.splot_config.mesh_key();
-
-        apply::print(&rendered.with_private_key(private_key), private_key)
+        apply::print(&rendered.with_secrets(self.splot_config.mesh_key()))
     }
 
     fn apply(&self, rendered: &Rendered) -> Result<Vec<String>, Error> {
-        let rendered = rendered.with_private_key(self.splot_config.mesh_key());
+        let rendered = rendered.with_secrets(self.splot_config.mesh_key());
         let changed = apply::run(&rendered)?;
 
         Ok(changed.into_iter().map(str::to_owned).collect())
@@ -120,28 +130,39 @@ mod tests {
     }
 
     #[test]
-    fn apply_fills_in_the_private_key_and_nothing_else() {
+    fn apply_fills_in_the_secrets_in_their_slots_and_nothing_else() {
+        // Each lookalike comes before the slot, so a fill-in that skipped one of
+        // file, section or option would hit it first.
+        let placeholder = Secret::PrivateKey.placeholder();
         let rendered = Rendered {
             files: vec![
                 (
-                    "network",
-                    vec![section(
-                        "spl_mesh",
-                        "interface",
-                        &[
-                            ("private_key", network::PRIVATE_KEY_PLACEHOLDER),
-                            ("proto", "wireguard"),
-                        ],
-                    )],
+                    "dhcp",
+                    // A section of the same name in another file: no slot.
+                    vec![section("spl_mesh", "host", &[("private_key", placeholder)])],
                 ),
                 (
-                    "dhcp",
-                    vec![section("spl_host_printer", "host", &[("name", "printer")])],
+                    "network",
+                    vec![
+                        // The same option in another section: no slot.
+                        section("spl_other", "interface", &[("private_key", placeholder)]),
+                        section(
+                            "spl_mesh",
+                            "interface",
+                            &[("proto", "wireguard"), ("private_key", placeholder)],
+                        ),
+                    ],
                 ),
             ],
+            secrets: vec![Slot {
+                file: "network",
+                section: "spl_mesh".to_owned(),
+                option: "private_key",
+                secret: Secret::PrivateKey,
+            }],
         };
 
-        let filled = rendered.with_private_key("REAL_KEY");
+        let filled = rendered.with_secrets("REAL_KEY");
 
         let commands: Vec<String> = filled
             .files
@@ -152,14 +173,66 @@ mod tests {
         assert_eq!(
             commands,
             [
+                "set dhcp.spl_mesh='host'",
+                "set dhcp.spl_mesh.private_key='<private key>'",
+                "set network.spl_other='interface'",
+                "set network.spl_other.private_key='<private key>'",
                 "set network.spl_mesh='interface'",
-                "set network.spl_mesh.private_key='REAL_KEY'",
                 "set network.spl_mesh.proto='wireguard'",
-                "set dhcp.spl_host_printer='host'",
-                "set dhcp.spl_host_printer.name='printer'",
+                "set network.spl_mesh.private_key='REAL_KEY'",
             ]
         );
-        assert_eq!(filled.files(), ["network", "dhcp"]);
+        assert_eq!(filled.files(), ["dhcp", "network"]);
+        assert_eq!(filled.secrets, rendered.secrets);
+    }
+
+    #[test]
+    fn every_slot_holds_its_placeholder_and_every_placeholder_has_a_slot() {
+        let network = test_support::checked(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/splot.example.yml"
+        )));
+        let backend = OpenWrtBackend::new(SplotConfig::for_tests("FAKE_MESH_KEY"));
+
+        for node in network.nodes() {
+            let rendered = backend.render(&plan::plan(&network, node.name()).unwrap());
+            assert!(!rendered.secrets.is_empty());
+
+            let mut placeholders = 0;
+            for (file, sections) in &rendered.files {
+                for section in sections {
+                    for (option, value) in &section.options {
+                        let slot = rendered.secrets.iter().find(|slot| {
+                            slot.file == *file
+                                && slot.section == section.name
+                                && slot.option == option
+                        });
+                        let is_placeholder = |value: &str| {
+                            rendered
+                                .secrets
+                                .iter()
+                                .any(|slot| slot.secret.placeholder() == value)
+                        };
+                        match (slot, value) {
+                            (Some(slot), Value::Single(value)) => {
+                                assert_eq!(value, slot.secret.placeholder());
+                                placeholders += 1;
+                            }
+                            (Some(slot), Value::List(_)) => panic!("{slot:?} is a list"),
+                            (None, Value::Single(value)) => {
+                                assert!(!is_placeholder(value), "{file}.{}.{option}", section.name)
+                            }
+                            (None, Value::List(values)) => assert!(
+                                !values.iter().any(|value| is_placeholder(value)),
+                                "{file}.{}.{option}",
+                                section.name
+                            ),
+                        }
+                    }
+                }
+            }
+            assert_eq!(placeholders, rendered.secrets.len(), "{}", node.name());
+        }
     }
 
     /// `sections` the way `uci export` prints them.

@@ -6,8 +6,9 @@ use std::collections::HashSet;
 use super::{
     Rendered, diff,
     export::{self, ParseError},
-    naming, network,
+    naming,
     reload::{self, Reload},
+    secret,
     uci::{self, UciBatchCommand},
 };
 
@@ -113,9 +114,10 @@ pub(super) fn run(rendered: &Rendered) -> Result<Vec<&'static str>, Error> {
     Ok(changeset.files)
 }
 
-/// Prints what `run` would send to uci, and the reload after it. `private_key` is
-/// in the rendered config, so the diff is exact; it's printed as the placeholder.
-pub(super) fn print(rendered: &Rendered, private_key: &str) -> Result<(), Error> {
+/// Prints what `run` would send to uci, and the reload after it. The secrets are
+/// in the rendered config, so the diff is exact; they're printed as their
+/// placeholders.
+pub(super) fn print(rendered: &Rendered) -> Result<(), Error> {
     let peer_update = reload::peer_update().map_err(Error::Netifd)?;
     let changeset = changeset(rendered)?;
 
@@ -125,15 +127,7 @@ pub(super) fn print(rendered: &Rendered, private_key: &str) -> Result<(), Error>
     }
 
     for command in changeset.commands() {
-        match command {
-            UciBatchCommand::Set(path, value) if value == private_key => {
-                println!(
-                    "{}",
-                    UciBatchCommand::set(path, network::PRIVATE_KEY_PLACEHOLDER)
-                );
-            }
-            command => println!("{command}"),
-        }
+        println!("{}", secret::masked(command, &rendered.secrets));
     }
 
     // As comments, so the output stays a valid `uci batch` script.
@@ -344,6 +338,7 @@ mod tests {
                     vec![section("spl_rule_in_Home_ssh", "interface")],
                 ),
             ],
+            secrets: Vec::new(),
         };
         assert!(find_duplicate_sections(&rendered).is_empty());
     }
@@ -359,6 +354,7 @@ mod tests {
                     section("spl_x", "redirect"),
                 ],
             )],
+            secrets: Vec::new(),
         };
         assert_eq!(find_duplicate_sections(&rendered), ["firewall.spl_x"]);
     }
