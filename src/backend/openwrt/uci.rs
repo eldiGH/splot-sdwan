@@ -48,13 +48,51 @@ pub fn name(identifier: &str) -> String {
     identifier.replace('-', "_")
 }
 
+/// A value in single quotes, the way uci's parser reads it back. A `'` inside
+/// ends the quote, so it goes in escaped: `it's` is `'it'\''s'`. Unescaped, the
+/// rest of the value would be read as more of the command.
+fn quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Why `batch` won't send a command: a path with a character a uci name can't
+/// have (paths aren't quoted), or a value with a control character. Every value
+/// splot sends comes from a checked type, so this guards against bugs.
+fn check(command: &UciBatchCommand) -> Result<(), Error> {
+    let (path, value) = match command {
+        UciBatchCommand::Set(path, value) | UciBatchCommand::AddList(path, value) => {
+            (path.as_str(), Some(value))
+        }
+        UciBatchCommand::Del(path) | UciBatchCommand::Reorder(path, _) => (path.as_str(), None),
+        UciBatchCommand::Add(file, section_type) => (file.as_str(), Some(section_type)),
+        UciBatchCommand::Commit(file) => (file.as_deref().unwrap_or_default(), None),
+    };
+    let unsafe_command = |reason| {
+        Err(Error::Unsafe {
+            path: path.to_owned(),
+            reason,
+        })
+    };
+
+    // A file, section and option name, or an anonymous section (`@rule[2]`).
+    let name_char = |c: char| c.is_ascii_alphanumeric() || "_.@[]-".contains(c);
+    if !path.chars().all(name_char) {
+        return unsafe_command("a character uci names can't have");
+    }
+    if value.is_some_and(|value| value.chars().any(char::is_control)) {
+        return unsafe_command("a control character in the value");
+    }
+
+    Ok(())
+}
+
 impl std::fmt::Display for UciBatchCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Set(path, val) => write!(f, "set {path}='{val}'"),
+            Self::Set(path, val) => write!(f, "set {path}={}", quoted(val)),
             Self::Del(path) => write!(f, "delete {path}"),
             Self::Add(config, section) => write!(f, "add {config} {section}"),
-            Self::AddList(path, val) => write!(f, "add_list {path}='{val}'"),
+            Self::AddList(path, val) => write!(f, "add_list {path}={}", quoted(val)),
             Self::Reorder(path, position) => write!(f, "reorder {path}={position}"),
 
             Self::Commit(config) => {
@@ -146,15 +184,20 @@ fn reject_on_stderr(stderr: &str) -> Result<(), Error> {
     }
 }
 
+/// What `batch` sends uci: one command a line, once each is checked.
+fn batch_input(commands: &[UciBatchCommand]) -> Result<String, Error> {
+    commands.iter().try_for_each(check)?;
+
+    Ok(commands
+        .iter()
+        .map(|command| format!("{command}\n"))
+        .collect())
+}
+
 /// Runs `commands` in one `uci batch`. Fails if uci rejected any line; the lines it
 /// did accept stay staged (or committed, if the batch contained a commit).
 pub fn batch(commands: &[UciBatchCommand]) -> Result<(), Error> {
-    let input = commands
-        .iter()
-        .map(|cmd| format!("{cmd}\n"))
-        .collect::<String>();
-
-    let output = run(&["batch"], Some(&input))?;
+    let output = run(&["batch"], Some(&batch_input(commands)?))?;
 
     reject_on_stderr(&output.stderr)
 }
@@ -203,6 +246,9 @@ pub enum Error {
     Failed { code: Option<i32>, stderr: String },
     #[error("uci rejected part of the input: {stderr}")]
     Rejected { stderr: String },
+    /// Names the path only: the value may be a key.
+    #[error("refusing to send `{path}` to uci: {reason}")]
+    Unsafe { path: String, reason: &'static str },
 }
 
 #[cfg(test)]
@@ -259,6 +305,101 @@ mod tests {
     #[test]
     fn commit_bare() {
         assert_eq!(render(&UciBatchCommand::Commit(None)), "commit");
+    }
+
+    #[test]
+    fn a_quote_in_a_value_is_escaped_the_way_uci_reads_it() {
+        assert_eq!(
+            render(&UciBatchCommand::set("network.spl_x.name", "it's")),
+            r"set network.spl_x.name='it'\''s'"
+        );
+        assert_eq!(
+            render(&UciBatchCommand::add_list("network.spl_x.list", "a'b")),
+            r"add_list network.spl_x.list='a'\''b'"
+        );
+    }
+
+    #[test]
+    fn a_quoted_value_reads_back_as_it_was() {
+        // uci's file format quotes values the same way; the export parser reads
+        // them the way uci does.
+        for value in [
+            "it's",
+            "''",
+            "a'b'c",
+            r"back\slash",
+            "spaces and ; set x.y=z",
+        ] {
+            let text = format!("package f\n\nconfig t 's'\n\toption o {}\n", quoted(value));
+            let sections = super::super::export::parse(&text).unwrap();
+            assert_eq!(
+                sections[0].options,
+                [(
+                    "o".to_owned(),
+                    super::super::section::Value::Single(value.to_owned())
+                )],
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn batch_refuses_a_control_character_or_a_path_uci_cant_name() {
+        let refused = |command: UciBatchCommand| match check(&command) {
+            Err(Error::Unsafe { path, .. }) => path,
+            other => panic!("{command}: {other:?}"),
+        };
+
+        // The error names the path, never the value: it may be a key.
+        assert_eq!(
+            refused(UciBatchCommand::set("network.spl_x.key", "SECRET\nset x=1")),
+            "network.spl_x.key"
+        );
+        assert_eq!(
+            refused(UciBatchCommand::add_list("network.spl_x.l", "a\tb")),
+            "network.spl_x.l"
+        );
+        assert_eq!(
+            refused(UciBatchCommand::set("network.spl x.name", "v")),
+            "network.spl x.name"
+        );
+        assert_eq!(
+            refused(UciBatchCommand::del("network.spl_x;reboot")),
+            "network.spl_x;reboot"
+        );
+        assert_eq!(
+            refused(UciBatchCommand::reorder("network.spl_'x", 1)),
+            "network.spl_'x"
+        );
+        let err = check(&UciBatchCommand::set("network.spl_x.key", "SECRET\n")).unwrap_err();
+        assert!(!err.to_string().contains("SECRET"), "{err}");
+
+        // A batch with one such command sends nothing.
+        let batch = [
+            UciBatchCommand::set("network.spl_x", "interface"),
+            UciBatchCommand::set("network.spl_x.name", "a\nb"),
+        ];
+        assert!(matches!(batch_input(&batch), Err(Error::Unsafe { .. })));
+        assert_eq!(
+            batch_input(&batch[..1]).unwrap(),
+            "set network.spl_x='interface'\n"
+        );
+
+        // What splot sends.
+        for command in [
+            UciBatchCommand::set("network.spl_mesh.private_key", "ABC+/def="),
+            UciBatchCommand::set(
+                "network.spl_wireguard_spl_mesh_lte_cam",
+                "wireguard_spl_mesh",
+            ),
+            UciBatchCommand::add_list("firewall.spl_rule_in_Home_ssh.src_ip", "10.0.0.0/8"),
+            UciBatchCommand::set("firewall.spl_rule_in_Home_ssh.name", "[SPLOT] in: Home ssh"),
+            UciBatchCommand::del("firewall.@rule[2]"),
+            UciBatchCommand::reorder("network.spl_mesh", 7),
+            UciBatchCommand::commit("network"),
+        ] {
+            assert!(check(&command).is_ok(), "{command}");
+        }
     }
 
     #[test]
