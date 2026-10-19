@@ -9,7 +9,6 @@ use crate::env;
 pub enum UciBatchCommand {
     Set(String, String),
     Del(String),
-    Add(String, String),
     AddList(String, String),
     /// Moves a section to a position among all sections of its file.
     Reorder(String, usize),
@@ -23,10 +22,6 @@ impl UciBatchCommand {
 
     pub fn del(path: impl Into<String>) -> Self {
         Self::Del(path.into())
-    }
-
-    pub fn add(config: impl Into<String>, section: impl Into<String>) -> Self {
-        Self::Add(config.into(), section.into())
     }
 
     pub fn add_list(path: impl Into<String>, val: impl Into<String>) -> Self {
@@ -64,7 +59,6 @@ fn check(command: &UciBatchCommand) -> Result<(), Error> {
             (path.as_str(), Some(value))
         }
         UciBatchCommand::Del(path) | UciBatchCommand::Reorder(path, _) => (path.as_str(), None),
-        UciBatchCommand::Add(file, section_type) => (file.as_str(), Some(section_type)),
         UciBatchCommand::Commit(file) => (file.as_deref().unwrap_or_default(), None),
     };
     let unsafe_command = |reason| {
@@ -91,7 +85,6 @@ impl std::fmt::Display for UciBatchCommand {
         match self {
             Self::Set(path, val) => write!(f, "set {path}={}", quoted(val)),
             Self::Del(path) => write!(f, "delete {path}"),
-            Self::Add(config, section) => write!(f, "add {config} {section}"),
             Self::AddList(path, val) => write!(f, "add_list {path}={}", quoted(val)),
             Self::Reorder(path, position) => write!(f, "reorder {path}={position}"),
 
@@ -272,14 +265,6 @@ mod tests {
         assert_eq!(
             render(&UciBatchCommand::del("firewall.spl_old")),
             "delete firewall.spl_old"
-        );
-    }
-
-    #[test]
-    fn add_command() {
-        assert_eq!(
-            render(&UciBatchCommand::add("firewall", "rule")),
-            "add firewall rule"
         );
     }
 

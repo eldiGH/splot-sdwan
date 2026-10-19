@@ -12,18 +12,18 @@ use crate::{
 };
 use anyhow::{Context, bail};
 
-pub mod backend;
-pub mod cli;
-pub mod config;
-pub mod consts;
-pub mod env;
-pub mod model;
-pub mod plan;
-pub mod protocol;
+mod backend;
+mod cli;
+mod config;
+mod consts;
+mod env;
+mod model;
+mod plan;
+mod protocol;
 #[cfg(test)]
 pub(crate) mod test_support;
-pub mod types;
-pub mod wg;
+mod types;
+mod wg;
 
 fn main() -> anyhow::Result<()> {
     env::init();

@@ -4,7 +4,6 @@ use crate::types::identifier::Identifier;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConfigLocation {
-    MeshNetwork,
     /// The nodes as a whole.
     Nodes,
     Node(Identifier, NodeLoc),
@@ -14,7 +13,6 @@ pub enum ConfigLocation {
 impl Display for ConfigLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MeshNetwork => write!(f, "meshNetwork"),
             Self::Nodes => write!(f, "nodes"),
             Self::Node(node_id, node_loc) => write!(f, "nodes.{node_id}{node_loc}"),
             Self::Client(client_id, client_loc) => write!(f, "clients.{client_id}{client_loc}"),
@@ -59,7 +57,6 @@ impl Display for NodeLoc {
 pub enum ServiceLoc {
     Root,
     Port,
-    Proto,
     AllowFrom,
     Wan(WanLoc),
 }
@@ -69,7 +66,6 @@ impl Display for ServiceLoc {
         match self {
             Self::Root => write!(f, ""),
             Self::Port => write!(f, ".port"),
-            Self::Proto => write!(f, ".proto"),
             Self::AllowFrom => write!(f, ".allowFrom"),
             Self::Wan(wan_loc) => write!(f, ".wan{wan_loc}"),
         }
@@ -78,17 +74,13 @@ impl Display for ServiceLoc {
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WanLoc {
-    Root,
     Via,
-    Sources,
 }
 
 impl Display for WanLoc {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Root => write!(f, ""),
             Self::Via => write!(f, ".via"),
-            Self::Sources => write!(f, ".sources"),
         }
     }
 }
@@ -116,7 +108,6 @@ impl Display for ZoneLoc {
 pub enum DeviceLoc {
     Root,
     Ip,
-    Macs,
     Tags,
     Service(Identifier, ServiceLoc),
 }
@@ -126,7 +117,6 @@ impl Display for DeviceLoc {
         match self {
             Self::Root => write!(f, ""),
             Self::Ip => write!(f, ".ip"),
-            Self::Macs => write!(f, ".macs"),
             Self::Tags => write!(f, ".tags"),
             Self::Service(service_id, service_loc) => {
                 write!(f, ".services.{service_id}{service_loc}")
@@ -227,7 +217,6 @@ mod tests {
 
     #[test]
     fn top_level_paths() {
-        assert_eq!(ConfigLocation::MeshNetwork.to_string(), "meshNetwork");
         assert_eq!(
             ConfigLocation::Node(id("Home"), NodeLoc::Root).to_string(),
             "nodes.Home"

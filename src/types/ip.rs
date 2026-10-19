@@ -152,10 +152,6 @@ impl Ipv4Interface {
         self.addr
     }
 
-    pub fn prefix(&self) -> u8 {
-        self.prefix
-    }
-
     pub fn is_in_same_network(&self, ip: Ipv4Addr) -> bool {
         let mask = self.mask();
 
@@ -255,10 +251,6 @@ impl Ipv4Network {
         self.addr
     }
 
-    pub fn prefix(&self) -> u8 {
-        self.prefix
-    }
-
     pub fn mask(&self) -> u32 {
         mask_from_prefix(self.prefix)
     }
@@ -338,7 +330,7 @@ mod tests {
     fn network_valid() {
         let n = net("10.0.0.0/24");
         assert_eq!(n.ip(), ip("10.0.0.0"));
-        assert_eq!(n.prefix(), 24);
+        assert_eq!(n.prefix, 24);
         assert_eq!(n.to_string(), "10.0.0.0/24");
         // /32 and /0 are valid network addresses
         assert!("1.2.3.4/32".parse::<Ipv4Network>().is_ok());
@@ -400,7 +392,7 @@ mod tests {
     #[test]
     fn network_host_is_slash_32() {
         let h = Ipv4Network::host(ip("10.0.0.5"));
-        assert_eq!(h.prefix(), 32);
+        assert_eq!(h.prefix, 32);
         assert_eq!(h.ip(), ip("10.0.0.5"));
     }
 
@@ -408,7 +400,7 @@ mod tests {
     fn interface_valid_host() {
         let i: Ipv4Interface = "192.168.1.1/24".parse().unwrap();
         assert_eq!(i.ip(), ip("192.168.1.1"));
-        assert_eq!(i.prefix(), 24);
+        assert_eq!(i.prefix, 24);
         assert_eq!(i.to_string(), "192.168.1.1/24");
     }
 

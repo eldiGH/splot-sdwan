@@ -134,13 +134,6 @@ impl PortRange {
         self.to.value() - self.from.value()
     }
 
-    pub fn from(&self) -> Port {
-        self.from
-    }
-    pub fn to(&self) -> Port {
-        self.to
-    }
-
     pub fn contains(&self, port: Port) -> bool {
         self.from <= port && self.to >= port
     }
@@ -435,8 +428,8 @@ mod tests {
     #[test]
     fn range_valid() {
         let r: PortRange = "22-80".parse().unwrap();
-        assert_eq!(r.from().value(), 22);
-        assert_eq!(r.to().value(), 80);
+        assert_eq!(r.from.value(), 22);
+        assert_eq!(r.to.value(), 80);
         assert_eq!(r.width(), 58);
         assert_eq!(r.to_string(), "22-80");
     }
