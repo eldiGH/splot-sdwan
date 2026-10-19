@@ -86,6 +86,34 @@ check_version() {
 		sed "s|ReplaceHomePublicKeyA*=|$pubkey|" /tmp/splot.example.yml >/tmp/splot.yml'
 
 	local log_lines output
+	# Every pair uses a preshared key unless an end turns it off (the example's
+	# lte-cam does). Until they're stored, apply refuses, names the peers and
+	# touches nothing.
+	if output=$(run 'splot --config /tmp/splot.yml apply' 2>&1); then
+		fail "apply refuses while PSKs are missing" "$output"
+	elif printf '%s' "$output" | grep -q 'no preshared key stored for Cabin, Lake, Phone:' &&
+		[ "$(run 'uci show network | grep -c spl_')" = 0 ]; then
+		pass "apply refuses while PSKs are missing"
+	else
+		fail "apply refuses while PSKs are missing" "$output"
+	fi
+	# psk set stores nothing for a name that isn't Home's peer, a pair with psk
+	# turned off, or input that isn't a key.
+	output=$(run '
+		wg genpsk | splot --config /tmp/splot.yml psk set Cabin.camera 2>&1 | grep -q "isn.t a peer of Home" || echo "not a peer;"
+		wg genpsk | splot --config /tmp/splot.yml psk set Home.lte-cam 2>&1 | grep -q "uses no preshared key" || echo "psk: false;"
+		echo "not a key" | splot --config /tmp/splot.yml psk set Cabin 2>&1 | grep -q "not a preshared key" || echo "not a key;"
+		uci show splot | grep -q spl_psk_ && echo "stored one anyway;"') || true
+	if [ -z "$output" ]; then
+		pass "psk set refuses a non-peer, a pair without a PSK, and a non-key"
+	else
+		fail "psk set refuses a non-peer, a pair without a PSK, and a non-key" "$output"
+	fi
+	# One key per pair. The peers' ends aren't in this container.
+	run 'for peer in Cabin Lake Phone; do
+		wg genpsk | splot --config /tmp/splot.yml psk set $peer >/dev/null || exit 1
+	done'
+
 	log_lines=$(run 'logread | wc -l')
 	if output=$(run 'splot --config /tmp/splot.yml apply' 2>&1); then
 		pass "splot apply: $(printf '%s' "$output" | tail -1)"
@@ -161,6 +189,26 @@ check_version() {
 		fail "WireGuard dials a peer by name (resolved to $CABIN_ADDRESS)" "$(run 'wg show spl_mesh endpoints' 2>&1)"
 	fi
 
+	# Each pair's preshared key in WireGuard is the stored one; the camera's pair
+	# has none.
+	output=$(run '
+		psk_of() {
+			key=$(uci -q get network.spl_wireguard_spl_mesh_$1.public_key)
+			wg show spl_mesh preshared-keys | awk -v k="$key" "\$1 == k { print \$2 }"
+		}
+		problems=
+		for peer in Cabin Lake Phone; do
+			want=$(uci -q get splot.spl_psk_$peer.key)
+			[ -n "$want" ] && [ "$(psk_of $peer)" = "$want" ] || problems="$problems $peer;"
+		done
+		[ "$(psk_of lte_cam)" = "(none)" ] || problems="$problems lte-cam;"
+		echo "$problems"')
+	if [ -z "$output" ]; then
+		pass "WireGuard pairs have their stored PSKs (none where turned off)"
+	else
+		fail "WireGuard pairs have their stored PSKs (none where turned off)" "wrong:$output"
+	fi
+
 	# Errors the daemons logged since the apply. A dnsmasq reload makes procd log
 	# "Got unexpected signal 1" in this container even on a stock config, without
 	# splot: not counted.
@@ -224,6 +272,27 @@ check_version() {
 			pass "peer update is live (spl_mesh not recreated)"
 		else
 			fail "peer update is live (spl_mesh not recreated)" "ifindex $before -> $after"
+		fi
+	fi
+
+	# A PSK change: Cabin's pair gets a new key. Only that option is staged, the
+	# dry run shows its placeholder, and WireGuard gets the new key.
+	run 'wg genpsk | splot --config /tmp/splot.yml psk set Cabin >/dev/null'
+	output=$(run 'splot --config /tmp/splot.yml apply --dry-run 2>/dev/null' | grep -v '^#') || true
+	expected="set network.spl_wireguard_spl_mesh_Cabin.preshared_key='<preshared key>'"$'\n'"commit network"
+	if [ "$output" = "$expected" ]; then
+		pass "PSK change stages only that key, shown as its placeholder"
+	else
+		fail "PSK change stages only that key, shown as its placeholder" "$output"
+	fi
+	if ! output=$(run 'splot --config /tmp/splot.yml apply' 2>&1); then
+		fail "PSK update: apply" "$output"
+	else
+		sleep 3
+		if run 'wg show spl_mesh preshared-keys | grep -qF "$(uci get splot.spl_psk_Cabin.key)"'; then
+			pass "PSK update reaches WireGuard"
+		else
+			fail "PSK update reaches WireGuard"
 		fi
 	fi
 

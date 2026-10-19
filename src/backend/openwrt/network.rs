@@ -19,6 +19,8 @@ pub(super) const FILE: &str = "network";
 /// key, so neither has what's rendered from it: a placeholder, which `apply`
 /// fills in from the key store.
 const PRIVATE_KEY: &str = "private_key";
+/// A peer's option that holds its pair's preshared key: a placeholder too.
+const PRESHARED_KEY: &str = "preshared_key";
 
 /// The mesh interface.
 struct MeshInterface<'a> {
@@ -74,6 +76,7 @@ impl UciSection for PeerSection<'_> {
             // In the config's notation: `[SPLOT] Home.camera`.
             .set("description", naming::name_prefixed(&peer.host.to_string()))
             .set("public_key", peer.public_key.as_str())
+            .set_if_some(PRESHARED_KEY, peer.psk.then(|| psk(peer).placeholder()))
             .set("route_allowed_ips", if peer.routed { "1" } else { "0" })
             .set_if_some(
                 "persistent_keepalive",
@@ -95,21 +98,43 @@ impl UciSection for PeerSection<'_> {
     }
 }
 
-/// The mesh interface's section, followed by one section per peer.
-fn interface_sections(plan: &WireGuardPlan) -> Vec<Section> {
+/// The secret in a peer section whose pair uses a preshared key.
+fn psk(peer: &Peer) -> Secret {
+    Secret::Psk(peer.host.clone())
+}
+
+/// The mesh interface's section, followed by one section per peer, and where
+/// their secrets go: the interface's private key, and the preshared key of each
+/// pair that uses one.
+fn interface_sections(plan: &WireGuardPlan) -> (Vec<Section>, Vec<Slot>) {
     let interface = MeshInterface { plan };
     let peer_type = format!("wireguard_{}", interface.section_name());
 
     let mut sections = vec![interface.to_section()];
+    let mut secrets = vec![Slot {
+        file: FILE,
+        section: interface.section_name().to_string(),
+        option: PRIVATE_KEY,
+        secret: Secret::PrivateKey,
+    }];
+
     for peer in &plan.peers {
         let section = PeerSection {
             section_type: &peer_type,
             peer,
         };
+        if peer.psk {
+            secrets.push(Slot {
+                file: FILE,
+                section: section.section_name().to_string(),
+                option: PRESHARED_KEY,
+                secret: psk(peer),
+            });
+        }
         sections.push(section.to_section());
     }
 
-    sections
+    (sections, secrets)
 }
 
 /// The plan's WireGuard section as the `network` file's sections, with a
@@ -125,14 +150,7 @@ pub(super) fn render(plan: &NodePlan) -> (Vec<Section>, Vec<Slot>) {
     }
     info!("  Mesh interface: {} peer(s)", plan.wireguard.peers.len());
 
-    let secrets = vec![Slot {
-        file: FILE,
-        section: naming::mesh_interface().to_string(),
-        option: PRIVATE_KEY,
-        secret: Secret::PrivateKey,
-    }];
-
-    (interface_sections(&plan.wireguard), secrets)
+    interface_sections(&plan.wireguard)
 }
 
 #[cfg(test)]
@@ -178,6 +196,7 @@ clients:
     fn cmds_for(yaml: &str, own: &str) -> Vec<UciBatchCommand> {
         let plan = plan::plan(&checked(yaml), &own.parse().unwrap()).unwrap();
         interface_sections(&plan.wireguard)
+            .0
             .iter()
             .flat_map(|section| section.commands("network"))
             .collect()
@@ -257,6 +276,49 @@ clients:",
         assert!(has_cmd(&c, "spl_mesh_Home.persistent_keepalive='25'"));
         assert!(!has_cmd(&c, "spl_mesh_Phone.persistent_keepalive"));
         assert!(has_cmd(&c, "spl_mesh_Home.endpoint_host='1.2.3.4'"));
+    }
+
+    #[test]
+    fn a_pair_with_a_psk_gets_a_placeholder_and_a_slot() {
+        let yaml = FIXTURE.replace(
+            "          ip: 10.100.49.10\n",
+            "          ip: 10.100.49.10\n          psk: false\n",
+        );
+        let plan = plan::plan(&checked(&yaml), &"Home".parse().unwrap()).unwrap();
+        let (sections, secrets) = interface_sections(&plan.wireguard);
+
+        let c: Vec<_> = sections
+            .iter()
+            .flat_map(|section| section.commands("network"))
+            .collect();
+        assert!(has_cmd(
+            &c,
+            "spl_mesh_Cabin.preshared_key='<preshared key>'"
+        ));
+        assert!(has_cmd(
+            &c,
+            "spl_mesh_Phone.preshared_key='<preshared key>'"
+        ));
+        // The camera turned it off.
+        assert!(!has_cmd(&c, "spl_mesh_camera.preshared_key"));
+
+        let slots: Vec<String> = secrets
+            .iter()
+            .map(|slot| {
+                format!(
+                    "{}.{}.{}: {:?}",
+                    slot.file, slot.section, slot.option, slot.secret
+                )
+            })
+            .collect();
+        assert_eq!(
+            slots,
+            [
+                "network.spl_mesh.private_key: PrivateKey",
+                "network.spl_wireguard_spl_mesh_Cabin.preshared_key: Psk(Node(Identifier(\"Cabin\")))",
+                "network.spl_wireguard_spl_mesh_Phone.preshared_key: Psk(Client(Identifier(\"Phone\")))",
+            ]
+        );
     }
 
     #[test]

@@ -5,11 +5,14 @@
 //! value looks like.
 
 use super::uci::UciBatchCommand;
+use crate::model::host::HostRef;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Secret {
     /// The node's private key.
     PrivateKey,
+    /// The preshared key of the node's pair with this peer.
+    Psk(HostRef),
 }
 
 impl Secret {
@@ -18,6 +21,7 @@ impl Secret {
     pub(super) fn placeholder(&self) -> &'static str {
         match self {
             Self::PrivateKey => "<private key>",
+            Self::Psk(_) => "<preshared key>",
         }
     }
 }
@@ -53,6 +57,7 @@ pub(super) fn masked(command: UciBatchCommand, slots: &[Slot]) -> UciBatchComman
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::wg_key::check_key_format;
 
     fn private_key_slot() -> Slot {
         Slot {
@@ -60,6 +65,17 @@ mod tests {
             section: "spl_mesh".to_owned(),
             option: "private_key",
             secret: Secret::PrivateKey,
+        }
+    }
+
+    #[test]
+    fn a_placeholder_cant_pass_for_a_key() {
+        let peer = HostRef::Node("Cabin".parse().unwrap());
+        for secret in [Secret::PrivateKey, Secret::Psk(peer)] {
+            assert!(
+                check_key_format(secret.placeholder()).is_err(),
+                "{secret:?}"
+            );
         }
     }
 

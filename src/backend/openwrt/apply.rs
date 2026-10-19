@@ -32,6 +32,11 @@ pub enum Error {
     )]
     DuplicateSections(Vec<String>),
     #[error(
+        "no preshared key stored for {}: every WireGuard pair uses one unless an end sets `psk: false`. Generate one per pair (`wg genpsk`) and store the same key on both ends, here with `splot psk set <peer>`",
+        .0.join(", ")
+    )]
+    MissingPsks(Vec<String>),
+    #[error(
         "{} already has uncommitted uci changes, which splot would commit or revert together with its own - review them with `uci changes <file>`, commit or revert them, then run splot again",
         .0.join(", ")
     )]

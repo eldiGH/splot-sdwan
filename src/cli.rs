@@ -36,6 +36,22 @@ pub enum Command {
 
     /// Validate the config and report all errors and warnings
     Check,
+
+    /// Manage the preshared keys of this router's WireGuard pairs
+    Psk {
+        #[command(subcommand)]
+        command: PskCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum PskCommand {
+    /// Store the preshared key of this router's pair with PEER, read from stdin
+    /// (e.g. `wg genpsk`). The same key goes on the peer's side.
+    Set {
+        /// The peer, as the config names it: `Cabin`, `Phone`, `Home.camera`
+        peer: String,
+    },
 }
 
 #[cfg(test)]
@@ -76,6 +92,17 @@ mod tests {
         assert!(matches!(
             cli.command(),
             Some(Command::Apply { dry_run: false })
+        ));
+    }
+
+    #[test]
+    fn psk_set_names_the_peer() {
+        let cli = parse(&["splot", "psk", "set", "Home.camera"]);
+        assert!(matches!(
+            cli.command(),
+            Some(Command::Psk {
+                command: PskCommand::Set { peer }
+            }) if peer == "Home.camera"
         ));
     }
 

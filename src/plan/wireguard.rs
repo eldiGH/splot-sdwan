@@ -39,6 +39,13 @@ pub struct WireGuardPlan {
     pub peers: Vec<Peer>,
 }
 
+impl WireGuardPlan {
+    /// The peer the config calls `name`: `Cabin`, `Phone`, `Home.camera`.
+    pub fn peer(&self, name: &str) -> Option<&Peer> {
+        self.peers.iter().find(|peer| peer.host.to_string() == name)
+    }
+}
+
 #[derive(Debug)]
 pub struct Peer {
     /// Who the peer is: another node, a global client, or one of this node's hub
@@ -440,6 +447,18 @@ clients:",
         );
         // From Cabin's side too: its own choice covers all its pairs.
         assert_eq!(psks(&yaml, "Cabin"), ["Home: false", "Phone: false"]);
+    }
+
+    #[test]
+    fn a_peer_is_found_by_the_name_the_config_gives_it() {
+        let plan = plan_for(FIXTURE, "Home");
+        for name in ["Cabin", "Phone", "Home.camera"] {
+            assert_eq!(plan.peer(name).unwrap().host.to_string(), name);
+        }
+        // Not its peers: itself, a host without a key, another node's hub client.
+        for name in ["Home", "Laptop", "camera", "Cabin.camera"] {
+            assert!(plan.peer(name).is_none(), "{name}");
+        }
     }
 
     #[test]

@@ -34,14 +34,24 @@ impl Rendered {
         self.files.iter().map(|(file, _)| *file).collect()
     }
 
-    /// The same config with the node's secrets in their slots.
-    fn with_secrets(&self, private_key: &str) -> Self {
-        let value = |secret: &Secret| match secret {
-            Secret::PrivateKey => private_key,
-        };
-
+    /// The same config with the node's secrets from `store` in their slots.
+    /// Refuses when a pair's preshared key isn't stored, naming the peers.
+    fn with_secrets(&self, store: &SplotConfig) -> Result<Self, Error> {
+        let mut missing = Vec::new();
         let mut files = self.files.clone();
+
         for slot in &self.secrets {
+            let value = match &slot.secret {
+                Secret::PrivateKey => store.mesh_key(),
+                Secret::Psk(peer) => match store.psk(peer) {
+                    Some(key) => key,
+                    None => {
+                        missing.push(peer.to_string());
+                        continue;
+                    }
+                },
+            };
+
             let option = files
                 .iter_mut()
                 .filter(|(file, _)| *file == slot.file)
@@ -51,20 +61,23 @@ impl Rendered {
                 .find(|(option, _)| option == slot.option);
 
             if let Some((_, option_value)) = option {
-                *option_value = Value::Single(value(&slot.secret).to_owned());
+                *option_value = Value::Single(value.to_owned());
             }
         }
 
-        Self {
+        if !missing.is_empty() {
+            return Err(Error::MissingPsks(missing));
+        }
+
+        Ok(Self {
             files,
             secrets: self.secrets.clone(),
-        }
+        })
     }
 }
 
 pub struct OpenWrtBackend {
-    /// Where the node's private key lives: `apply` fills it into the rendered
-    /// config.
+    /// The node's key store: `apply` fills its secrets into the rendered config.
     splot_config: SplotConfig,
 }
 
@@ -92,11 +105,11 @@ impl Backend for OpenWrtBackend {
     }
 
     fn dry_run(&self, rendered: &Rendered) -> Result<(), Error> {
-        apply::print(&rendered.with_secrets(self.splot_config.mesh_key()))
+        apply::print(&rendered.with_secrets(&self.splot_config)?)
     }
 
     fn apply(&self, rendered: &Rendered) -> Result<Vec<String>, Error> {
-        let rendered = rendered.with_secrets(self.splot_config.mesh_key());
+        let rendered = rendered.with_secrets(&self.splot_config)?;
         let changed = apply::run(&rendered)?;
 
         Ok(changed.into_iter().map(str::to_owned).collect())
@@ -108,7 +121,7 @@ mod tests {
     use std::fmt::Write;
 
     use super::*;
-    use crate::{plan, test_support};
+    use crate::{model::host::HostRef, plan, test_support};
 
     // ── Snapshot of everything generated for the example config ────────────
     //
@@ -162,7 +175,9 @@ mod tests {
             }],
         };
 
-        let filled = rendered.with_secrets("REAL_KEY");
+        let filled = rendered
+            .with_secrets(&SplotConfig::for_tests("REAL_KEY"))
+            .unwrap();
 
         let commands: Vec<String> = filled
             .files
@@ -184,6 +199,84 @@ mod tests {
         );
         assert_eq!(filled.files(), ["dhcp", "network"]);
         assert_eq!(filled.secrets, rendered.secrets);
+    }
+
+    /// A peer section with a preshared key placeholder, and its slot.
+    fn psk_peer(peer: &HostRef) -> (Section, Slot) {
+        let name = format!("spl_wireguard_spl_mesh_{}", peer.name());
+        let placeholder = Secret::Psk(peer.clone()).placeholder();
+        (
+            section(
+                &name,
+                "wireguard_spl_mesh",
+                &[("preshared_key", placeholder)],
+            ),
+            Slot {
+                file: "network",
+                section: name,
+                option: "preshared_key",
+                secret: Secret::Psk(peer.clone()),
+            },
+        )
+    }
+
+    fn cabin() -> HostRef {
+        HostRef::Node("Cabin".parse().unwrap())
+    }
+
+    fn phone() -> HostRef {
+        HostRef::Client("Phone".parse().unwrap())
+    }
+
+    fn psk_peers(peers: &[HostRef]) -> Rendered {
+        let (sections, secrets) = peers.iter().map(psk_peer).unzip();
+        Rendered {
+            files: vec![("network", sections)],
+            secrets,
+        }
+    }
+
+    #[test]
+    fn apply_fills_in_each_pairs_psk_from_the_store() {
+        let store = SplotConfig::for_tests("REAL_KEY")
+            .with_psk(&cabin(), "CABIN_PSK")
+            .with_psk(&phone(), "PHONE_PSK");
+        let filled = psk_peers(&[cabin(), phone()]).with_secrets(&store).unwrap();
+
+        let commands: Vec<String> = filled.files[0]
+            .1
+            .iter()
+            .flat_map(|section| section.commands("network"))
+            .map(|command| command.to_string())
+            .collect();
+        assert_eq!(
+            commands,
+            [
+                "set network.spl_wireguard_spl_mesh_Cabin='wireguard_spl_mesh'",
+                "set network.spl_wireguard_spl_mesh_Cabin.preshared_key='CABIN_PSK'",
+                "set network.spl_wireguard_spl_mesh_Phone='wireguard_spl_mesh'",
+                "set network.spl_wireguard_spl_mesh_Phone.preshared_key='PHONE_PSK'",
+            ]
+        );
+    }
+
+    #[test]
+    fn apply_refuses_while_a_pairs_psk_is_missing() {
+        let missing = |store: &SplotConfig| match psk_peers(&[cabin(), phone()]).with_secrets(store)
+        {
+            Err(Error::MissingPsks(peers)) => peers,
+            Err(err) => panic!("{err}"),
+            Ok(_) => panic!("filled in without every PSK"),
+        };
+
+        assert_eq!(
+            missing(&SplotConfig::for_tests("REAL_KEY")),
+            ["Cabin", "Phone"]
+        );
+        assert_eq!(
+            missing(&SplotConfig::for_tests("REAL_KEY").with_psk(&cabin(), "CABIN_PSK")),
+            ["Phone"]
+        );
     }
 
     #[test]

@@ -108,13 +108,16 @@ Requires Rust (edition 2024), and on the target router: OpenWRT with `uci` and W
 cargo build --release
 # on the router, with splot.yml in the working directory:
 ./splot-sdwan check              # validate the config, report errors and warnings
-./splot-sdwan apply --dry-run    # print the uci commands (with a placeholder for the private key)
+./splot-sdwan apply --dry-run    # print the uci commands (with placeholders for the keys)
 ./splot-sdwan apply              # validate, generate, and apply via uci
+./splot-sdwan psk set Cabin < cabin.psk   # store this router's preshared key with Cabin
 ```
 
 `-c/--config <FILE>` overrides the config path (default: `splot.yml`).
 
 On first run splot generates a WireGuard keypair and stores it in its local state file (`/etc/config/splot`). Add the resulting public key to your config as a node, then re-run.
+
+Every WireGuard pair uses a preshared key unless one end sets `psk: false`, and `apply` refuses until they're stored: generate one per pair (`wg genpsk`) and store the same key on both ends with `splot psk set <peer>`. See [CONFIG.md → Preshared keys](CONFIG.md#preshared-keys).
 
 For local development, `SPLOT_UCI_CONFIG_DIR` redirects UCI output to a directory of your choice instead of `/etc/config`.
 
