@@ -109,10 +109,20 @@ check_version() {
 	else
 		fail "psk set refuses a non-peer, a pair without a PSK, and a non-key" "$output"
 	fi
-	# One key per pair. The peers' ends aren't in this container.
+	# One key per pair. The peers' ends aren't in this container. The key store
+	# holds the private key and the PSKs, so only root may read it: this script
+	# created it with the default mode, and storing a PSK tightens it.
+	local store_before store_after
+	store_before=$(run 'ls -l /etc/config/splot | cut -c1-10')
 	run 'for peer in Cabin Lake Phone; do
 		wg genpsk | splot --config /tmp/splot.yml psk set $peer >/dev/null || exit 1
 	done'
+	store_after=$(run 'ls -l /etc/config/splot | cut -c1-10')
+	if [ "$store_before" = "-rw-r--r--" ] && [ "$store_after" = "-rw-------" ]; then
+		pass "key store readable by root only (tightened from $store_before)"
+	else
+		fail "key store readable by root only" "before: $store_before, after: $store_after"
+	fi
 
 	log_lines=$(run 'logread | wc -l')
 	if output=$(run 'splot --config /tmp/splot.yml apply' 2>&1); then

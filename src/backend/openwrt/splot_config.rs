@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+};
 
 use super::{
     export::{self, ParseError},
@@ -69,12 +74,26 @@ fn get_config_dir() -> PathBuf {
     PathBuf::from(env::uci_config_dir().unwrap_or_else(|| "/etc/config".to_owned()))
 }
 
-fn init_mesh_key() -> Result<String, SplotConfigError> {
-    let path = get_config_dir().join("splot");
-    fs::OpenOptions::new()
+/// Only root may read or write the key store, the way OpenWrt keeps its own
+/// files that hold secrets (`network`, `dhcp`, `dropbear`). `uci commit` keeps
+/// the mode.
+const KEY_STORE_MODE: u32 = 0o600;
+
+/// Makes sure the key store's file at `path` exists and only its owner can read
+/// or write it. Called before every write to the store, so a new file is private
+/// before a secret goes in, and one an older splot left readable is tightened.
+fn make_private(path: &Path) -> Result<(), SplotConfigError> {
+    let file = fs::OpenOptions::new()
         .append(true)
         .create(true)
-        .open(&path)?;
+        .open(path)?;
+    file.set_permissions(fs::Permissions::from_mode(KEY_STORE_MODE))?;
+
+    Ok(())
+}
+
+fn init_mesh_key() -> Result<String, SplotConfigError> {
+    make_private(&get_config_dir().join(FILE))?;
 
     let private_key = wg::generate_private_key()?;
     uci::batch(&[
@@ -88,7 +107,7 @@ fn init_mesh_key() -> Result<String, SplotConfigError> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SplotConfigError {
-    #[error("failed to create splot config file")]
+    #[error("can't create the key store or make it private")]
     Io(#[from] std::io::Error),
     #[error("stored mesh private key is invalid")]
     InvalidMeshKey(#[source] KeyFormatError),
@@ -150,6 +169,7 @@ impl SplotConfig {
     /// of any it had, once it's checked to be one.
     pub fn store_psk(peer: &HostRef, key: &str) -> Result<(), SplotConfigError> {
         check_key_format(key).map_err(SplotConfigError::NotAPsk)?;
+        make_private(&get_config_dir().join(FILE))?;
         uci::batch(&store_psk_commands(peer, key))?;
 
         Ok(())
@@ -197,6 +217,49 @@ mod tests {
             mesh_key: "FAKE_MESH_KEY".to_owned(),
             psks: psks(&export::parse(text).unwrap())?,
         })
+    }
+
+    /// A directory of its own under the system's temp dir, gone when dropped.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("splot-{name}-{}", std::process::id()));
+            fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn mode(path: &Path) -> u32 {
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn the_key_store_is_created_readable_by_its_owner_only() {
+        let dir = TempDir::new("store-created");
+        let path = dir.0.join(FILE);
+
+        make_private(&path).unwrap();
+        assert_eq!(mode(&path), 0o600);
+    }
+
+    #[test]
+    fn an_existing_key_store_others_can_read_is_tightened() {
+        let dir = TempDir::new("store-tightened");
+        let path = dir.0.join(FILE);
+        fs::write(&path, "package splot\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        make_private(&path).unwrap();
+        assert_eq!(mode(&path), 0o600);
+        // What it held stays.
+        assert_eq!(fs::read_to_string(&path).unwrap(), "package splot\n");
     }
 
     #[test]

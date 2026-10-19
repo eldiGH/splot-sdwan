@@ -19,7 +19,7 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 
 ### Splot config (persistent local state)
 
-- Local state file (`/etc/config/splot`) managed by `src/backend/openwrt/splot_config.rs` via the `SplotConfig` struct (the OpenWrt backend's key store) — stores the node's one private key, for the mesh interface (`splot.config.private_key`), and the preshared key of each of its pairs that has one, a `psk` section per peer named like the peer's own section (`splot.spl_psk_Cabin.key`). Stored PSKs are checked to be keys when it's read.
+- Local state file (`/etc/config/splot`) managed by `src/backend/openwrt/splot_config.rs` via the `SplotConfig` struct (the OpenWrt backend's key store) — stores the node's one private key, for the mesh interface (`splot.config.private_key`), and the preshared key of each of its pairs that has one, a `psk` section per peer named like the peer's own section (`splot.spl_psk_Cabin.key`). Stored PSKs are checked to be keys when it's read. The file is readable by root only (0600, as OpenWrt keeps its own files that hold secrets): splot makes it so before every write, so a new store is private before a secret goes in and one an older splot left readable gets tightened.
 - `SplotConfig::load()` reads and validates the key, generating and committing one on first run (idempotent init — handles missing file, section, or option uniformly).
 - A stored key is validated on load; a corrupt key is a hard error, never silently regenerated (regeneration would orphan the node's peers).
 - Designed to grow as more local-only state is needed (e.g., last-applied config snapshot for distributed-reload rollback — see IDEAS.md).

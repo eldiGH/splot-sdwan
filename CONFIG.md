@@ -191,7 +191,7 @@ Every WireGuard pair (node and node, node and client) uses a preshared key (PSK)
 
 - A pair has one only when **both ends want it**. `psk: false` on a node, a hub client or a global client turns it off for all of that host's pairs: a PSK must exist on both ends, so one end is enough. Meant for WireGuard clients without a field for one, or profiles typed in by hand.
 - Each pair has its own PSK; the same key goes on both ends. Generate one with `wg genpsk`.
-- PSKs never go in `splot.yml`. Each node keeps its own in its key store (on OpenWrt `/etc/config/splot`, next to its private key), and splot fills them in when it applies; `--dry-run` shows `<preshared key>` instead.
+- PSKs never go in `splot.yml`. Each node keeps its own in its key store (on OpenWrt `/etc/config/splot`, next to its private key, readable by root only), and splot fills them in when it applies; `--dry-run` shows `<preshared key>` instead.
 - Store one on a node with `splot psk set <peer>`, which reads it from stdin (`splot psk set Cabin < cabin.psk`, so it stays out of your shell history). The peer is named as in the config: `Cabin`, `Phone`, `Home.camera`. On the other end, store the same key the same way, or put it in a client's WireGuard profile as `PresharedKey`.
 - `splot apply` refuses while a pair that uses a PSK has none stored, and names the peers.
 
