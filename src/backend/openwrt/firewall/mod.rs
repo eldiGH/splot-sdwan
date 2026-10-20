@@ -2,14 +2,12 @@ mod redirect;
 mod rules;
 mod zones;
 
-use std::iter;
-
 use log::{Level, debug, info, log_enabled};
 
 use super::section::{Section, UciSection};
 use crate::{
     model::host::HostRef,
-    plan::{NodePlan, firewall::Verdict},
+    plan::firewall::{FirewallPlan, Verdict},
 };
 use zones::MeshZone;
 
@@ -32,12 +30,10 @@ fn target(verdict: Verdict) -> &'static str {
     }
 }
 
-/// The plan's firewall section as the `firewall` file's sections: the mesh zone,
-/// then the rules, then the redirects.
-pub(super) fn render(plan: &NodePlan) -> Vec<Section> {
-    let firewall = &plan.firewall;
-
-    info!("Generating firewall config for node '{}'", plan.node);
+/// The plan's firewall section as the `firewall` file's sections: the mesh zone
+/// (if any), then the rules, then the redirects.
+pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
+    info!("Generating firewall config");
     info!(
         "  {} rule(s), {} redirect(s)",
         firewall.rules.len(),
@@ -53,12 +49,15 @@ pub(super) fn render(plan: &NodePlan) -> Vec<Section> {
         }
     }
 
-    let zone = MeshZone(&firewall.mesh_zone).to_section();
+    let zone = firewall
+        .mesh_zone
+        .as_ref()
+        .map(|policy| MeshZone(policy).to_section());
     let rules = firewall.rules.iter().map(|rule| rule.to_section());
     let redirects = firewall
         .redirects
         .iter()
         .map(|redirect| redirect.to_section());
 
-    iter::once(zone).chain(rules).chain(redirects).collect()
+    zone.into_iter().chain(rules).chain(redirects).collect()
 }

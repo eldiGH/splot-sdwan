@@ -89,8 +89,12 @@ platform:
 - **Every node says what it runs.** There's no default OS, and splot doesn't detect it: `splot check` validates every node without reaching any, and the config keeps its meaning when a node is reinstalled.
 - **On OpenWrt** a concern left out is managed with what OpenWrt ships. **On Linux** there's no usual setup to assume: every concern is written out, `none` included, and one left out is an error.
 - **A program the OS doesn't have** (`wg-quick` on OpenWrt) is an error.
-- **`none`** leaves that concern to you: splot generates nothing for it and doesn't touch what's there.
-- **Not yet:** `splot apply` (and `psk set`) refuse a Linux node, and a node with `none` for WireGuard, the firewall or DHCP; `splot check` validates them. `dns: none` applies, since splot generates no DNS config anyway.
+- **`none`** leaves that concern to you: splot generates nothing for it and doesn't touch what's there, its own sections from before included (on OpenWrt that file isn't staged, committed or reloaded). What's then yours to do:
+  - **`firewall: none`**, with WireGuard managed by splot: the mesh interface (`spl_mesh` on OpenWrt) is in none of splot's zones. Put it into one of yours (e.g. `lan`, as a hand-made `wg0` usually is) and let its listen port in from the WAN. Nothing `allowFrom` says is enforced on that node, and nothing is forwarded from its WAN.
+  - **`dhcp: none`**: the addresses the config gives devices and global clients are yours to make true, with a reservation in your DHCP server or a static address on the device. Firewall rules use them either way.
+  - **`wireguard: none`** (the node is in the mesh, its WireGuard set up by hand), with the firewall managed by splot: there's no mesh zone, so mesh traffic arrives in whichever zone your interface is in, and nothing is forwarded from the WAN to a host reached over the mesh. The rules `allowFrom` grants are still written.
+  - `firewall: none` and `dhcp: none` together: splot manages the mesh alone.
+- **Not yet:** `splot apply` refuses a Linux node, and a node with `wireguard: none` (before writing, splot checks the node is the one `--node` names by the WireGuard key splot keeps there); `splot check` validates them.
 
 ---
 

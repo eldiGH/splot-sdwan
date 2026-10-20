@@ -142,6 +142,9 @@ nodes:
   Lake:
     platform:
       os: openwrt
+      # Its DHCP is kept by hand: splot writes no leases there and leaves its
+      # DHCP config alone.
+      dhcp: none
     publicKey: ReplaceLakePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
     listenPort: 51820
     meshIp: 10.100.0.3
@@ -149,3 +152,23 @@ nodes:
     zones:
       lan:
         address: 192.168.3.1/24
+
+  # A Linux host that runs the mesh at its site, a Raspberry Pi say. Linux
+  # has no usual setup to assume, so its platform names the program behind
+  # every concern (`none` where splot should leave one alone). splot checks
+  # it today; applying to a Linux node comes later.
+  Barn:
+    platform:
+      os: linux
+      wireguard: wg-quick
+      firewall: nftables
+      dhcp: dnsmasq
+      dns: dnsmasq
+    publicKey: ReplaceBarnPublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 203.0.113.30
+    listenPort: 51820
+    meshIp: 10.100.0.4
+
+    zones:
+      lan:
+        address: 192.168.4.1/24

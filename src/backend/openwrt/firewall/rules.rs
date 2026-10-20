@@ -154,6 +154,7 @@ clients:
         let plan = plan::plan(&checked(yaml), &"Home".parse().unwrap()).unwrap();
         let sections: Vec<String> = plan
             .firewall
+            .unwrap()
             .rules
             .iter()
             .map(|rule| rule.to_section().commands("firewall")[0].to_string())

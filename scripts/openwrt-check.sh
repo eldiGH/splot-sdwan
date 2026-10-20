@@ -116,7 +116,7 @@ check_version() {
 	output=$(run '
 		splot --config /tmp/splot.yml apply --node Cabin --dry-run 2>&1 | grep -q "isn.t the one the config has for Cabin" || echo "apply as Cabin;"
 		wg genpsk | splot --config /tmp/splot.yml psk set --node Cabin Home 2>&1 | grep -q "isn.t the one the config has for Cabin" || echo "psk set as Cabin;"
-		splot --config /tmp/splot.yml apply --node Pond --dry-run 2>&1 | grep -q "no node Pond in the config; its nodes are Cabin, Home, Lake" || echo "apply as Pond;"
+		splot --config /tmp/splot.yml apply --node Pond --dry-run 2>&1 | grep -q "no node Pond in the config; its nodes are Barn, Cabin, Home, Lake" || echo "apply as Pond;"
 		uci show splot | grep -q spl_psk_ && echo "stored a PSK anyway;"
 		[ -n "$(uci changes)" ] && echo "staged changes;"') || true
 	if [ -z "$output" ]; then
@@ -130,7 +130,7 @@ check_version() {
 	# touches nothing.
 	if output=$(run 'splot --config /tmp/splot.yml apply --node Home' 2>&1); then
 		fail "apply refuses while PSKs are missing" "$output"
-	elif printf '%s' "$output" | grep -q 'no preshared key stored for Cabin, Lake, Phone:' &&
+	elif printf '%s' "$output" | grep -q 'no preshared key stored for Barn, Cabin, Lake, Phone:' &&
 		[ "$(run 'uci show network | grep -c spl_')" = 0 ]; then
 		pass "apply refuses while PSKs are missing"
 	else
@@ -154,7 +154,7 @@ check_version() {
 	local store_created store_after
 	store_created=$(run 'ls -l /etc/config/splot | cut -c1-10')
 	run 'chmod 644 /etc/config/splot'
-	run 'for peer in Cabin Lake Phone; do
+	run 'for peer in Barn Cabin Lake Phone; do
 		wg genpsk | splot --config /tmp/splot.yml psk set --node Home $peer >/dev/null || exit 1
 	done'
 	store_after=$(run 'ls -l /etc/config/splot | cut -c1-10')
@@ -247,7 +247,7 @@ check_version() {
 			wg show spl_mesh preshared-keys | awk -v k="$key" "\$1 == k { print \$2 }"
 		}
 		problems=
-		for peer in Cabin Lake Phone; do
+		for peer in Barn Cabin Lake Phone; do
 			want=$(uci -q get splot.spl_psk_$peer.key)
 			[ -n "$want" ] && [ "$(psk_of $peer)" = "$want" ] || problems="$problems $peer;"
 		done
@@ -344,6 +344,26 @@ check_version() {
 		else
 			fail "PSK update reaches WireGuard"
 		fi
+	fi
+
+	# Concerns left alone: with `firewall: none` and `dhcp: none` on Home, splot
+	# renders neither file, so it stages, deletes, commits and reloads nothing
+	# there, though the config changes what both would hold (the ssh port, the
+	# printer's MAC). Its sections from before stay as they were.
+	run "awk '!done && /^      os: openwrt\$/ { print; print \"      firewall: none\"; print \"      dhcp: none\"; done = 1; next } 1' \
+		/tmp/splot.yml | sed 's/port: 22\$/port: 2222/; s/aa:bb:cc:00:00:02/aa:bb:cc:00:00:12/' >/tmp/splot-none.yml"
+	local left_alone='/etc/config/firewall /etc/config/dhcp'
+	before=$(run "ls -i $left_alone; md5sum $left_alone")
+	local sections dry_run
+	sections=$(run "uci show firewall | grep -c '^firewall\.spl_[^.]*='; uci show dhcp | grep -c '^dhcp\.spl_[^.]*='" | paste -sd' ')
+	dry_run=$(run 'splot --config /tmp/splot-none.yml apply --node Home --dry-run 2>/dev/null') || true
+	output=$(run 'splot --config /tmp/splot-none.yml apply --node Home' 2>&1) || true
+	after=$(run "ls -i $left_alone; md5sum $left_alone")
+	if [ "$dry_run" = "# Nothing to change." ] && [ "$(printf '%s' "$output" | tail -1)" = "Nothing changed." ] &&
+		[ "$before" = "$after" ] && ! printf '%s' "$sections" | grep -qw 0; then
+		pass "concerns left alone (none): their files untouched, splot's sections kept ($sections)"
+	else
+		fail "concerns left alone (none): their files untouched" "dry run: $dry_run"$'\n'"$output"$'\n'"sections: $sections"$'\n'"before: $before"$'\n'"after: $after"
 	fi
 
 	if [ "${SPLOT_CHECK_KEEP:-}" = 1 ]; then

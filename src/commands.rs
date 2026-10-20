@@ -14,7 +14,7 @@ use crate::{
     plan::{self, NodePlan},
     types::{
         identifier::Identifier,
-        platform::{Concern, Os},
+        platform::Os,
         wg_key::{WgPresharedKey, WgPublicKey},
     },
     wg,
@@ -153,11 +153,16 @@ pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Resu
     let plan = node_plan(network, node)?;
     check_applicable(network, node)?;
     let splot_config = SplotConfig::load()?;
-    splot_config.check_node(&plan.node, &plan.wireguard.public_key)?;
+    splot_config.check_node(&plan.node, &plan.public_key)?;
 
-    let Some(peer) = plan.wireguard.peer(peer) else {
-        let peers: Vec<String> = plan
-            .wireguard
+    let Some(wireguard) = &plan.wireguard else {
+        bail!(
+            "splot leaves {}'s WireGuard alone (wireguard: none): it sets up no peers there, so it keeps no preshared keys",
+            plan.node
+        );
+    };
+    let Some(peer) = wireguard.peer(peer) else {
+        let peers: Vec<String> = wireguard
             .peers
             .iter()
             .map(|peer| peer.host.to_string())
@@ -195,7 +200,8 @@ pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Resu
 }
 
 /// Refuses a node splot can only check for now, not apply to: one that doesn't
-/// run OpenWrt, or leaves its WireGuard, firewall or DHCP alone (`none`).
+/// run OpenWrt, or leaves its WireGuard alone (`none`): the key check needs
+/// splot's own key there.
 fn check_applicable(network: &Network, node: &Identifier) -> anyhow::Result<()> {
     let Some(node) = network.node(node) else {
         return Ok(());
@@ -210,20 +216,10 @@ fn check_applicable(network: &Network, node: &Identifier) -> anyhow::Result<()> 
         );
     }
 
-    let left_alone: Vec<String> = [
-        (Concern::WireGuard, platform.wireguard().is_none()),
-        (Concern::Firewall, platform.firewall().is_none()),
-        (Concern::Dhcp, platform.dhcp().is_none()),
-    ]
-    .into_iter()
-    .filter(|(_, none)| *none)
-    .map(|(concern, _)| format!("{concern}: none"))
-    .collect();
-    if !left_alone.is_empty() {
+    if platform.wireguard().is_none() {
         bail!(
-            "{} leaves a concern alone ({}): splot can check it, but can't apply to it yet",
-            node.name(),
-            left_alone.join(", ")
+            "splot leaves {}'s WireGuard alone (wireguard: none): it can check the node, but can't apply to it yet",
+            node.name()
         );
     }
 
@@ -332,7 +328,7 @@ clients:
     }
 
     #[test]
-    fn splot_applies_only_to_openwrt_nodes_it_manages_whole() {
+    fn splot_applies_to_openwrt_nodes_whose_wireguard_it_manages() {
         let network = checked(
             "
 meshNetwork: 10.100.0.0/16
@@ -378,15 +374,11 @@ nodes:
             check_applicable(&network, &node.parse().unwrap()).map_err(|err| err.to_string())
         };
 
-        // DNS does nothing yet, so leaving it alone changes nothing.
         assert!(applicable("Home").is_ok());
-        assert_eq!(
-            applicable("Cabin").unwrap_err(),
-            "Cabin leaves a concern alone (firewall: none, dhcp: none): splot can check it, but can't apply to it yet"
-        );
+        assert!(applicable("Cabin").is_ok());
         assert_eq!(
             applicable("Lake").unwrap_err(),
-            "Lake leaves a concern alone (wireguard: none): splot can check it, but can't apply to it yet"
+            "splot leaves Lake's WireGuard alone (wireguard: none): it can check the node, but can't apply to it yet"
         );
         assert_eq!(
             applicable("Pond").unwrap_err(),

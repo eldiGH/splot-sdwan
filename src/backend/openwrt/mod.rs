@@ -14,6 +14,8 @@ mod section;
 pub mod splot_config;
 pub mod uci;
 
+use log::info;
+
 use crate::{
     backend::Backend,
     plan::NodePlan,
@@ -116,17 +118,29 @@ impl Backend for OpenWrtBackend {
     type Rendered = Rendered;
     type Error = Error;
 
+    /// Only the files of the concerns splot manages on the node: one it leaves
+    /// alone keeps its file as it is, splot's own old sections included.
     fn render(&self, plan: &NodePlan) -> Rendered {
-        let (network, secrets) = network::render(plan);
+        info!("Rendering the uci config of node '{}'", plan.node);
+        let mut files = Vec::new();
+        let mut secrets = Vec::new();
+
+        if let Some(wireguard) = &plan.wireguard {
+            let (network, slots) = network::render(wireguard);
+            files.push((network::FILE, network));
+            secrets = slots;
+        }
+        if let Some(firewall) = &plan.firewall {
+            files.push((firewall::FILE, firewall::render(firewall)));
+        }
+        if let Some(dhcp) = &plan.dhcp {
+            files.push((dhcp::FILE, dhcp::render(dhcp)));
+        }
 
         Rendered {
             node: plan.node.clone(),
-            public_key: plan.wireguard.public_key.clone(),
-            files: vec![
-                (network::FILE, network),
-                (firewall::FILE, firewall::render(plan)),
-                (dhcp::FILE, dhcp::render(plan)),
-            ],
+            public_key: plan.public_key.clone(),
+            files,
             secrets,
         }
     }
@@ -152,12 +166,31 @@ mod tests {
     use std::fmt::Write;
 
     use super::*;
-    use crate::{model::host::HostRef, plan, test_support};
+    use crate::{
+        model::{Network, host::HostRef, node::Node},
+        plan, test_support,
+        types::platform::Os,
+    };
 
     // Fake keys, but well-formed: the key store takes nothing else.
     const PRIVATE_KEY: &str = "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRA=";
     const CABIN_PSK: &str = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
     const PHONE_PSK: &str = "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPA=";
+
+    /// The example config, and its nodes that run OpenWrt: the ones this
+    /// backend renders.
+    fn example() -> Network {
+        test_support::checked(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/splot.example.yml"
+        )))
+    }
+
+    fn openwrt_nodes(network: &Network) -> impl Iterator<Item = &Node> {
+        network
+            .nodes()
+            .filter(|node| node.platform().os() == Os::OpenWrt)
+    }
 
     // ── Snapshot of everything generated for the example config ────────────
     //
@@ -176,6 +209,55 @@ mod tests {
                 .map(|(option, value)| (option.to_string(), Value::Single(value.to_string())))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn a_concern_splot_leaves_alone_has_no_file() {
+        // Nothing rendered for it means nothing staged, deleted, committed or
+        // reloaded there: apply works through the rendered files only.
+        let rendered = |platform: &str| {
+            let network = test_support::checked(&format!(
+                "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    platform:
+      os: openwrt
+{platform}
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+"
+            ));
+            let plan = plan::plan(&network, &"Home".parse().unwrap()).unwrap();
+            OpenWrtBackend::new(SplotConfig::for_tests(PRIVATE_KEY)).render(&plan)
+        };
+
+        let all = rendered("");
+        assert_eq!(all.files(), ["network", "firewall", "dhcp"]);
+        assert_eq!(all.secrets.len(), 1);
+
+        let network_only = rendered("      firewall: none\n      dhcp: none");
+        assert_eq!(network_only.files(), ["network"]);
+        assert_eq!(network_only.secrets.len(), 1);
+        assert_eq!(
+            rendered("      firewall: none").files(),
+            ["network", "dhcp"]
+        );
+        assert_eq!(
+            rendered("      dhcp: none").files(),
+            ["network", "firewall"]
+        );
+
+        // Without WireGuard, no key to fill in either.
+        let no_wireguard = rendered("      wireguard: none");
+        assert_eq!(no_wireguard.files(), ["firewall", "dhcp"]);
+        assert!(no_wireguard.secrets.is_empty());
+        assert_eq!(
+            no_wireguard.public_key.as_str(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        );
     }
 
     #[test]
@@ -319,13 +401,10 @@ mod tests {
 
     #[test]
     fn every_slot_holds_its_placeholder_and_every_placeholder_has_a_slot() {
-        let network = test_support::checked(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/splot.example.yml"
-        )));
+        let network = example();
         let backend = OpenWrtBackend::new(SplotConfig::for_tests(PRIVATE_KEY));
 
-        for node in network.nodes() {
+        for node in openwrt_nodes(&network) {
             let rendered = backend.render(&plan::plan(&network, node.name()).unwrap());
             assert!(!rendered.secrets.is_empty());
 
@@ -396,13 +475,10 @@ mod tests {
     #[test]
     fn what_splot_wrote_reads_back_as_nothing_to_change() {
         // Once the rendered config is in uci, the next apply finds nothing to stage.
-        let network = test_support::checked(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/splot.example.yml"
-        )));
+        let network = example();
         let backend = OpenWrtBackend::new(SplotConfig::for_tests(PRIVATE_KEY));
 
-        for node in network.nodes() {
+        for node in openwrt_nodes(&network) {
             let plan = plan::plan(&network, node.name()).unwrap();
             for (file, sections) in &backend.render(&plan).files {
                 let read_back = export::parse(&exported(sections)).unwrap();
@@ -414,13 +490,10 @@ mod tests {
 
     #[test]
     fn example_config_snapshot() {
-        let network = test_support::checked(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/splot.example.yml"
-        )));
+        let network = example();
         let backend = OpenWrtBackend::new(SplotConfig::for_tests(PRIVATE_KEY));
 
-        for node in network.nodes() {
+        for node in openwrt_nodes(&network) {
             let plan = plan::plan(&network, node.name()).unwrap();
 
             let mut output = String::new();

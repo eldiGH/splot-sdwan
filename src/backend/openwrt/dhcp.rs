@@ -4,7 +4,7 @@ use super::{
     naming,
     section::{Section, UciSection, UciSectionBuilder},
 };
-use crate::plan::{NodePlan, dhcp::Lease};
+use crate::plan::dhcp::{DhcpPlan, Lease};
 
 pub(super) const FILE: &str = "dhcp";
 
@@ -26,10 +26,10 @@ impl UciSection for Lease {
 }
 
 /// The plan's DHCP section as the `dhcp` file's sections.
-pub(super) fn render(plan: &NodePlan) -> Vec<Section> {
-    let leases = &plan.dhcp.leases;
+pub(super) fn render(dhcp: &DhcpPlan) -> Vec<Section> {
+    let leases = &dhcp.leases;
 
-    info!("Generating DHCP config for node '{}'", plan.node);
+    info!("Generating DHCP config");
     info!("  {} static lease(s)", leases.len());
     if log_enabled!(Level::Debug) {
         for lease in leases {
@@ -71,7 +71,7 @@ nodes:
 ",
         );
         let plan = plan::plan(&network, &"Home".parse().unwrap()).unwrap();
-        let commands: Vec<String> = render(&plan)
+        let commands: Vec<String> = render(plan.dhcp.as_ref().unwrap())
             .iter()
             .flat_map(|section| section.commands("dhcp"))
             .map(|command| command.to_string())

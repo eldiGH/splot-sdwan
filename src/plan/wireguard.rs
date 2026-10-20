@@ -33,9 +33,6 @@ fn keepalive(
 /// The node's mesh interface. Its private key isn't here: the backend holds it.
 #[derive(Debug)]
 pub struct WireGuardPlan {
-    /// The node's own public key. Its private key isn't here: the backend holds
-    /// it, and checks the two belong together before it changes anything.
-    pub public_key: WgPublicKey,
     pub listen_port: Port,
     /// The node's mesh IP with the mesh network's prefix.
     pub address: Ipv4Interface,
@@ -147,7 +144,6 @@ pub(super) fn plan(network: &Network, own: &Node) -> WireGuardPlan {
     ));
 
     WireGuardPlan {
-        public_key: own.public_key().clone(),
         listen_port: own.listen_port(),
         address: own.mesh_address(),
         peers,
@@ -158,10 +154,8 @@ impl fmt::Display for WireGuardPlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(
             f,
-            "interface: key {}, listen {}, address {}",
-            self.public_key.as_str(),
-            self.listen_port,
-            self.address
+            "interface: listen {}, address {}",
+            self.listen_port, self.address
         )?;
 
         for peer in &self.peers {
@@ -368,10 +362,6 @@ clients:",
     #[test]
     fn the_interface_has_the_nodes_port_and_mesh_address() {
         let plan = plan_for(FIXTURE, "Cabin");
-        assert_eq!(
-            plan.public_key.as_str(),
-            "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA="
-        );
         assert_eq!(plan.listen_port.to_string(), "51821");
         assert_eq!(plan.address.to_string(), "10.100.0.2/16");
     }

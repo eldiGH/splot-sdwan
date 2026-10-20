@@ -7,10 +7,7 @@ use super::{
 };
 use crate::{
     consts,
-    plan::{
-        NodePlan,
-        wireguard::{Endpoint, Peer, WireGuardPlan},
-    },
+    plan::wireguard::{Endpoint, Peer, WireGuardPlan},
 };
 
 pub(super) const FILE: &str = "network";
@@ -139,18 +136,18 @@ fn interface_sections(plan: &WireGuardPlan) -> (Vec<Section>, Vec<Slot>) {
 
 /// The plan's WireGuard section as the `network` file's sections, with a
 /// placeholder for each secret, and where they are.
-pub(super) fn render(plan: &NodePlan) -> (Vec<Section>, Vec<Slot>) {
-    info!("Generating network config for node '{}'", plan.node);
-    for peer in &plan.wireguard.peers {
+pub(super) fn render(wireguard: &WireGuardPlan) -> (Vec<Section>, Vec<Slot>) {
+    info!("Generating network config");
+    for peer in &wireguard.peers {
         debug!(
             "  Mesh peer '{}': {} AllowedIPs",
             peer.host,
             peer.allowed_ips.len()
         );
     }
-    info!("  Mesh interface: {} peer(s)", plan.wireguard.peers.len());
+    info!("  Mesh interface: {} peer(s)", wireguard.peers.len());
 
-    interface_sections(&plan.wireguard)
+    interface_sections(wireguard)
 }
 
 #[cfg(test)]
@@ -199,7 +196,7 @@ clients:
 
     fn cmds_for(yaml: &str, own: &str) -> Vec<UciBatchCommand> {
         let plan = plan::plan(&checked(yaml), &own.parse().unwrap()).unwrap();
-        interface_sections(&plan.wireguard)
+        interface_sections(plan.wireguard.as_ref().unwrap())
             .0
             .iter()
             .flat_map(|section| section.commands("network"))
@@ -291,7 +288,7 @@ clients:",
             "          ip: 10.100.49.10\n          psk: false\n",
         );
         let plan = plan::plan(&checked(&yaml), &"Home".parse().unwrap()).unwrap();
-        let (sections, secrets) = interface_sections(&plan.wireguard);
+        let (sections, secrets) = interface_sections(plan.wireguard.as_ref().unwrap());
 
         let c: Vec<_> = sections
             .iter()

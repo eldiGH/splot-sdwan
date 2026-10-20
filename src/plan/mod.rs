@@ -9,18 +9,23 @@ use std::{collections::BTreeSet, fmt};
 
 use crate::{
     model::Network,
-    types::{identifier::Identifier, port::PortOrRange, protocol::Protocol},
+    types::{identifier::Identifier, port::PortOrRange, protocol::Protocol, wg_key::WgPublicKey},
 };
 use dhcp::DhcpPlan;
 use firewall::FirewallPlan;
 use wireguard::WireGuardPlan;
 
+/// A section per concern; none for a concern splot leaves alone on the node
+/// (`none` in its platform).
 #[derive(Debug)]
 pub struct NodePlan {
     pub node: Identifier,
-    pub wireguard: WireGuardPlan,
-    pub firewall: FirewallPlan,
-    pub dhcp: DhcpPlan,
+    /// The node's public key. Its private key isn't here: the backend holds it,
+    /// and checks the two belong together before it changes anything.
+    pub public_key: WgPublicKey,
+    pub wireguard: Option<WireGuardPlan>,
+    pub firewall: Option<FirewallPlan>,
+    pub dhcp: Option<DhcpPlan>,
 }
 
 /// The plan for the node named `node`; none when the network has no such node.
@@ -28,12 +33,14 @@ pub struct NodePlan {
 /// network's.
 pub fn plan(network: &Network, node: &Identifier) -> Option<NodePlan> {
     let node = network.node(node)?;
+    let platform = node.platform();
 
     Some(NodePlan {
         node: node.name().clone(),
-        wireguard: wireguard::plan(network, node),
-        firewall: firewall::plan(network, node),
-        dhcp: dhcp::plan(network, node),
+        public_key: node.public_key().clone(),
+        wireguard: platform.wireguard().map(|_| wireguard::plan(network, node)),
+        firewall: platform.firewall().map(|_| firewall::plan(network, node)),
+        dhcp: platform.dhcp().map(|_| dhcp::plan(network, node)),
     })
 }
 
@@ -41,10 +48,23 @@ pub fn plan(network: &Network, node: &Identifier) -> Option<NodePlan> {
 /// config's own notation.
 impl fmt::Display for NodePlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "# {}", self.node)?;
-        writeln!(f, "\n[wireguard]\n{}", self.wireguard)?;
-        writeln!(f, "[firewall]\n{}", self.firewall)?;
-        write!(f, "[dhcp]\n{}", self.dhcp)
+        writeln!(f, "# {}: key {}", self.node, self.public_key.as_str())?;
+        writeln!(f, "\n[wireguard]\n{}", Section(&self.wireguard))?;
+        writeln!(f, "[firewall]\n{}", Section(&self.firewall))?;
+        write!(f, "[dhcp]\n{}", Section(&self.dhcp))
+    }
+}
+
+/// A concern's section of the plan, or what's there when splot leaves the
+/// concern alone.
+struct Section<'a, T>(&'a Option<T>);
+
+impl<T: fmt::Display> fmt::Display for Section<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(section) => section.fmt(f),
+            None => writeln!(f, "none: left alone"),
+        }
     }
 }
 
@@ -84,6 +104,64 @@ mod tests {
             let plan = plan(&network, node.name()).unwrap();
             insta::assert_snapshot!(format!("plan_{}", node.name()), plan.to_string());
         }
+    }
+
+    #[test]
+    fn a_concern_splot_leaves_alone_has_no_section() {
+        let network = checked(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    platform:
+      os: openwrt
+      firewall: none
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+  Cabin:
+    platform:
+      os: openwrt
+      wireguard: none
+      dhcp: none
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+",
+        );
+        let plan = |node: &str| plan(&network, &node.parse().unwrap()).unwrap();
+
+        let home = plan("Home");
+        assert!(home.wireguard.is_some());
+        assert!(home.firewall.is_none());
+        assert!(home.dhcp.is_some());
+        assert_eq!(
+            home.to_string(),
+            "# Home: key AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
+[wireguard]
+interface: listen 51820, address 10.100.0.1/16
+peer Cabin: key CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=, allowed [10.100.0.2/32], routed, endpoint 5.6.7.8:51820, psk
+
+[firewall]
+none: left alone
+
+[dhcp]
+"
+        );
+
+        let cabin = plan("Cabin");
+        assert!(cabin.wireguard.is_none());
+        assert!(cabin.firewall.is_some());
+        assert!(cabin.dhcp.is_none());
+        assert!(cabin.to_string().ends_with("[dhcp]\nnone: left alone\n"));
+        // Its key stays: it's who the plan is for.
+        assert_eq!(
+            cabin.public_key.as_str(),
+            "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA="
+        );
     }
 
     #[test]
