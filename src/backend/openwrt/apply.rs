@@ -17,7 +17,7 @@ pub enum Error {
     #[error(transparent)]
     Uci(#[from] uci::Error),
     #[error(transparent)]
-    KeyStore(#[from] super::splot_config::SplotConfigError),
+    KeyStore(#[from] crate::backend::key_store::KeyStoreError),
     #[error("can't read this peer's WireGuard keys")]
     InterfaceKeys(#[source] crate::wg::Error),
     #[error(
@@ -277,7 +277,7 @@ mod tests {
     use crate::{
         backend::{
             Backend,
-            openwrt::{OpenWrtBackend, splot_config::SplotConfig},
+            openwrt::{OpenWrtBackend, key_store::UciKeyStore},
         },
         plan,
         test_support::checked,
@@ -287,7 +287,7 @@ mod tests {
         let network = checked(yaml);
         let plan = plan::plan(&network, &node.parse().unwrap()).unwrap();
 
-        OpenWrtBackend::new(Some(SplotConfig::for_tests(
+        OpenWrtBackend::new(Some(UciKeyStore::for_tests(
             "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRA=",
         )))
         .render(&plan)

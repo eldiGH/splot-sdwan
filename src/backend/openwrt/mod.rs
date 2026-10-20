@@ -6,26 +6,29 @@ mod dhcp;
 mod diff;
 mod export;
 mod firewall;
+pub mod key_store;
 mod naming;
 mod network;
 mod reload;
 mod secret;
 mod section;
-pub mod splot_config;
 pub mod uci;
 
 use log::info;
 
 use crate::{
-    backend::Backend,
+    backend::{
+        Backend,
+        key_store::{KeyStore, KeyStoreError},
+    },
     plan::NodePlan,
     types::{identifier::Identifier, wg_key::WgPublicKey},
     wg,
 };
 pub use apply::Error;
+use key_store::UciKeyStore;
 use secret::{Secret, Slot};
 use section::{Section, Value};
-use splot_config::{SplotConfig, SplotConfigError};
 
 /// The node's config as uci sections, file by file, in the order splot commits
 /// the files, with placeholders where its secrets go.
@@ -51,13 +54,13 @@ impl Rendered {
 
     /// The same config with the node's secrets from `store` in their slots.
     /// Refuses when a pair's preshared key isn't stored, naming the peers.
-    fn with_secrets(&self, store: &SplotConfig) -> Result<Self, Error> {
+    fn with_secrets(&self, store: &UciKeyStore) -> Result<Self, Error> {
         let mut missing = Vec::new();
         let mut files = self.files.clone();
 
         for slot in &self.secrets {
             let value = match &slot.secret {
-                Secret::PrivateKey => store.mesh_key().expose(),
+                Secret::PrivateKey => store.private_key().expose(),
                 Secret::Psk(peer) => match store.psk(peer) {
                     Some(key) => key.expose(),
                     None => {
@@ -125,12 +128,12 @@ pub struct OpenWrtBackend {
     /// The node's key store, where splot runs its WireGuard: its key says this
     /// peer is the node, and `apply` fills its secrets into the rendered config.
     /// None where splot leaves the WireGuard alone: it keeps no key there.
-    splot_config: Option<SplotConfig>,
+    key_store: Option<UciKeyStore>,
 }
 
 impl OpenWrtBackend {
-    pub fn new(splot_config: Option<SplotConfig>) -> Self {
-        Self { splot_config }
+    pub fn new(key_store: Option<UciKeyStore>) -> Self {
+        Self { key_store }
     }
 
     /// `rendered` with its secrets filled in, once this peer is checked to be
@@ -145,9 +148,9 @@ impl OpenWrtBackend {
         }
 
         let store = self
-            .splot_config
+            .key_store
             .as_ref()
-            .ok_or(SplotConfigError::NotInitialised)?;
+            .ok_or(KeyStoreError::NotInitialised)?;
         store.check_node(&rendered.node, &rendered.public_key)?;
         rendered.with_secrets(store)
     }
@@ -266,7 +269,7 @@ nodes:
 "
             ));
             let plan = plan::plan(&network, &"Home".parse().unwrap()).unwrap();
-            OpenWrtBackend::new(Some(SplotConfig::for_tests(PRIVATE_KEY))).render(&plan)
+            OpenWrtBackend::new(Some(UciKeyStore::for_tests(PRIVATE_KEY))).render(&plan)
         };
 
         let all = rendered("");
@@ -351,7 +354,7 @@ nodes:
         };
 
         let filled = rendered
-            .with_secrets(&SplotConfig::for_tests(PRIVATE_KEY))
+            .with_secrets(&UciKeyStore::for_tests(PRIVATE_KEY))
             .unwrap();
 
         let commands: Vec<String> = filled
@@ -414,7 +417,7 @@ nodes:
 
     #[test]
     fn apply_fills_in_each_pairs_psk_from_the_store() {
-        let store = SplotConfig::for_tests(PRIVATE_KEY)
+        let store = UciKeyStore::for_tests(PRIVATE_KEY)
             .with_psk(&cabin(), CABIN_PSK)
             .with_psk(&phone(), PHONE_PSK);
         let filled = psk_peers(&[cabin(), phone()]).with_secrets(&store).unwrap();
@@ -438,7 +441,7 @@ nodes:
 
     #[test]
     fn apply_refuses_while_a_pairs_psk_is_missing() {
-        let missing = |store: &SplotConfig| match psk_peers(&[cabin(), phone()]).with_secrets(store)
+        let missing = |store: &UciKeyStore| match psk_peers(&[cabin(), phone()]).with_secrets(store)
         {
             Err(Error::MissingPsks(peers)) => peers,
             Err(err) => panic!("{err}"),
@@ -446,11 +449,11 @@ nodes:
         };
 
         assert_eq!(
-            missing(&SplotConfig::for_tests(PRIVATE_KEY)),
+            missing(&UciKeyStore::for_tests(PRIVATE_KEY)),
             ["Cabin", "Phone"]
         );
         assert_eq!(
-            missing(&SplotConfig::for_tests(PRIVATE_KEY).with_psk(&cabin(), CABIN_PSK)),
+            missing(&UciKeyStore::for_tests(PRIVATE_KEY).with_psk(&cabin(), CABIN_PSK)),
             ["Phone"]
         );
     }
@@ -458,7 +461,7 @@ nodes:
     #[test]
     fn every_slot_holds_its_placeholder_and_every_placeholder_has_a_slot() {
         let network = example();
-        let backend = OpenWrtBackend::new(Some(SplotConfig::for_tests(PRIVATE_KEY)));
+        let backend = OpenWrtBackend::new(Some(UciKeyStore::for_tests(PRIVATE_KEY)));
 
         for node in openwrt_nodes(&network) {
             let rendered = backend.render(&plan::plan(&network, node.name()).unwrap());
@@ -532,7 +535,7 @@ nodes:
     fn what_splot_wrote_reads_back_as_nothing_to_change() {
         // Once the rendered config is in uci, the next apply finds nothing to stage.
         let network = example();
-        let backend = OpenWrtBackend::new(Some(SplotConfig::for_tests(PRIVATE_KEY)));
+        let backend = OpenWrtBackend::new(Some(UciKeyStore::for_tests(PRIVATE_KEY)));
 
         for node in openwrt_nodes(&network) {
             let plan = plan::plan(&network, node.name()).unwrap();
@@ -547,7 +550,7 @@ nodes:
     #[test]
     fn example_config_snapshot() {
         let network = example();
-        let backend = OpenWrtBackend::new(Some(SplotConfig::for_tests(PRIVATE_KEY)));
+        let backend = OpenWrtBackend::new(Some(UciKeyStore::for_tests(PRIVATE_KEY)));
 
         for node in openwrt_nodes(&network) {
             let plan = plan::plan(&network, node.name()).unwrap();

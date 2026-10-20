@@ -1,3 +1,5 @@
+//! The OpenWrt key store: the node's secrets in a uci file of their own.
+
 use std::{
     collections::BTreeMap,
     fs,
@@ -6,23 +8,23 @@ use std::{
 };
 
 use super::{
-    export::{self, ParseError},
+    export,
     naming::UciSectionName,
     section::{Section, Value},
     uci::{self, UciBatchCommand},
 };
 use crate::{
+    backend::key_store::{KeyStore, KeyStoreError},
     env,
     model::host::HostRef,
-    types::{
-        identifier::Identifier,
-        wg_key::{KeyFormatError, WgPresharedKey, WgPrivateKey, WgPublicKey},
-    },
+    types::wg_key::{WgPresharedKey, WgPrivateKey},
     wg,
 };
 
 /// The uci file that holds the node's secrets.
 const FILE: &str = "splot";
+/// The option that holds its private key.
+const PRIVATE_KEY: &str = "splot.config.private_key";
 /// The section type of a stored preshared key, and its option that holds it.
 const PSK_TYPE: &str = "psk";
 const PSK_KEY: &str = "key";
@@ -35,7 +37,7 @@ fn psk_section(peer: &HostRef) -> UciSectionName {
 
 /// The preshared keys among the store's sections, by section name. A section
 /// without a key holds none.
-fn psks(sections: &[Section]) -> Result<BTreeMap<String, WgPresharedKey>, SplotConfigError> {
+fn psks(sections: &[Section]) -> Result<BTreeMap<String, WgPresharedKey>, KeyStoreError> {
     let mut psks = BTreeMap::new();
 
     for section in sections
@@ -50,8 +52,8 @@ fn psks(sections: &[Section]) -> Result<BTreeMap<String, WgPresharedKey>, SplotC
                 _ => None,
             });
         if let Some(key) = key {
-            let key = key.parse().map_err(|cause| SplotConfigError::InvalidPsk {
-                section: section.name.clone(),
+            let key = key.parse().map_err(|cause| KeyStoreError::InvalidPsk {
+                at: format!("{FILE}.{}", section.name),
                 cause,
             })?;
             psks.insert(section.name.clone(), key);
@@ -59,23 +61,6 @@ fn psks(sections: &[Section]) -> Result<BTreeMap<String, WgPresharedKey>, SplotC
     }
 
     Ok(psks)
-}
-
-/// Whether a peer whose public key is `own` is `node`, whose key the config has
-/// as `expected`.
-fn is_node(
-    node: &Identifier,
-    expected: &WgPublicKey,
-    own: WgPublicKey,
-) -> Result<(), SplotConfigError> {
-    if own == *expected {
-        Ok(())
-    } else {
-        Err(SplotConfigError::WrongNode {
-            node: node.clone(),
-            own,
-        })
-    }
 }
 
 /// The commands that store `key` as the preshared key of the node's pair with
@@ -90,8 +75,9 @@ fn store_psk_commands(peer: &HostRef, key: &WgPresharedKey) -> Vec<UciBatchComma
     ]
 }
 
-fn get_config_dir() -> PathBuf {
-    PathBuf::from(env::uci_config_dir().unwrap_or_else(|| "/etc/config".to_owned()))
+/// The key store's file: where uci keeps it.
+fn path() -> PathBuf {
+    PathBuf::from(env::uci_config_dir().unwrap_or_else(|| "/etc/config".to_owned())).join(FILE)
 }
 
 /// Only root may read or write the key store, the way OpenWrt keeps its own
@@ -102,118 +88,93 @@ const KEY_STORE_MODE: u32 = 0o600;
 /// Makes sure the key store's file at `path` exists and only its owner can read
 /// or write it. Called before every write to the store, so a new file is private
 /// before a secret goes in, and one an older splot left readable is tightened.
-fn make_private(path: &Path) -> Result<(), SplotConfigError> {
-    let file = fs::OpenOptions::new()
+fn make_private(path: &Path) -> Result<(), KeyStoreError> {
+    fs::OpenOptions::new()
         .append(true)
         .create(true)
-        .open(path)?;
-    file.set_permissions(fs::Permissions::from_mode(KEY_STORE_MODE))?;
-
-    Ok(())
+        .open(path)
+        .and_then(|file| file.set_permissions(fs::Permissions::from_mode(KEY_STORE_MODE)))
+        .map_err(|cause| write_error(cause.into()))
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum SplotConfigError {
-    #[error("this peer has no WireGuard key yet - run `splot init --node <name>` first")]
-    NotInitialised,
-    #[error(
-        "this peer's key isn't the one the config has for {node} - is `--node` wrong? `splot init --node {node}` says whose key it is; if this peer is {node} (reinstalled, or its key rotated), set nodes.{node}.publicKey to {own}"
-    )]
-    WrongNode { node: Identifier, own: WgPublicKey },
-    #[error("can't create the key store or make it private")]
-    Io(#[from] std::io::Error),
-    #[error("stored mesh private key is invalid")]
-    InvalidMeshKey(#[source] KeyFormatError),
-    #[error("the preshared key stored in {FILE}.{section} is invalid")]
-    InvalidPsk {
-        section: String,
-        #[source]
-        cause: KeyFormatError,
-    },
-    #[error("can't read the key store ({FILE})")]
-    Export(#[source] ParseError),
-    #[error("uci error")]
-    Uci(#[from] uci::Error),
-    #[error("failed to generate a WireGuard key")]
-    Wg(#[from] wg::Error),
+/// The key store couldn't be read: uci failed, or printed what isn't uci config.
+fn read_error(cause: Box<dyn std::error::Error + Send + Sync>) -> KeyStoreError {
+    KeyStoreError::Read {
+        at: path().display().to_string(),
+        cause,
+    }
 }
 
-/// The node's key store: its private key, and the preshared key of each of its
-/// pairs that has one.
-pub struct SplotConfig {
-    mesh_key: WgPrivateKey,
+/// The key store couldn't be written, or made private.
+fn write_error(cause: Box<dyn std::error::Error + Send + Sync>) -> KeyStoreError {
+    KeyStoreError::Write {
+        at: path().display().to_string(),
+        cause,
+    }
+}
+
+/// The node's key store on OpenWrt, the uci file `splot`: its private key
+/// (`splot.config.private_key`), and the preshared key of each of its pairs
+/// that has one (a `psk` section per peer).
+pub struct UciKeyStore {
+    private_key: WgPrivateKey,
     /// By section name (`psk_section`).
     psks: BTreeMap<String, WgPresharedKey>,
 }
 
-impl SplotConfig {
-    /// The peer's key store. Writes nothing: a peer without a key is told to
-    /// run `splot init`.
-    pub fn load() -> Result<Self, SplotConfigError> {
-        let mesh_key = match uci::get("splot.config.private_key")? {
-            Some(key) => key.parse().map_err(SplotConfigError::InvalidMeshKey)?,
-            None => return Err(SplotConfigError::NotInitialised),
+impl KeyStore for UciKeyStore {
+    fn load() -> Result<Self, KeyStoreError> {
+        let private_key = match uci::get(PRIVATE_KEY).map_err(|err| read_error(err.into()))? {
+            Some(key) => key
+                .parse()
+                .map_err(|cause| KeyStoreError::InvalidPrivateKey {
+                    at: PRIVATE_KEY.to_owned(),
+                    cause,
+                })?,
+            None => return Err(KeyStoreError::NotInitialised),
         };
 
-        let psks = match uci::export(FILE)? {
-            Some(text) => psks(&export::parse(&text).map_err(SplotConfigError::Export)?)?,
+        let psks = match uci::export(FILE).map_err(|err| read_error(err.into()))? {
+            Some(text) => psks(&export::parse(&text).map_err(|err| read_error(err.into()))?)?,
             None => BTreeMap::new(),
         };
 
-        Ok(Self { mesh_key, psks })
+        Ok(Self { private_key, psks })
     }
 
-    pub fn mesh_key(&self) -> &WgPrivateKey {
-        &self.mesh_key
-    }
-
-    /// Generates the peer's private key and stores it. Only `splot init` does,
-    /// and only when the peer has none: a key is never replaced.
-    pub fn create_private_key() -> Result<(), SplotConfigError> {
-        make_private(&get_config_dir().join(FILE))?;
+    fn create_private_key() -> Result<(), KeyStoreError> {
+        make_private(&path())?;
 
         let private_key = wg::generate_private_key()?;
         uci::batch(&[
             UciBatchCommand::set("splot.config", "splot"),
-            UciBatchCommand::set("splot.config.private_key", private_key.expose()),
+            UciBatchCommand::set(PRIVATE_KEY, private_key.expose()),
             UciBatchCommand::commit("splot"),
-        ])?;
-
-        Ok(())
+        ])
+        .map_err(|err| write_error(err.into()))
     }
 
-    /// Checks this peer is `node`: its private key's public half is the key the
-    /// config has for `node`. Before anything acts as that node.
-    pub fn check_node(
-        &self,
-        node: &Identifier,
-        expected: &WgPublicKey,
-    ) -> Result<(), SplotConfigError> {
-        is_node(node, expected, wg::get_pubkey(&self.mesh_key)?)
+    fn store_psk(peer: &HostRef, key: &WgPresharedKey) -> Result<(), KeyStoreError> {
+        make_private(&path())?;
+        uci::batch(&store_psk_commands(peer, key)).map_err(|err| write_error(err.into()))
     }
 
-    /// The preshared key of the node's pair with `peer`, if one is stored.
-    pub fn psk(&self, peer: &HostRef) -> Option<&WgPresharedKey> {
+    fn private_key(&self) -> &WgPrivateKey {
+        &self.private_key
+    }
+
+    fn psk(&self, peer: &HostRef) -> Option<&WgPresharedKey> {
         self.psks.get(&psk_section(peer).to_string())
-    }
-
-    /// Stores `key` as the preshared key of the node's pair with `peer`, in place
-    /// of any it had.
-    pub fn store_psk(peer: &HostRef, key: &WgPresharedKey) -> Result<(), SplotConfigError> {
-        make_private(&get_config_dir().join(FILE))?;
-        uci::batch(&store_psk_commands(peer, key))?;
-
-        Ok(())
     }
 }
 
 #[cfg(test)]
-impl SplotConfig {
+impl UciKeyStore {
     /// Test-only constructor bypassing uci — fields are private so that a real
-    /// `SplotConfig` can only come from `load()`, which validates the keys.
-    pub(crate) fn for_tests(mesh_key: &str) -> Self {
+    /// `UciKeyStore` can only come from `load()`, which validates the keys.
+    pub(crate) fn for_tests(private_key: &str) -> Self {
         Self {
-            mesh_key: mesh_key.parse().expect("a test's private key is a key"),
+            private_key: private_key.parse().expect("a test's private key is a key"),
             psks: BTreeMap::new(),
         }
     }
@@ -243,9 +204,9 @@ mod tests {
         }
     }
 
-    fn store(text: &str) -> Result<SplotConfig, SplotConfigError> {
-        Ok(SplotConfig {
-            mesh_key: CABIN_PSK.parse().unwrap(),
+    fn store(text: &str) -> Result<UciKeyStore, KeyStoreError> {
+        Ok(UciKeyStore {
+            private_key: CABIN_PSK.parse().unwrap(),
             psks: psks(&export::parse(text).unwrap())?,
         })
     }
@@ -291,22 +252,6 @@ mod tests {
         assert_eq!(mode(&path), 0o600);
         // What it held stays.
         assert_eq!(fs::read_to_string(&path).unwrap(), "package splot\n");
-    }
-
-    #[test]
-    fn a_peer_is_the_node_whose_key_it_has() {
-        let home: Identifier = "Home".parse().unwrap();
-        let key = |key: &str| -> WgPublicKey { key.parse().unwrap() };
-
-        assert!(is_node(&home, &key(CABIN_PSK), key(CABIN_PSK)).is_ok());
-
-        let err = is_node(&home, &key(CABIN_PSK), key(CAMERA_PSK)).unwrap_err();
-        assert!(
-            matches!(&err, SplotConfigError::WrongNode { node, own } if node == &home && own.as_str() == CAMERA_PSK),
-            "{err}"
-        );
-        // It names the key this peer has, so the config can be fixed.
-        assert!(err.to_string().contains(CAMERA_PSK), "{err}");
     }
 
     #[test]
@@ -368,7 +313,7 @@ config psk 'spl_psk_Cabin'
         .err()
         .unwrap();
         assert!(
-            matches!(&err, SplotConfigError::InvalidPsk { section, .. } if section == "spl_psk_Cabin"),
+            matches!(&err, KeyStoreError::InvalidPsk { at, .. } if at == "splot.spl_psk_Cabin"),
             "{err}"
         );
     }

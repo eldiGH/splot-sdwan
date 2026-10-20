@@ -1,5 +1,6 @@
 //! Backends: how a node's plan becomes config on the platform it runs.
 
+pub mod key_store;
 pub mod openwrt;
 
 use crate::plan::NodePlan;

@@ -19,10 +19,11 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 - Typed WireGuard public keys via `src/types/wg_key.rs` (`WgPublicKey`): 44 characters of canonical base64 ending in `=` — the same rule `wg` itself enforces.
 - Typed secret keys in the same file: `WgPrivateKey` and `WgPresharedKey`, two kinds of one `SecretKey<K>` (so each behaviour is written once, and one kind can't be passed for the other). Checked on parse like a public key; never shown: no `Display`, `Debug` prints `<redacted>`, and only `expose()` gives the text, where a key is written for WireGuard (the fill-in, the key store, `wg pubkey`'s input). They're parsed where they enter: the key store when it's read, `wg genkey`'s output, and the stdin of `splot psk set`.
 
-### Splot config (persistent local state)
+### Key stores (persistent local state)
 
-- Local state file (`/etc/config/splot`) managed by `src/backend/openwrt/splot_config.rs` via the `SplotConfig` struct (the OpenWrt backend's key store) — stores the node's one private key, for the mesh interface (`splot.config.private_key`), and the preshared key of each of its pairs that has one, a `psk` section per peer named like the peer's own section (`splot.spl_psk_Cabin.key`). Stored PSKs are checked to be keys when it's read. The file is readable by root only (0600, as OpenWrt keeps its own files that hold secrets): splot makes it so before every write, so a new store is private before a secret goes in and one an older splot left readable gets tightened.
-- `SplotConfig::load()` reads the keys and checks them, and writes nothing: a router without a private key is told to run `splot init`. Only `init` creates the key (`SplotConfig::create_private_key`), and only when there's none.
+- A node's secrets live in its key store, one per platform behind the `KeyStore` trait (`src/backend/key_store.rs`): `load` (reads and checks the keys, writes nothing), `create_private_key` (only `init`), `store_psk`, `private_key`, `psk(peer)`, and `check_node` (this peer's key is the one the config has for the node). Its errors (`KeyStoreError`) are the same for every store.
+- On OpenWrt, `UciKeyStore` (`src/backend/openwrt/key_store.rs`): the uci file `/etc/config/splot`. It stores the node's one private key, for the mesh interface (`splot.config.private_key`), and the preshared key of each of its pairs that has one, a `psk` section per peer named like the peer's own section (`splot.spl_psk_Cabin.key`). Stored PSKs are checked to be keys when it's read. The file is readable by root only (0600, as OpenWrt keeps its own files that hold secrets): splot makes it so before every write, so a new store is private before a secret goes in and one an older splot left readable gets tightened.
+- `load()` reads the keys and checks them, and writes nothing: a router without a private key is told to run `splot init`. Only `init` creates the key (`create_private_key`), and only when there's none.
 - A stored key is validated on load; a corrupt key is a hard error, never silently regenerated (regeneration would orphan the node's peers).
 - Designed to grow as more local-only state is needed (e.g., last-applied config snapshot for distributed-reload rollback — see IDEAS.md).
 
@@ -85,7 +86,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 ### Backends (`src/backend/`)
 
 - A `Backend` turns a node's plan into its platform's config: `render(&NodePlan)` (pure, snapshot-tested), `dry_run(&rendered)` (shows what `apply` would change, changing nothing) and `apply(&rendered)` (makes it live, returns what changed). `main` is load → validate → plan → backend.
-- The OpenWrt backend (`src/backend/openwrt/`) is the only one so far: it renders the plan as the `network`, `firewall` and `dhcp` uci files, applies them with uci (below) and reloads the services. Its key store is `SplotConfig`. It renders a file only for a concern splot manages: one left alone (`none`) has no file, so apply stages, deletes, commits and reloads nothing there.
+- The OpenWrt backend (`src/backend/openwrt/`) is the only one so far: it renders the plan as the `network`, `firewall` and `dhcp` uci files, applies them with uci (below) and reloads the services. Its key store is `UciKeyStore`. It renders a file only for a concern splot manages: one left alone (`none`) has no file, so apply stages, deletes, commits and reloads nothing there.
 
 ### Applying on OpenWrt (`src/backend/openwrt/apply.rs`, `uci.rs`)
 
@@ -141,7 +142,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 
 ### Tests (`cargo test`)
 
-Unit-test suite over the deterministic core (~380 tests). Covers: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (hosts, reference resolution, WAN targets; `src/model/`), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), UCI command/builder rendering, the uci not-found classification and the private-key fill-in, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `SplotConfig::for_tests` constructor). The process/IO layer (uci process execution, wg, splot_config state, env, the OpenWrt apply) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
+Unit-test suite over the deterministic core (~380 tests). Covers: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (hosts, reference resolution, WAN targets; `src/model/`), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), UCI command/builder rendering, the uci not-found classification and the private-key fill-in, and private-key validation. Tests are inline `#[cfg(test)] mod tests` at the bottom of each module; config-level cases build fixtures from YAML via `serde_norway` with shared helpers in `src/test_support.rs` (plus a test-only `UciKeyStore::for_tests` constructor). The process/IO layer (uci process execution, wg, the key store, env, the OpenWrt apply) is intentionally out of scope — to be covered later as integration tests. Conventions: [CLAUDE.md → Testing](CLAUDE.md#testing).
 
 ---
 

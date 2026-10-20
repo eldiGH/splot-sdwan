@@ -7,8 +7,8 @@ use anyhow::{Context, bail};
 use crate::{
     backend::{
         Backend,
-        openwrt::OpenWrtBackend,
-        openwrt::splot_config::{SplotConfig, SplotConfigError},
+        key_store::{KeyStore, KeyStoreError},
+        openwrt::{OpenWrtBackend, key_store::UciKeyStore},
     },
     model::Network,
     plan::{self, NodePlan},
@@ -43,16 +43,16 @@ pub fn init(network: &Network, node: &Identifier) -> anyhow::Result<()> {
         }
     }
 
-    let (store, created) = match SplotConfig::load() {
+    let (store, created) = match UciKeyStore::load() {
         Ok(store) => (store, false),
-        Err(SplotConfigError::NotInitialised) => {
-            SplotConfig::create_private_key()?;
-            (SplotConfig::load()?, true)
+        Err(KeyStoreError::NotInitialised) => {
+            UciKeyStore::create_private_key()?;
+            (UciKeyStore::load()?, true)
         }
         Err(err) => return Err(err.into()),
     };
     let public_key =
-        wg::get_pubkey(store.mesh_key()).context("failed to derive this peer's public key")?;
+        wg::get_pubkey(store.private_key()).context("failed to derive this peer's public key")?;
 
     if created {
         println!("Generated this peer's WireGuard key.");
@@ -135,13 +135,13 @@ pub fn apply(network: &Network, node: &Identifier, dry_run: bool) -> anyhow::Res
     let plan = node_plan(network, node)?;
     check_applicable(network, node)?;
     // splot keeps a key only where it runs the node's WireGuard.
-    let splot_config = plan
+    let key_store = plan
         .wireguard
         .is_some()
-        .then(SplotConfig::load)
+        .then(UciKeyStore::load)
         .transpose()?;
 
-    let backend = OpenWrtBackend::new(splot_config);
+    let backend = OpenWrtBackend::new(key_store);
     let rendered = backend.render(&plan);
 
     if dry_run {
@@ -170,8 +170,8 @@ pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Resu
             plan.node
         );
     };
-    let splot_config = SplotConfig::load()?;
-    splot_config.check_node(&plan.node, &plan.public_key)?;
+    let key_store = UciKeyStore::load()?;
+    key_store.check_node(&plan.node, &plan.public_key)?;
 
     let Some(peer) = wireguard.peer(peer) else {
         let peers: Vec<String> = wireguard
@@ -201,7 +201,7 @@ pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Resu
         .trim()
         .parse()
         .context("that's not a preshared key (as `wg genpsk` prints one)")?;
-    SplotConfig::store_psk(&peer.host, &key)?;
+    UciKeyStore::store_psk(&peer.host, &key)?;
 
     println!(
         "Stored the preshared key of {}'s pair with {}.",
