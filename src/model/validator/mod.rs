@@ -8,6 +8,7 @@ mod references;
 mod services;
 mod tags;
 pub mod types;
+mod unmanaged;
 mod wan;
 
 use std::collections::{BTreeMap, HashSet};
@@ -22,7 +23,7 @@ use crate::{
             endpoints::check_endpoints, entities::check_entities, names::validate_names,
             networks::check_networks, platform::check_platforms, ports::check_ports,
             services::check_services, tags::validate_tags, types::ValidationReport,
-            wan::check_wan_zones,
+            unmanaged::check_unmanaged, wan::check_wan_zones,
         },
     },
     types::{allow_from_ref::AllowFromRef, identifier::Identifier},
@@ -54,8 +55,10 @@ pub(super) fn check(config: &Config) -> Checked {
 
     check_ports(config, &mut report);
 
-    let services = check_services(config, &hosts, &refs, &mut report);
+    let services = check_services(config, &platforms, &hosts, &refs, &mut report);
     check_wan_zones(config, &mut report);
+
+    check_unmanaged(&platforms, &hosts, &services, &mut report);
 
     // Canonical order for every consumer: by config location, so the output reads
     // top to bottom like the config instead of pass by pass. Stable sort — several

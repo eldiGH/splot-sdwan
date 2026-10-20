@@ -4,6 +4,7 @@ use crate::{
     config::Config,
     model::{
         host::{Host, HostRef},
+        platform::Platform,
         service::{Service, Wan},
         validator::{
             references::{Resolution, resolve_sources},
@@ -19,6 +20,7 @@ use crate::{
 /// of its host's addresses, so this runs after the hosts are built).
 pub(super) fn check_services(
     config: &Config,
+    platforms: &BTreeMap<Identifier, Platform>,
     hosts: &[Host],
     known_references: &HashSet<AllowFromRef>,
     report: &mut ValidationReport,
@@ -37,6 +39,7 @@ pub(super) fn check_services(
         let wan = service.wan.as_ref().map(|wan| Wan {
             targets: check_targets(
                 config,
+                platforms,
                 wan,
                 host,
                 hosts.get(&host_ref).copied(),

@@ -49,7 +49,7 @@ Each node carries:
 - `zones` — map of downstream networks the router serves (LAN, VLANs). The map key is the OpenWRT zone name on that router. Splot does not manage these zones in OpenWRT — the operator configures them — splot only references them when generating rules.
 - `hub` — a network inside `meshNetwork` for devices that reach the mesh through this node alone (hub clients). See "Hubs".
 - `services` — services exposed by the router itself
-- `wanZone` — name of the OpenWRT firewall zone that is WAN-facing (only required if any service uses this node in `wan.via`)
+- `wanZone` — name of the OpenWRT firewall zone that is WAN-facing (only required if any service uses this node in `wan.via` and splot manages its firewall)
 - `tags` — explicit tags on the node
 
 ### Node platform
@@ -61,7 +61,7 @@ Each node's `platform` says which OS it runs (`os: openwrt` or `linux`, required
 - **Defaults come from the OS alone:** on OpenWrt a concern left out is managed with what OpenWrt ships; on Linux there's no usual setup to assume, so every concern is written out, `none` included. A program the OS doesn't have is an error. Platform defaults for every node at the top level are planned.
 - **`dns`** is accepted, and does nothing until splot generates DNS config.
 - **`none`** means splot leaves that concern alone: nothing generated, nothing touched there, its own old sections included. The plan has no section for it, and a backend renders no file for it. Applying to a node with `wireguard: none`, or to a Linux node, isn't supported yet; `splot check` validates them.
-- **Errors and warnings:** an error when the config doesn't make sense, or a concern splot manages lacks something it needs from the config; a warning when a node leaves part of a valid config undone because a concern is `none`, saying what's left undone and what's the operator's to do.
+- **Errors and warnings:** an error when the config doesn't make sense, or a concern splot manages lacks something it needs from the config (a `wan.via` node whose firewall splot manages needs a `wanZone`; one that leaves it alone doesn't); a warning when a node leaves part of a valid config undone because a concern is `none`, one per node and concern, saying what's left undone and what's the operator's to do. `allowFrom` that a firewall left alone won't enforce is a warning, not an error: `firewall: none` is written next to the services, and it's how a site moves to splot's firewall a step at a time.
 - **No partially working state:** what splot renders for a concern it manages is complete for what it covers, and never points at something a `none` concern would have created. With `wireguard: none` and the firewall managed, for one, there's no mesh zone and no port forward to a host reached over the mesh (the forward would name the mesh zone).
 
 ### Tags

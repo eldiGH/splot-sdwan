@@ -5,6 +5,7 @@ use crate::{
     consts,
     model::{
         host::{Host, HostAddress, Place},
+        platform::Platform,
         validator::types::{ValidationError, ValidationReport, ValidationWarning},
     },
     types::{
@@ -109,9 +110,12 @@ fn target_place(host: ServiceHost, via: &WanViaTarget, node: &Node) -> Result<Pl
 
 /// Checks every `wan.via` node of a service, and finds what each one forwards it
 /// to: one of the host's addresses. A target that fails a check is left out, and
-/// so is one whose address failed its own (already reported).
+/// so is one whose address failed its own (already reported). A node needs a
+/// `wanZone` only where splot manages its firewall: elsewhere it forwards
+/// nothing (a warning says so).
 pub(super) fn check_targets<'a>(
     config: &'a Config,
+    platforms: &BTreeMap<Identifier, Platform>,
     wan: &'a ServiceWan,
     host: ServiceHost,
     built_host: Option<&Host>,
@@ -132,7 +136,11 @@ pub(super) fn check_targets<'a>(
             continue;
         };
 
-        if node.wan_zone.is_none() {
+        // A node whose platform failed counts as managed: its error stands.
+        let firewall_managed = platforms
+            .get(node_name)
+            .is_none_or(|platform| platform.firewall().is_some());
+        if node.wan_zone.is_none() && firewall_managed {
             report.errors.push(ValidationError::WanViaNodeNoWanZone {
                 node_name: node_name.clone(),
                 at: locate(),
@@ -219,7 +227,7 @@ mod tests {
             service::Wan,
             validator::{Checked, HUB_HOME, check},
         },
-        test_support::{checked, config, error_at, has_error, report, warning_at},
+        test_support::{checked, config, error_at, has_error, has_warning, report, warning_at},
     };
 
     // One node with two zones. The clients cover every branch of client_target.
@@ -479,6 +487,36 @@ nodes:
             &r,
             |e| matches!(e, ValidationError::WanViaNodeNoWanZone { node_name, .. } if node_name == "Home")
         ));
+    }
+
+    #[test]
+    fn wan_via_a_node_that_leaves_its_firewall_alone_needs_no_wan_zone() {
+        // It forwards nothing, so it has no use for one; its warning says so.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    platform:
+      os: openwrt
+      firewall: none
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    services:
+      http:
+        port: 80
+        proto: tcp
+        wan:
+          via: Home
+",
+        );
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(has_warning(&r, |w| matches!(
+            w,
+            ValidationWarning::FirewallLeftAlone { unforwarded, .. } if unforwarded == &["Home.http"]
+        )));
     }
 
     #[test]

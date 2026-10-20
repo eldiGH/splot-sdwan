@@ -273,6 +273,26 @@ impl ValidationError {
 }
 
 pub enum ValidationWarning {
+    // platform, concerns left alone
+    /// What the node's firewall won't do, and whether splot's mesh interface is
+    /// there for the operator to put into a zone.
+    FirewallLeftAlone {
+        node: Identifier,
+        /// Services whose `allowFrom` splot would enforce on the node.
+        unenforced: Vec<String>,
+        /// Services exposed through the node.
+        unforwarded: Vec<String>,
+        mesh_interface: bool,
+        at: ConfigLocation,
+    },
+    /// The node's firewall has no mesh zone.
+    WireGuardLeftAlone {
+        node: Identifier,
+        /// Services exposed through the node to a host reached over the mesh.
+        unforwarded: Vec<String>,
+        at: ConfigLocation,
+    },
+
     // entities
     UnusedMac {
         at: ConfigLocation,
@@ -306,6 +326,56 @@ pub enum ValidationWarning {
 impl fmt::Display for ValidationWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::FirewallLeftAlone {
+                node,
+                unenforced,
+                unforwarded,
+                mesh_interface,
+                at,
+            } => {
+                let mut undone = Vec::new();
+                if !unenforced.is_empty() {
+                    undone.push(format!(
+                        "allowFrom isn't enforced there, your own rules decide who reaches {}",
+                        unenforced.join(", ")
+                    ));
+                }
+                if !unforwarded.is_empty() {
+                    undone.push(format!(
+                        "nothing is forwarded from its WAN to {}",
+                        unforwarded.join(", ")
+                    ));
+                }
+                if *mesh_interface {
+                    undone.push(
+                        "put splot's mesh interface into a zone of yours, and let its listen port in from the WAN"
+                            .to_owned(),
+                    );
+                }
+                write!(
+                    f,
+                    "{at}: splot leaves {node}'s firewall alone - {}",
+                    undone.join("; ")
+                )
+            }
+            Self::WireGuardLeftAlone {
+                node,
+                unforwarded,
+                at,
+            } => {
+                write!(
+                    f,
+                    "{at}: splot leaves {node}'s WireGuard alone, so its firewall has no mesh zone - mesh traffic arrives in your interface's zone, under your rules"
+                )?;
+                if !unforwarded.is_empty() {
+                    write!(
+                        f,
+                        "; nothing is forwarded from its WAN to {}, as they're reached over the mesh",
+                        unforwarded.join(", ")
+                    )?;
+                }
+                Ok(())
+            }
             Self::UnusedMac { at } => write!(
                 f,
                 "{at}: macs are declared but client has no zone IPs that would use them"
@@ -335,6 +405,8 @@ impl fmt::Display for ValidationWarning {
 impl ValidationWarning {
     pub fn path(&self) -> &ConfigLocation {
         match self {
+            Self::FirewallLeftAlone { at, .. } => at,
+            Self::WireGuardLeftAlone { at, .. } => at,
             Self::UnreachableClient { at } => at,
             Self::UnreachableService { at } => at,
             Self::UnusedMac { at } => at,

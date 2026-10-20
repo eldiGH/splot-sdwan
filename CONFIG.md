@@ -54,7 +54,7 @@ HomeRouter:
 | `zones`         | map of name → Zone         | no       | Downstream networks the router serves (LAN, VLANs).                                                                                                                                                               |
 | `hub`           | Hub                        | no       | A network inside `meshNetwork` for devices that reach the mesh through this node alone. See [Hub](#hub).                                                                                                         |
 | `services`      | map of name → Service      | no       | Services exposed by the router itself (e.g. SSH, admin UI).                                                                                                                                                       |
-| `wanZone`       | string                     | no\*     | Name of the OpenWRT firewall zone that is WAN-facing on this router. Splot does not manage this zone; it only references it when generating port forwards. \*Required if any service uses this node in `wan.via`. |
+| `wanZone`       | string                     | no\*     | Name of the OpenWRT firewall zone that is WAN-facing on this router. Splot does not manage this zone; it only references it when generating port forwards. \*Required if any service uses this node in `wan.via`, unless the node leaves its firewall alone (`firewall: none`). |
 | `tags`          | string or list of strings  | no       | Explicit tags assigned to the node. See [Tags](#tags).                                                                                                                                                            |
 
 ---
@@ -94,6 +94,7 @@ platform:
   - **`dhcp: none`**: the addresses the config gives devices and global clients are yours to make true, with a reservation in your DHCP server or a static address on the device. Firewall rules use them either way.
   - **`wireguard: none`** (the node is in the mesh, its WireGuard set up by hand), with the firewall managed by splot: there's no mesh zone, so mesh traffic arrives in whichever zone your interface is in, and nothing is forwarded from the WAN to a host reached over the mesh. The rules `allowFrom` grants are still written.
   - `firewall: none` and `dhcp: none` together: splot manages the mesh alone.
+- **`splot check` warns**, once per node and concern, where a concern left alone leaves part of the config undone, naming what (the services whose `allowFrom` isn't enforced there, those not forwarded from its WAN) and what's yours to do. A concern left alone with nothing asked of it gets no warning.
 - **Not yet:** `splot apply` refuses a Linux node, and a node with `wireguard: none` (before writing, splot checks the node is the one `--node` names by the WireGuard key splot keeps there); `splot check` validates them.
 
 ---
