@@ -1,0 +1,45 @@
+---
+source: src/types/mod.rs
+expression: "format!(\"{}\\nWanViaTargets: [Home, Home.lan] → {duplicate}\",\nmessages.join(\"\\n\"))"
+---
+Ipv4Network: "10.0.0.1" → missing '/' in: '10.0.0.1'
+Ipv4Network: "10.0.0.0/33" → invalid prefix 10.0.0.0/33: must be 0-32
+Ipv4Network: "10.0.0.300/24" → invalid address '10.0.0.300/24': invalid IPv4 address syntax
+Ipv4Network: "10.0.0.1/24" → 10.0.0.1/24 is not a network address
+Ipv4Interface: "10.0.0.0/24" → 10.0.0.0/24 is a network address, expected host address
+Ipv4Interface: "10.0.0.255/24" → 10.0.0.255/24 is a broadcast address, expected host address
+Ipv4Interface: "x/24" → invalid address 'x/24': invalid IPv4 address syntax
+Port: "x" → invalid port format: invalid digit found in string
+Port: "0" → port number cannot be 0
+PortRange: "x-80" → invalid port: invalid port format: invalid digit found in string
+PortRange: "80-22" → range is invalid, it should be {lower}-{higher}
+PortRange: "80" → missing '-' in port range
+PortOrRange: "x" → invalid port: invalid port format: invalid digit found in string
+PortOrRange: "80-22" → invalid port range: range is invalid, it should be {lower}-{higher}
+ServicePort: "x" → invalid port: invalid port format: invalid digit found in string
+ServicePort: "80-22" → invalid port range: range is invalid, it should be {lower}-{higher}
+ServicePort: "1000-1010:2000-2005" → both ranges should have same width: 1000-1010 and 2000-2005
+ServicePort: "80:1000-1010" → invalid translation: should never be port:range (80:1000-1010)
+Identifier: "" → identifier is empty
+Identifier: "a b" → invalid character ' ' at position 1
+Identifier: "spl_x" → identifier starts with reserved prefix "spl_"
+NestedIdentifier: "abc" → missing '.' separator — qualified names have the form 'Node.Local'
+NestedIdentifier: "a.b.c" → too many '.' separators — qualified names have exactly two segments
+NestedIdentifier: ".b" → invalid node segment: identifier is empty
+NestedIdentifier: "a.b c" → invalid local segment: invalid character ' ' at position 1
+AllowFromRef: "a b" → invalid allowFrom reference: invalid character ' ' at position 1
+AllowFromRef: "a.b.c" → invalid qualified allowFrom reference: too many '.' separators — qualified names have exactly two segments
+WanViaTarget: "a b" → invalid wan target: invalid character ' ' at position 1
+WanViaTarget: "a.b.c" → invalid qualified wan target: too many '.' separators — qualified names have exactly two segments
+MacAddress: "gg:bb:cc:dd:ee:ff" → invalid hex digit 'g'
+MacAddress: "aa:bb" → expected 17 characters, got 5
+MacAddress: "aa|bb|cc|dd|ee|ff" → unexpected delimiter '|', should be either ':' or '-'
+MacAddress: "aa:bb-cc:dd:ee:ff" → mixed delimiters: started with ':' found '-'
+Hostname: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" → 254 characters long, at most 253 allowed
+Hostname: "a..b" → empty label (a dot at either end, or two in a row)
+Hostname: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.net" → label "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" is longer than 63 characters
+Hostname: "a_b.net" → invalid character '_' in "a_b" (only letters, digits and hyphens)
+Hostname: "-a.net" → label "-a" starts or ends with a hyphen
+Hostname: "10.0.0.300" → the last label is all digits
+EndpointHost: "a_b.net" → neither an IPv4 address nor a host name: invalid character '_' in "a_b" (only letters, digits and hyphens)
+WanViaTargets: [Home, Home.lan] → node 'Home' appears more than once — each node should appear at most once in wan.via

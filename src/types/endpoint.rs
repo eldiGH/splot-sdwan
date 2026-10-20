@@ -17,49 +17,25 @@ pub enum EndpointHost {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hostname(String);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ParseHostnameError {
+    #[error("{len} characters long, at most {} allowed", MAX_NAME_LEN)]
     TooLong { len: usize },
+    #[error("empty label (a dot at either end, or two in a row)")]
     EmptyLabel,
+    #[error("label {label:?} is longer than {} characters", MAX_LABEL_LEN)]
     LabelTooLong { label: String },
+    #[error("invalid character {found:?} in {label:?} (only letters, digits and hyphens)")]
     InvalidCharacter { found: char, label: String },
+    #[error("label {label:?} starts or ends with a hyphen")]
     HyphenAtEdge { label: String },
+    #[error("the last label is all digits")]
     NumericLastLabel,
 }
 
-impl fmt::Display for ParseHostnameError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::TooLong { len } => {
-                write!(f, "{len} characters long, at most {MAX_NAME_LEN} allowed")
-            }
-            Self::EmptyLabel => write!(f, "empty label (a dot at either end, or two in a row)"),
-            Self::LabelTooLong { label } => {
-                write!(
-                    f,
-                    "label {label:?} is longer than {MAX_LABEL_LEN} characters"
-                )
-            }
-            Self::InvalidCharacter { found, label } => write!(
-                f,
-                "invalid character {found:?} in {label:?} (only letters, digits and hyphens)"
-            ),
-            Self::HyphenAtEdge { label } => {
-                write!(f, "label {label:?} starts or ends with a hyphen")
-            }
-            Self::NumericLastLabel => write!(f, "the last label is all digits"),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("neither an IPv4 address nor a host name: {0}")]
 pub struct ParseEndpointHostError(ParseHostnameError);
-
-impl fmt::Display for ParseEndpointHostError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "neither an IPv4 address nor a host name: {}", self.0)
-    }
-}
 
 /// The longest name DNS carries, written without a trailing dot.
 const MAX_NAME_LEN: usize = 253;

@@ -4,25 +4,14 @@ use serde::Deserialize;
 
 use crate::consts;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParseIdentifierError {
+    #[error("identifier is empty")]
     Empty,
+    #[error("invalid character {found:?} at position {position}")]
     InvalidCharacter { found: char, position: usize },
+    #[error("identifier starts with reserved prefix {prefix:?}")]
     ReservedPrefix { prefix: &'static str },
-}
-
-impl fmt::Display for ParseIdentifierError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(f, "identifier is empty"),
-            Self::InvalidCharacter { found, position } => {
-                write!(f, "invalid character {found:?} at position {position}")
-            }
-            Self::ReservedPrefix { prefix } => {
-                write!(f, "identifier starts with reserved prefix {prefix:?}")
-            }
-        }
-    }
 }
 
 fn validate_identifier(identifier: &str) -> Result<(), ParseIdentifierError> {
@@ -124,29 +113,16 @@ impl From<Identifier> for String {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParseNestedIdentifierError {
+    #[error("missing '.' separator — qualified names have the form 'Node.Local'")]
     MissingDot,
+    #[error("too many '.' separators — qualified names have exactly two segments")]
     TooManyDots,
+    #[error("invalid node segment: {0}")]
     InvalidNode(ParseIdentifierError),
+    #[error("invalid local segment: {0}")]
     InvalidLocal(ParseIdentifierError),
-}
-
-impl fmt::Display for ParseNestedIdentifierError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingDot => write!(
-                f,
-                "missing '.' separator — qualified names have the form 'Node.Local'"
-            ),
-            Self::TooManyDots => write!(
-                f,
-                "too many '.' separators — qualified names have exactly two segments"
-            ),
-            Self::InvalidNode(e) => write!(f, "invalid node segment: {e}"),
-            Self::InvalidLocal(e) => write!(f, "invalid local segment: {e}"),
-        }
-    }
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Deserialize)]

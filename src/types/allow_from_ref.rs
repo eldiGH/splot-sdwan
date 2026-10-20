@@ -9,19 +9,12 @@ use crate::{
     },
 };
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParseAllowFromRefError {
+    #[error("invalid allowFrom reference: {0}")]
     InvalidIdentifier(ParseIdentifierError),
+    #[error("invalid qualified allowFrom reference: {0}")]
     InvalidNested(ParseNestedIdentifierError),
-}
-
-impl fmt::Display for ParseAllowFromRefError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidIdentifier(e) => write!(f, "invalid allowFrom reference: {e}"),
-            Self::InvalidNested(e) => write!(f, "invalid qualified allowFrom reference: {e}"),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]

@@ -2,28 +2,12 @@ use std::{fmt, num::ParseIntError, str::FromStr};
 
 use serde::Deserialize;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParsePortError {
+    #[error("invalid port format: {0}")]
     InvalidFormat(ParseIntError),
+    #[error("port number cannot be 0")]
     CannotBeZero,
-}
-
-impl fmt::Display for ParsePortError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidFormat(err) => write!(f, "invalid port format: {}", err),
-            Self::CannotBeZero => write!(f, "port number cannot be 0"),
-        }
-    }
-}
-
-impl std::error::Error for ParsePortError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::InvalidFormat(err) => Some(err),
-            Self::CannotBeZero => None,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug, PartialOrd, Ord, Deserialize)]
@@ -70,31 +54,14 @@ impl fmt::Display for Port {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParsePortRangeError {
+    #[error("invalid port: {0}")]
     InvalidPort(ParsePortError),
+    #[error("range is invalid, it should be {{lower}}-{{higher}}")]
     InvalidRange,
+    #[error("missing '-' in port range")]
     NoDelimiter,
-}
-
-impl fmt::Display for ParsePortRangeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidPort(err) => write!(f, "invalid port: {err}"),
-            Self::InvalidRange => write!(f, "range is invalid, it should be {{lower}}-{{higher}}"),
-            Self::NoDelimiter => write!(f, "missing '-' in port range"),
-        }
-    }
-}
-
-impl std::error::Error for ParsePortRangeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::InvalidPort(err) => Some(err),
-            Self::InvalidRange => None,
-            Self::NoDelimiter => None,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
@@ -149,28 +116,12 @@ impl fmt::Display for PortRange {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParsePortOrRangeError {
+    #[error("invalid port: {0}")]
     InvalidPort(ParsePortError),
+    #[error("invalid port range: {0}")]
     InvalidRange(ParsePortRangeError),
-}
-
-impl fmt::Display for ParsePortOrRangeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidPort(err) => write!(f, "invalid port: {err}"),
-            Self::InvalidRange(err) => write!(f, "invalid port range: {err}"),
-        }
-    }
-}
-
-impl std::error::Error for ParsePortOrRangeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::InvalidPort(err) => Some(err),
-            Self::InvalidRange(err) => Some(err),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -236,18 +187,19 @@ impl PortOrRange {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParseServicePortError {
+    #[error("invalid port: {0}")]
     InvalidPort(ParsePortError),
+    #[error("invalid port range: {0}")]
     InvalidRange(ParsePortRangeError),
+    #[error("both ranges should have same width: {external} and {internal}")]
     MismatchedRangeWidths {
         external: PortRange,
         internal: PortRange,
     },
-    SingleToRangeTranslation {
-        external: Port,
-        internal: PortRange,
-    },
+    #[error("invalid translation: should never be port:range ({external}:{internal})")]
+    SingleToRangeTranslation { external: Port, internal: PortRange },
 }
 
 impl From<ParsePortOrRangeError> for ParseServicePortError {
@@ -255,25 +207,6 @@ impl From<ParsePortOrRangeError> for ParseServicePortError {
         match value {
             ParsePortOrRangeError::InvalidPort(err) => Self::InvalidPort(err),
             ParsePortOrRangeError::InvalidRange(err) => Self::InvalidRange(err),
-        }
-    }
-}
-
-impl fmt::Display for ParseServicePortError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidPort(err) => write!(f, "invalid port: {err}"),
-            Self::InvalidRange(err) => write!(f, "invalid port range: {err}"),
-            Self::MismatchedRangeWidths { external, internal } => {
-                write!(
-                    f,
-                    "both ranges should have same width: {external} and {internal}"
-                )
-            }
-            Self::SingleToRangeTranslation { external, internal } => write!(
-                f,
-                "invalid translation: should never be port:range ({external}:{internal})"
-            ),
         }
     }
 }

@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use crate::types::identifier::Identifier;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConfigLocation {
     /// The nodes as a whole.
     Nodes,
@@ -20,7 +20,7 @@ impl Display for ConfigLocation {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NodeLoc {
     Root,
     PublicKey,
@@ -53,7 +53,7 @@ impl Display for NodeLoc {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ServiceLoc {
     Root,
     Port,
@@ -72,7 +72,7 @@ impl Display for ServiceLoc {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WanLoc {
     Via,
 }
@@ -85,7 +85,7 @@ impl Display for WanLoc {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ZoneLoc {
     Root,
     Address,
@@ -104,7 +104,7 @@ impl Display for ZoneLoc {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DeviceLoc {
     Root,
     Ip,
@@ -125,7 +125,7 @@ impl Display for DeviceLoc {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HubLoc {
     Root,
     Network,
@@ -144,7 +144,7 @@ impl Display for HubLoc {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HubClientLoc {
     Root,
     PublicKey,
@@ -167,7 +167,7 @@ impl Display for HubClientLoc {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ClientLoc {
     Root,
     MeshIp,
@@ -192,7 +192,7 @@ impl Display for ClientLoc {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ClientIpLoc {
     Root,
     Network(Identifier),

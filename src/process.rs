@@ -8,13 +8,16 @@ use std::{
     thread,
 };
 
-/// Why a program couldn't be run to the end.
-#[derive(Debug)]
+/// Why a program couldn't be run to the end. Callers name the program in their
+/// own errors.
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// It couldn't be started: missing, or not executable.
-    Spawn(io::Error),
+    #[error("couldn't start the program")]
+    Spawn(#[source] io::Error),
     /// Talking to it failed while it ran.
-    Io(io::Error),
+    #[error("i/o error while talking to the program")]
+    Io(#[source] io::Error),
 }
 
 /// Runs `command` to its end, with `stdin` as its input (none: an empty one),

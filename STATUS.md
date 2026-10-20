@@ -109,6 +109,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 
 - clap-based CLI: `splot check` (validate, report errors/warnings), `splot apply [--dry-run]`, and `splot psk set <peer>` (store the preshared key of this router's pair with a peer, read from stdin; refuses a name that isn't its peer, a pair with `psk: false`, and anything that isn't a key); `-c/--config` overrides the config path (default `splot.yml`).
 - `main` returns `anyhow::Result` — errors propagate with context chains (thiserror-typed at module boundaries, anyhow at the application layer); validation failures and an unenrolled router abort with actionable messages.
+- Every error type derives `thiserror::Error` (so each is a `std::error::Error`; a test lists them and stops compiling when one isn't). The parse errors of `src/types/` reach the user through serde, which shows only `Display`, so their messages include the inner reason, and that reason isn't also marked as their `source` (a chain would say it twice); a variant that only forwards an inner error is `transparent`. Snapshots pin every parse error's and every validation error's message. `ValidationWarning` keeps a hand-written `Display`: a warning isn't an error.
 - Logging via `log`/`env_logger` (`info` progress per manager, `debug` for details).
 
 ### Running programs (`src/process.rs`)

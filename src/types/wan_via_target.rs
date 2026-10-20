@@ -11,19 +11,12 @@ use crate::types::{
     schema_helpers::OneOrManyUnique,
 };
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParseWanViaTargetError {
+    #[error("invalid wan target: {0}")]
     InvalidIdentifier(ParseIdentifierError),
+    #[error("invalid qualified wan target: {0}")]
     InvalidNested(ParseNestedIdentifierError),
-}
-
-impl fmt::Display for ParseWanViaTargetError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidIdentifier(e) => write!(f, "invalid wan target: {e}"),
-            Self::InvalidNested(e) => write!(f, "invalid qualified wan target: {e}"),
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deserialize)]
@@ -80,20 +73,12 @@ impl WanViaTarget {
 #[serde(try_from = "OneOrManyUnique<WanViaTarget>")]
 pub struct WanViaTargets(OneOrManyUnique<WanViaTarget>);
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParseWanViaTargetsError {
+    #[error(
+        "node '{node}' appears more than once — each node should appear at most once in wan.via"
+    )]
     DuplicateNode { node: Identifier },
-}
-
-impl fmt::Display for ParseWanViaTargetsError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DuplicateNode { node } => write!(
-                f,
-                "node '{node}' appears more than once — each node should appear at most once in wan.via"
-            ),
-        }
-    }
 }
 
 impl TryFrom<OneOrManyUnique<WanViaTarget>> for WanViaTargets {

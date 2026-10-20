@@ -1,31 +1,15 @@
-use std::{error::Error, fmt::Display, net::Ipv4Addr, str::FromStr};
+use std::{fmt::Display, net::Ipv4Addr, str::FromStr};
 
 use serde::Deserialize;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParseCidrError {
+    #[error("invalid address '{0}': {1}")]
     IpParse(String, std::net::AddrParseError),
+    #[error("invalid prefix {0}: must be 0-32")]
     InvalidPrefix(String),
+    #[error("missing '/' in: '{0}'")]
     NoPrefix(String),
-}
-
-impl Display for ParseCidrError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::IpParse(address, error) => write!(f, "invalid address '{}': {}", address, error),
-            Self::InvalidPrefix(prefix) => write!(f, "invalid prefix {}: must be 0-32", prefix),
-            Self::NoPrefix(address) => write!(f, "missing '/' in: '{}'", address),
-        }
-    }
-}
-
-impl Error for ParseCidrError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::IpParse(_, e) => Some(e),
-            _ => None,
-        }
-    }
 }
 
 fn parse_cidr(s: &str) -> Result<(Ipv4Addr, u8), ParseCidrError> {
@@ -73,36 +57,14 @@ fn validate_interface_addr(ip: Ipv4Addr, prefix: u8) -> Result<Ipv4Interface, Ip
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Ipv4InterfaceError {
+    #[error(transparent)]
     ParseCidrError(ParseCidrError),
+    #[error("{0}/{1} is a network address, expected host address")]
     IsNetworkAddress(Ipv4Addr, u8),
+    #[error("{0}/{1} is a broadcast address, expected host address")]
     IsBroadcastAddress(Ipv4Addr, u8),
-}
-
-impl Display for Ipv4InterfaceError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ParseCidrError(error) => error.fmt(f),
-            Self::IsNetworkAddress(ip, prefix) => {
-                fmt_cidr(ip, *prefix, f)?;
-                write!(f, " is a network address, expected host address")
-            }
-            Self::IsBroadcastAddress(ip, prefix) => {
-                fmt_cidr(ip, *prefix, f)?;
-                write!(f, " is a broadcast address, expected host address")
-            }
-        }
-    }
-}
-
-impl Error for Ipv4InterfaceError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::ParseCidrError(e) => Some(e),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Deserialize, Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -159,31 +121,12 @@ impl Ipv4Interface {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Ipv4NetworkError {
+    #[error(transparent)]
     ParseCidrError(ParseCidrError),
+    #[error("{0}/{1} is not a network address")]
     NotANetworkAddress(Ipv4Addr, u8),
-}
-
-impl Display for Ipv4NetworkError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ParseCidrError(error) => error.fmt(f),
-            Self::NotANetworkAddress(ip, prefix) => {
-                fmt_cidr(ip, *prefix, f)?;
-                write!(f, " is not a network address")
-            }
-        }
-    }
-}
-
-impl Error for Ipv4NetworkError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::ParseCidrError(e) => Some(e),
-            _ => None,
-        }
-    }
 }
 
 /// The two addresses of a subnet that can't belong to a host.

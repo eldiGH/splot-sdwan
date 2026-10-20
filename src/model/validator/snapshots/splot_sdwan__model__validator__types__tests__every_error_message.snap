@@ -1,0 +1,34 @@
+---
+source: src/model/validator/types.rs
+expression: "messages.join(\"\\n\")"
+---
+nodes.Home.meshIp: name 'Home' is already used as another global name (node, client, or tag)
+nodes.Home.meshIp: local name Cabin conflicts with global Cabin - rename one to avoid ambiguity
+nodes.Home.meshIp: name 'lan' is already used in the same node
+nodes.Home.meshIp: name 'Home_x' uses reserved prefix 'Home_'
+nodes.Home.meshIp: name 'hub' is reserved on every node: splot gives it a meaning of its own (e.g. '{Node}.hub' is the node's hub network)
+nodes.Home.meshIp: tag 'Home' collides with a name used elsewhere in the global namespace
+nodes.Home.meshIp: unknown identifier 'Home.nas'
+nodes.Home.meshIp: IP 10.0.0.1 is outside subnet 10.0.0.0/24
+nodes.Home.meshIp: IP 10.0.0.1 is the network address of 10.0.0.0/24 and can't be assigned to a host
+nodes.Home.meshIp: subnet 10.0.0.0/24 overlaps with another subnet 10.1.0.0/16
+nodes.Home.meshIp: hub network 10.0.0.0/24 must lie inside meshNetwork 10.1.0.0/16
+nodes.Home.meshIp: mesh IP 10.0.0.1 lies inside the hub network at nodes.Cabin.meshIp - a hub network is routed to its node as a whole, so it can't hold another peer's address
+nodes.Home.meshIp: IP 10.0.0.1 is already used at nodes.Cabin.meshIp
+nodes.Home.meshIp: client has IP on zone 'iot', but already has an IP on another zone at nodes.Cabin.meshIp (max one zone per (client, node))
+nodes.Home.meshIp: client has zone IPs but no macs — MAC required for DHCP lease generation
+nodes.Home.meshIp: public key required (client has a mesh IP)
+nodes.Home.meshIp: node 'Lake' does not exist
+nodes.Home.meshIp: public key is already used at nodes.Cabin.meshIp - every node and client needs its own key
+nodes.Home.meshIp: node 'Home' has no network named 'iot'
+nodes: no node has an endpoint - at least one must, or no node can dial another and the mesh never forms
+nodes.Home.meshIp: the node has a hub but no endpoint - hub clients dial their hub node, so it needs one
+nodes.Home.meshIp: port 22 collides with nodes.Cabin.meshIp
+nodes.Home.meshIp: unknown node 'Lake'
+nodes.Home.meshIp: node 'Home' does not have wanZone defined
+nodes.Home.meshIp: qualified wan target form ({Node}.{Network}) is only allowed on services hosted by a global client — node/device services have a single unambiguous target and don't need disambiguation
+nodes.Home.meshIp: qualified wan target references network 'iot' on node 'Home', but no such zone exists on that node
+nodes.Home.meshIp: qualified wan target 'Home.iot' requires this client to have an IP at ips.Home.iot — none declared
+nodes.Home.meshIp: client has no reachable address on node 'Home' (no meshIp, no zone IP on this node). Either declare an IP for this client on the node, or use a different wan.via target
+nodes.Home.meshIp: wanZone 'lan' collides with another zone at nodes.Cabin.meshIp — wanZone must not match any zone or the splot-managed mesh interface on the same node
+nodes.Home.meshIp: wanZone 'mesh' uses the name reserved for the splot-managed mesh interface ('mesh')

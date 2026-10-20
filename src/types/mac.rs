@@ -6,33 +6,21 @@ use serde::Deserialize;
 #[serde(try_from = "String")]
 pub struct MacAddress([u8; 6]);
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParseMacError {
+    #[error("invalid hex digit '{}'", as_char(.0))]
     InvalidDigit(u8),
+    #[error("expected {} characters, got {got}", MAC_LEN)]
     InvalidLen { got: usize },
+    #[error("unexpected delimiter '{}', should be either ':' or '-'", as_char(.0))]
     InvalidDelimiter(u8),
+    #[error("mixed delimiters: started with '{}' found '{}'", as_char(.expected), as_char(.got))]
     InconsistentDelimiter { expected: u8, got: u8 },
 }
 
-impl Display for ParseMacError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidDelimiter(c) => {
-                write!(
-                    f,
-                    "unexpected delimiter '{}', should be either ':' or '-'",
-                    *c as char
-                )
-            }
-            Self::InvalidDigit(c) => write!(f, "invalid hex digit '{}'", *c as char),
-            Self::InconsistentDelimiter { expected, got } => write!(
-                f,
-                "mixed delimiters: started with '{}' found '{}'",
-                *expected as char, *got as char
-            ),
-            Self::InvalidLen { got } => write!(f, "expected {MAC_LEN} characters, got {got}"),
-        }
-    }
+/// An ASCII byte of the input, as the character it is.
+fn as_char(byte: &u8) -> char {
+    char::from(*byte)
 }
 
 const MAC_LEN: usize = 17;
