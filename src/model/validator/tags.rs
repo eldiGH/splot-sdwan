@@ -90,3 +90,94 @@ pub(super) fn validate_tags(
 
     tags
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        model::validator::{HUB_HOME, types::ValidationError},
+        test_support::{error_at, has_error, report},
+    };
+
+    #[test]
+    fn tags_collision_with_node_name() {
+        // Tag "Home" on Phone collides with node name "Home".
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+clients:
+  Phone:
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+    meshIp: 10.100.0.100
+    tags: Home
+",
+        );
+        assert!(has_error(
+            &r,
+            |e| matches!(e, ValidationError::TagWithNameCollision { tag, .. } if tag == "Home")
+        ));
+    }
+
+    #[test]
+    fn tags_same_tag_multiple_places_ok() {
+        // Tag "admin" applied to both Phone and Home's zone — no error.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+        tags: admin
+clients:
+  Phone:
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+    meshIp: 10.100.0.100
+    tags: admin
+",
+        );
+        assert!(!has_error(&r, |e| matches!(
+            e,
+            ValidationError::TagWithNameCollision { .. }
+        )));
+    }
+
+    #[test]
+    fn hub_tags_must_not_collide_with_global_names() {
+        let r = report(&format!(
+            "{HUB_HOME}
+    hub:
+      network: 10.100.49.0/24
+      tags: Phone
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+          tags: Phone
+clients:
+  Phone:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    meshIp: 10.100.1.10
+"
+        ));
+        for path in ["nodes.Home.hub.tags", "nodes.Home.hub.clients.camera.tags"] {
+            assert!(
+                error_at(&r, path, |e| matches!(
+                    e,
+                    ValidationError::TagWithNameCollision { .. }
+                )),
+                "{path}"
+            );
+        }
+    }
+}

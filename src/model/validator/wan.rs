@@ -217,9 +217,9 @@ mod tests {
             Network,
             host::HostRef,
             service::Wan,
-            validator::{Checked, check},
+            validator::{Checked, HUB_HOME, check},
         },
-        test_support::{checked, config},
+        test_support::{checked, config, error_at, has_error, report, warning_at},
     };
 
     // One node with two zones. The clients cover every branch of client_target.
@@ -418,5 +418,305 @@ clients:
             .wan()
             .unwrap();
         assert!(wan.target(&id("Home")).is_none());
+    }
+
+    #[test]
+    fn wan_invalid_via_node() {
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    services:
+      http:
+        port: 80
+        proto: tcp
+        wan:
+          via: NoSuchNode
+",
+        );
+        assert!(has_error(
+            &r,
+            |e| matches!(e, ValidationError::InvalidWanVia { node_name, .. } if node_name == "NoSuchNode")
+        ));
+    }
+
+    #[test]
+    fn wan_via_node_without_wan_zone() {
+        // Home has no wanZone, but a service uses it in wan.via.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    services:
+      http:
+        port: 80
+        proto: tcp
+        wan:
+          via: Home
+",
+        );
+        assert!(has_error(
+            &r,
+            |e| matches!(e, ValidationError::WanViaNodeNoWanZone { node_name, .. } if node_name == "Home")
+        ));
+    }
+
+    #[test]
+    fn wan_via_qualified_on_non_client_service() {
+        // Qualified form (Node.Network) is invalid on a node-hosted service.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+    zones:
+      lan:
+        address: 192.168.1.1/24
+    services:
+      http:
+        port: 80
+        proto: tcp
+        wan:
+          via: Home.lan
+",
+        );
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::WanViaQualifiedOnNonClient { .. }
+        )));
+    }
+
+    #[test]
+    fn wan_via_network_missing_on_node() {
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+clients:
+  Phone:
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+    ips:
+      Home:
+        lan: 192.168.1.50
+    services:
+      http:
+        port: 80
+        proto: tcp
+        wan:
+          via: Home.lan
+",
+        );
+        // Home has no zone "lan" in this fixture, so WanViaNetworkMissing fires.
+        assert!(has_error(
+            &r,
+            |e| matches!(e, ValidationError::WanViaNetworkMissing { network, .. } if network == "lan")
+        ));
+    }
+
+    #[test]
+    fn wan_via_client_not_on_network() {
+        // Phone has an IP on "lan" but the service requests "iot" (qualified form).
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+    zones:
+      lan:
+        address: 192.168.1.1/24
+      iot:
+        address: 192.168.3.1/24
+clients:
+  Phone:
+    macs: AA:BB:CC:DD:EE:FF
+    ips:
+      Home:
+        lan: 192.168.1.50
+    services:
+      http:
+        port: 80
+        proto: tcp
+        wan:
+          via: Home.iot
+",
+        );
+        assert!(has_error(
+            &r,
+            |e| matches!(e, ValidationError::WanViaClientNotOnNetwork { network, .. } if network == "iot")
+        ));
+    }
+
+    #[test]
+    fn wan_via_unreachable_client() {
+        // Phone has no meshIp and no IPs on Cabin; forwarding via Cabin is impossible.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+    zones:
+      lan:
+        address: 192.168.1.1/24
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    wanZone: wan
+clients:
+  Phone:
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+    macs: AA:BB:CC:DD:EE:FF
+    ips:
+      Home:
+        lan: 192.168.1.50
+    services:
+      http:
+        port: 80
+        proto: tcp
+        wan:
+          via: Cabin
+",
+        );
+        assert!(has_error(
+            &r,
+            |e| matches!(e, ValidationError::WanViaUnreachable { node, .. } if node == "Cabin")
+        ));
+    }
+
+    #[test]
+    fn wan_zone_collides_with_zone_name() {
+        // wanZone "lan" collides with the zone named "lan" on the same node.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: lan
+    zones:
+      lan:
+        address: 192.168.1.1/24
+",
+        );
+        // `at` points at the wanZone declaration; `with` at the conflicting zone.
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::WanZoneNameCollision { wan_zone, with, at }
+                if wan_zone == "lan"
+                    && with.to_string() == "nodes.Home.zones.lan"
+                    && at.to_string() == "nodes.Home.wanZone"
+        )));
+    }
+
+    #[test]
+    fn wan_zone_reserved_mesh_name() {
+        // wanZone "mesh" collides with the splot-managed mesh interface name — a
+        // reserved-name error (no config location to point `with` at), distinct
+        // from a collision with the operator's own zone.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: mesh
+",
+        );
+        assert!(error_at(
+            &r,
+            "nodes.Home.wanZone",
+            |e| matches!(e, ValidationError::WanZoneReservedName { wan_zone, .. } if wan_zone == "mesh")
+        ));
+        // ...and it must NOT be misreported as an ordinary name collision.
+        assert!(!has_error(&r, |e| matches!(
+            e,
+            ValidationError::WanZoneNameCollision { .. }
+        )));
+    }
+
+    #[test]
+    fn wan_unused_wan_zone_warning() {
+        // wanZone is declared but no service references this node in wan.via.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+",
+        );
+        assert!(warning_at(&r, "nodes.Home.wanZone", |w| matches!(
+            w,
+            ValidationWarning::UnusedWanZone { .. }
+        )));
+    }
+
+    #[test]
+    fn hub_client_service_wan_via_must_be_bare() {
+        // The qualified form picks one of a global client's networks; a hub client
+        // has one address.
+        let r = report(&format!(
+            "{HUB_HOME}
+    wanZone: wan
+    zones:
+      lan:
+        address: 192.168.1.1/24
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+          services:
+            http: {{ port: 80, proto: tcp, wan: {{ via: Home.lan }} }}
+"
+        ));
+        assert!(error_at(
+            &r,
+            "nodes.Home.hub.clients.camera.services.http.wan.via",
+            |e| matches!(e, ValidationError::WanViaQualifiedOnNonClient { .. })
+        ));
     }
 }

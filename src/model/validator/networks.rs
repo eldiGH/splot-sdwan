@@ -544,7 +544,11 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use super::*;
-    use crate::test_support::config;
+    use crate::{
+        model::validator::HUB_HOME,
+        test_support::{config, error_at, has_error, report},
+        types::ip::ReservedAddress,
+    };
 
     fn ips(host: &Host) -> Vec<Ipv4Addr> {
         host.addresses.iter().map(HostAddress::ip).collect()
@@ -623,5 +627,463 @@ nodes:
         let names: Vec<String> = nodes.keys().map(ToString::to_string).collect();
         assert_eq!(names, ["Home"]);
         assert_eq!(nodes.values().next().unwrap().networks().count(), 0);
+    }
+
+    #[test]
+    fn networks_collision_mesh_and_zone_overlap() {
+        // Zone 192.168.1.0/24 overlaps with meshNetwork 192.168.1.0/24.
+        let r = report(
+            "
+meshNetwork: 192.168.1.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 192.168.1.1
+    zones:
+      lan:
+        address: 192.168.1.2/24
+",
+        );
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::NetworkCollision { .. }
+        )));
+    }
+
+    #[test]
+    fn networks_collision_zone_zone() {
+        // Two zones with the same subnet.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    zones:
+      lan:
+        address: 192.168.1.1/24
+",
+        );
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::NetworkCollision { .. }
+        )));
+    }
+
+    #[test]
+    fn networks_ip_outside_mesh_subnet() {
+        // Node meshIp 10.200.0.1 is outside meshNetwork 10.100.0.0/24.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.200.0.1
+",
+        );
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::IpOutsideSubnet { .. }
+        )));
+    }
+
+    #[test]
+    fn networks_ip_outside_zone_subnet() {
+        // Device IP 192.168.2.50 is outside its zone 192.168.1.0/24.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+        devices:
+          printer:
+            ip: 192.168.2.50
+            macs: AA:BB:CC:DD:EE:FF
+",
+        );
+        assert!(error_at(
+            &r,
+            "nodes.Home.zones.lan.devices.printer.ip",
+            |e| matches!(e, ValidationError::IpOutsideSubnet { .. })
+        ));
+    }
+
+    #[test]
+    fn networks_ip_collision_two_nodes_same_mesh_ip() {
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.1
+",
+        );
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::IpCollision { .. }
+        )));
+    }
+
+    #[test]
+    fn networks_client_many_zones() {
+        // Client with IPs on two zone networks of the same node (max one allowed).
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+      guest:
+        address: 192.168.2.1/24
+clients:
+  Phone:
+    macs: AA:BB:CC:DD:EE:FF
+    ips:
+      Home:
+        lan: 192.168.1.50
+        guest: 192.168.2.50
+",
+        );
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::NodeClientManyZones { .. }
+        )));
+    }
+
+    // A host IP must not be its subnet's network or broadcast address. Such an IP
+    // used to pass validation and then panic in the generators. The fixture puts
+    // all five kinds of host IP on reserved addresses; the two tests swap which
+    // ones get the network address and which the broadcast address.
+    fn reserved_fixture(
+        node_mesh_ip: &str,
+        client_mesh_ip: &str,
+        device_ip: &str,
+        hub_client_ip: &str,
+        client_zone_ip: &str,
+    ) -> String {
+        format!(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: {node_mesh_ip}
+    zones:
+      lan:
+        address: 192.168.1.1/24
+        devices:
+          printer:
+            ip: {device_ip}
+            macs: AA:BB:CC:DD:EE:01
+      iot:
+        address: 192.168.2.1/24
+    hub:
+      network: 10.100.0.128/26
+      clients:
+        camera:
+          publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+          ip: {hub_client_ip}
+clients:
+  Phone:
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+    meshIp: {client_mesh_ip}
+    macs: AA:BB:CC:DD:EE:02
+    ips:
+      Home:
+        iot: {client_zone_ip}
+"
+        )
+    }
+
+    fn reserved_at(r: &ValidationReport, path: &str, expected: ReservedAddress) -> bool {
+        error_at(
+            r,
+            path,
+            |e| matches!(e, ValidationError::ReservedHostAddress { kind, .. } if *kind == expected),
+        )
+    }
+
+    const NODE_MESH_IP: &str = "nodes.Home.meshIp";
+    const CLIENT_MESH_IP: &str = "clients.Phone.meshIp";
+    const DEVICE_IP: &str = "nodes.Home.zones.lan.devices.printer.ip";
+    const HUB_CLIENT_IP: &str = "nodes.Home.hub.clients.camera.ip";
+    const CLIENT_ZONE_IP: &str = "clients.Phone.ips.Home.iot";
+
+    #[test]
+    fn networks_host_ip_on_network_address() {
+        let r = report(&reserved_fixture(
+            "10.100.0.0",
+            "10.100.0.255",
+            "192.168.1.0",
+            "10.100.0.128",
+            "192.168.2.0",
+        ));
+        assert!(reserved_at(&r, NODE_MESH_IP, ReservedAddress::Network));
+        assert!(reserved_at(&r, CLIENT_MESH_IP, ReservedAddress::Broadcast));
+        assert!(reserved_at(&r, DEVICE_IP, ReservedAddress::Network));
+        assert!(reserved_at(&r, HUB_CLIENT_IP, ReservedAddress::Network));
+        assert!(reserved_at(&r, CLIENT_ZONE_IP, ReservedAddress::Network));
+    }
+
+    #[test]
+    fn networks_host_ip_on_broadcast_address() {
+        let r = report(&reserved_fixture(
+            "10.100.0.255",
+            "10.100.0.0",
+            "192.168.1.255",
+            "10.100.0.191",
+            "192.168.2.255",
+        ));
+        assert!(reserved_at(&r, NODE_MESH_IP, ReservedAddress::Broadcast));
+        assert!(reserved_at(&r, CLIENT_MESH_IP, ReservedAddress::Network));
+        assert!(reserved_at(&r, DEVICE_IP, ReservedAddress::Broadcast));
+        assert!(reserved_at(&r, HUB_CLIENT_IP, ReservedAddress::Broadcast));
+        assert!(reserved_at(&r, CLIENT_ZONE_IP, ReservedAddress::Broadcast));
+    }
+
+    #[test]
+    fn networks_host_ips_ordinary_addresses_are_fine() {
+        // Same fixture, every IP an ordinary host address: no reserved-address error.
+        let r = report(&reserved_fixture(
+            "10.100.0.1",
+            "10.100.0.100",
+            "192.168.1.50",
+            "10.100.0.130",
+            "192.168.2.60",
+        ));
+        assert!(!has_error(&r, |e| matches!(
+            e,
+            ValidationError::ReservedHostAddress { .. }
+        )));
+    }
+
+    #[test]
+    fn networks_slash_31_has_no_reserved_addresses() {
+        // RFC 3021: both addresses of a /31 are usable host addresses.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/31
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.0
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.1
+",
+        );
+        assert!(
+            r.errors.is_empty(),
+            "unexpected errors: {:?}",
+            r.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn hub_network_must_lie_inside_the_mesh_network() {
+        for network in ["10.200.49.0/24", "10.0.0.0/8", "10.100.0.0/15"] {
+            // The last two hold the mesh network rather than lie inside it.
+            let r = report(&format!(
+                "{HUB_HOME}
+    hub:
+      network: {network}
+"
+            ));
+            assert!(
+                error_at(&r, "nodes.Home.hub.network", |e| matches!(
+                    e,
+                    ValidationError::HubOutsideMeshNetwork { .. }
+                )),
+                "{network}"
+            );
+        }
+
+        let r = report(&format!(
+            "{HUB_HOME}
+    hub:
+      network: 10.100.49.0/24
+"
+        ));
+        assert!(!has_error(&r, |e| matches!(
+            e,
+            ValidationError::HubOutsideMeshNetwork { .. }
+        )));
+    }
+
+    fn two_hubs(alpha_hub: &str, zeta_hub: &str) -> ValidationReport {
+        report(&format!(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Alpha:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    hub:
+      network: {alpha_hub}
+  Zeta:
+    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    hub:
+      network: {zeta_hub}
+"
+        ))
+    }
+
+    #[test]
+    fn hub_networks_must_not_overlap() {
+        // Both ways round: the bigger network on the node checked first, then
+        // on the one checked second.
+        for (alpha, zeta) in [
+            ("10.100.48.0/22", "10.100.49.0/24"),
+            ("10.100.49.0/24", "10.100.48.0/22"),
+        ] {
+            let r = two_hubs(alpha, zeta);
+            assert!(
+                error_at(&r, "nodes.Zeta.hub.network", |e| matches!(
+                    e,
+                    ValidationError::NetworkCollision { .. }
+                )),
+                "{alpha} vs {zeta}"
+            );
+        }
+    }
+
+    #[test]
+    fn separate_hub_networks_are_fine() {
+        let r = two_hubs("10.100.49.0/24", "10.100.84.0/24");
+        assert!(!has_error(&r, |e| matches!(
+            e,
+            ValidationError::NetworkCollision { .. }
+        )));
+    }
+
+    fn mesh_ip_in_hub(r: &ValidationReport, path: &str) -> bool {
+        error_at(
+            r,
+            path,
+            |e| matches!(e, ValidationError::MeshIpInHubNetwork { hub, .. } if hub.to_string() == "nodes.Home.hub.network"),
+        )
+    }
+
+    #[test]
+    fn mesh_ips_must_not_lie_inside_a_hub_network() {
+        // One address, one path: a hub network is routed to its node as a whole.
+        let r = report(&format!(
+            "{HUB_HOME}
+    hub:
+      network: 10.100.49.0/24
+  Cabin:
+    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.49.2
+clients:
+  Phone:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    meshIp: 10.100.49.100
+"
+        ));
+        assert!(mesh_ip_in_hub(&r, "nodes.Cabin.meshIp"));
+        assert!(mesh_ip_in_hub(&r, "clients.Phone.meshIp"));
+        assert!(!mesh_ip_in_hub(&r, "nodes.Home.meshIp"));
+    }
+
+    #[test]
+    fn own_mesh_ip_must_not_lie_inside_own_hub_network() {
+        let r = report(&format!(
+            "{HUB_HOME}
+    hub:
+      network: 10.100.0.0/24
+"
+        ));
+        assert!(mesh_ip_in_hub(&r, "nodes.Home.meshIp"));
+    }
+
+    #[test]
+    fn hub_client_ip_must_lie_inside_its_hub_network() {
+        let r = report(&format!(
+            "{HUB_HOME}
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.50.10
+"
+        ));
+        assert!(error_at(
+            &r,
+            "nodes.Home.hub.clients.camera.ip",
+            |e| matches!(e, ValidationError::IpOutsideSubnet { .. })
+        ));
+    }
+
+    #[test]
+    fn hub_client_ips_are_unique() {
+        let r = report(&format!(
+            "{HUB_HOME}
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        a-cam:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+        b-cam:
+          publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+          ip: 10.100.49.10
+"
+        ));
+        assert!(error_at(
+            &r,
+            "nodes.Home.hub.clients.b-cam.ip",
+            |e| matches!(e, ValidationError::IpCollision { with, .. } if with.to_string() == "nodes.Home.hub.clients.a-cam.ip")
+        ));
     }
 }

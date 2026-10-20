@@ -186,8 +186,8 @@ pub(super) fn resolve_sources(
 mod tests {
     use super::*;
     use crate::{
-        model::host::HostRef,
-        test_support::{checked, config},
+        model::{host::HostRef, validator::HUB_HOME},
+        test_support::{checked, config, error_at, has_error, has_warning, report},
     };
 
     // Home: zone lan (192.168.1.1/24) with device printer (192.168.1.50, tag printable)
@@ -412,5 +412,124 @@ nodes:
         ));
         assert!(!resolution.sources.contains_key(&bare("Home")));
         assert!(resolution.this_node[&id("Home")].is_empty());
+    }
+
+    #[test]
+    fn refs_unknown_allowfrom() {
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    services:
+      ssh:
+        port: 22
+        proto: tcp
+        allowFrom: NoSuchThing
+",
+        );
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::UnknownRef { .. }
+        )));
+    }
+
+    #[test]
+    fn refs_self_node_always_valid() {
+        // $node is always in the known-references set; no UnknownRef.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    services:
+      ssh:
+        port: 22
+        proto: tcp
+        allowFrom: \"$node\"
+",
+        );
+        assert!(!has_error(&r, |e| matches!(
+            e,
+            ValidationError::UnknownRef { .. }
+        )));
+    }
+
+    #[test]
+    fn refs_unreachable_service_warning() {
+        // Service with neither allowFrom nor wan.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    services:
+      ghost:
+        port: 9999
+        proto: tcp
+",
+        );
+        assert!(has_warning(&r, |w| matches!(
+            w,
+            ValidationWarning::UnreachableService { .. }
+        )));
+    }
+
+    #[test]
+    fn refs_wan_only_service_no_unreachable_warning() {
+        // wan-only service (no allowFrom) must not produce UnreachableService.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+    services:
+      http:
+        port: 80
+        proto: tcp
+        wan:
+          via: Home
+",
+        );
+        assert!(!has_warning(&r, |w| matches!(
+            w,
+            ValidationWarning::UnreachableService { .. }
+        )));
+    }
+
+    #[test]
+    fn hub_reference_needs_a_hub() {
+        let r = report(&format!(
+            "{HUB_HOME}
+clients:
+  Phone:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    meshIp: 10.100.1.10
+    services:
+      ssh: {{ port: 22, proto: tcp, allowFrom: Home.hub }}
+"
+        ));
+        assert!(error_at(
+            &r,
+            "clients.Phone.services.ssh.allowFrom",
+            |e| matches!(e, ValidationError::UnknownRef { reference, .. } if reference.to_string() == "Home.hub")
+        ));
     }
 }

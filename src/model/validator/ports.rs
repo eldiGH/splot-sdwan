@@ -178,3 +178,149 @@ pub(super) fn check_ports(config: &Config, report: &mut ValidationReport) {
     check_external_port_collisions(config, report);
     check_internal_port_collisions(config, report);
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        model::validator::{HUB_HOME, types::ValidationError},
+        test_support::{error_at, has_error, report},
+    };
+
+    #[test]
+    fn ports_internal_collision_two_node_services() {
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    services:
+      ssh:
+        port: 22
+        proto: tcp
+        allowFrom: \"$node\"
+      ssh2:
+        port: 22
+        proto: tcp
+        allowFrom: \"$node\"
+",
+        );
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::PortCollision { .. }
+        )));
+    }
+
+    #[test]
+    fn ports_tcp_and_udp_same_number_ok() {
+        // TCP 80 and UDP 80 on the same node don't collide.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    services:
+      http:
+        port: 80
+        proto: tcp
+        allowFrom: \"$node\"
+      dns:
+        port: 80
+        proto: udp
+        allowFrom: \"$node\"
+",
+        );
+        assert!(!has_error(&r, |e| matches!(
+            e,
+            ValidationError::PortCollision { .. }
+        )));
+    }
+
+    #[test]
+    fn ports_external_collision() {
+        // Two services both exposed externally on port 80/tcp via the same node.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+    services:
+      http1:
+        port: 80
+        proto: tcp
+        wan:
+          via: Home
+      http2:
+        port: 80
+        proto: tcp
+        wan:
+          via: Home
+",
+        );
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::PortCollision { .. }
+        )));
+    }
+
+    #[test]
+    fn ports_node_listen_port_vs_external_udp_service() {
+        // A UDP service exposed on the same external port as the node's WG listenPort.
+        let r = report(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+    services:
+      wg_clash:
+        port: 51820
+        proto: udp
+        wan:
+          via: Home
+",
+        );
+        assert!(has_error(&r, |e| matches!(
+            e,
+            ValidationError::PortCollision { .. }
+        )));
+    }
+
+    #[test]
+    fn hub_client_service_ports_must_not_collide() {
+        let r = report(&format!(
+            "{HUB_HOME}
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+          services:
+            http: {{ port: 80, proto: tcp, allowFrom: Home }}
+            web: {{ port: 80, proto: tcp, allowFrom: Home }}
+"
+        ));
+        assert!(error_at(
+            &r,
+            "nodes.Home.hub.clients.camera.services.web.port",
+            |e| matches!(e, ValidationError::PortCollision { .. })
+        ));
+    }
+}
