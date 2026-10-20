@@ -1,9 +1,6 @@
-use std::{
-    io::Write,
-    process::{Command, Stdio},
-};
+use std::process::Command;
 
-use crate::env;
+use crate::{env, process};
 
 #[derive(Debug, Clone)]
 pub enum UciBatchCommand {
@@ -111,27 +108,9 @@ fn run(args: &[&str], stdin: Option<&str>) -> Result<Output, Error> {
     if let Some(uci_config_dir) = env::uci_config_dir() {
         command.arg("-c").arg(uci_config_dir);
     }
+    command.args(args);
 
-    command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .args(args);
-
-    let output = match stdin {
-        Some(input) => {
-            command.stdin(Stdio::piped());
-            let mut child = command.spawn().map_err(Error::Spawn)?;
-            child
-                .stdin
-                .take()
-                .expect("stdin was piped and not yet taken")
-                .write_all(input.as_bytes())
-                .map_err(Error::Io)?;
-            child.wait_with_output().map_err(Error::Io)?
-        }
-
-        None => command.output().map_err(Error::Spawn)?,
-    };
+    let output = process::run(command, stdin.map(str::as_bytes))?;
 
     let stderr = String::from_utf8_lossy(&output.stderr)
         .trim_end()
@@ -242,6 +221,15 @@ pub enum Error {
     /// Names the path only: the value may be a key.
     #[error("refusing to send `{path}` to uci: {reason}")]
     Unsafe { path: String, reason: &'static str },
+}
+
+impl From<process::Error> for Error {
+    fn from(err: process::Error) -> Self {
+        match err {
+            process::Error::Spawn(err) => Self::Spawn(err),
+            process::Error::Io(err) => Self::Io(err),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -194,7 +194,7 @@ A WireGuard pair can also share a preshared key (PSK). It adds nothing against t
 
 ### Scope
 
-Tests cover the **deterministic core**: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (`src/model/`: hosts, reference resolution, WAN targets), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), and UCI command/builder rendering. The process/IO layer (`uci` executor, `wg`, `env`, the OpenWrt `apply`, `main`) is **out of scope** for now — it shells out and touches the filesystem; revisit as integration tests later. The key store (`splot_config`) is tested in its pure parts (reading the store's sections, the commands that write it) and in the store file's mode, in a temporary directory.
+Tests cover the **deterministic core**: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (`src/model/`: hosts, reference resolution, WAN targets), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), and UCI command/builder rendering. The process/IO layer (`uci` executor, `wg`, `env`, the OpenWrt `apply`, `main`) is **out of scope** for now — it shells out and touches the filesystem; revisit as integration tests later. The key store (`splot_config`) is tested in its pure parts (reading the store's sections, the commands that write it) and in the store file's mode, in a temporary directory. The process helper (`process`) is tested with standard programs (`cat`, `sh`), not the ones splot drives.
 
 ### Placement
 

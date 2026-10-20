@@ -7,12 +7,13 @@
 
 use std::{
     fmt::{self, Display},
-    process::{Command, Stdio},
+    process::Command,
 };
 
 use log::info;
 
 use super::network;
+use crate::process;
 
 /// How a WireGuard interface picks up changed peers.
 ///
@@ -138,11 +139,12 @@ impl Reload {
 
 /// Runs `command` and returns its stdout. A non-zero exit is an error.
 fn run(command: &ReloadCommand) -> Result<String, Error> {
-    let output = Command::new(command.program)
-        .args(&command.args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|err| Error::Spawn(command.program, err))?;
+    let mut program = Command::new(command.program);
+    program.args(&command.args);
+    // It gets no input, so it fails to run the way it fails to start.
+    let output = process::run(program, None).map_err(|err| match err {
+        process::Error::Spawn(err) | process::Error::Io(err) => Error::Spawn(command.program, err),
+    })?;
 
     if !output.status.success() {
         return Err(Error::Failed {

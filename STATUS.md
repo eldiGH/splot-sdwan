@@ -111,6 +111,10 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 - `main` returns `anyhow::Result` — errors propagate with context chains (thiserror-typed at module boundaries, anyhow at the application layer); validation failures and an unenrolled router abort with actionable messages.
 - Logging via `log`/`env_logger` (`info` progress per manager, `debug` for details).
 
+### Running programs (`src/process.rs`)
+
+- Every program splot drives (`uci`, `wg`, `ubus`, `reload_config`) runs through one helper, `process::run`: it pipes the program's input and output, writes the input from a thread while the output is read (written first, it would block for good on a program that prints before it has read all of it: `uci batch` printing an error per line of a large batch), and tells a program that couldn't start from one that failed while running. A program that stops reading its input and then fails reports its own exit and output; one that stops reading yet claims success is an error, since what it read can't be trusted. Each caller keeps its own error type and messages.
+
 ### WireGuard key handling (`src/wg.rs`)
 
 - Generates new private keys via `wg genkey`.

@@ -1,9 +1,9 @@
-use std::{
-    io::Write,
-    process::{Command, Stdio},
-};
+use std::process::Command;
 
-use crate::types::wg_key::{KeyFormatError, check_key_format};
+use crate::{
+    process,
+    types::wg_key::{KeyFormatError, check_key_format},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -17,33 +17,21 @@ pub enum Error {
     Failed { code: Option<i32>, stderr: String },
 }
 
+impl From<process::Error> for Error {
+    fn from(err: process::Error) -> Self {
+        match err {
+            process::Error::Spawn(err) => Self::Spawn(err),
+            process::Error::Io(err) => Self::Io(err),
+        }
+    }
+}
+
 /// Runs `wg <args>`, optionally feeding `stdin`, and returns its trimmed stdout.
 /// A non-zero exit is an error carrying wg's stderr — never an empty "result".
 fn run(args: &[&str], stdin: Option<&str>) -> Result<String, Error> {
     let mut command = Command::new("wg");
-    command
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let output = match stdin {
-        Some(input) => {
-            command.stdin(Stdio::piped());
-            let mut child = command.spawn().map_err(Error::Spawn)?;
-            child
-                .stdin
-                .take()
-                .expect("stdin was piped and not yet taken")
-                .write_all(input.as_bytes())
-                .map_err(Error::Io)?;
-            child.wait_with_output().map_err(Error::Io)?
-        }
-
-        None => command
-            .stdin(Stdio::null())
-            .output()
-            .map_err(Error::Spawn)?,
-    };
+    command.args(args);
+    let output = process::run(command, stdin.map(str::as_bytes))?;
 
     if !output.status.success() {
         return Err(Error::Failed {
