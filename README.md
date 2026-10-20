@@ -11,7 +11,8 @@ Declarative WireGuard mesh networking for OpenWRT routers. You describe your net
 - **Tag-based access control**: every service declares `allowFrom` using tags or names (nodes, zones, devices, clients). Splot resolves these to IPs/subnets and emits scoped firewall rules.
 - **Static DHCP leases** for devices and roaming clients with declared MACs.
 - **WAN exposure** declared on the service itself — port forwards with optional CIDR allowlists, including cross-node forwarding over the mesh.
-- One config file, synced across routers. Each router identifies itself by its WireGuard public key and applies only its own slice.
+- One config file, synced across routers. Each router is named with `--node`, checks its WireGuard key is that node's, and applies only its own slice.
+- Each node says which software it runs (`platform`), and which concerns splot leaves to you (`none`).
 
 ## Example config
 
@@ -30,6 +31,8 @@ clients:
 
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: <wireguard-pubkey>
     endpoint: home.example.com
     listenPort: 51820
@@ -67,6 +70,8 @@ nodes:
               allowFrom: admin
 
   Cabin:
+    platform:
+      os: openwrt
     publicKey: <wireguard-pubkey>
     endpoint: cabin.example.com
     listenPort: 51820
@@ -96,7 +101,7 @@ Full reference: [CONFIG.md](CONFIG.md).
 
 1. Parse `splot.yml` into typed structs (strict — unknown fields are errors).
 2. Validate: name/tag uniqueness, identifier resolution, subnet overlaps, IP containment, port conflicts. Errors abort before anything is touched.
-3. Identify the current node by matching the local WireGuard public key.
+3. Take the node from `--node`, and check the router's WireGuard key is the one the config has for it.
 4. Generate UCI sections (network interfaces and peers, DHCP host leases, firewall zones and rules) for this node.
 5. Apply as a single `uci batch` with per-file atomic commits.
 

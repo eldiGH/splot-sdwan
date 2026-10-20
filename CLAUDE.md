@@ -27,9 +27,13 @@ This is a hobby project that started as a way to learn Rust and systems programm
 
 ### Config philosophy
 
-The config is intentionally free of OpenWRT/uci implementation details. The user thinks in terms of nodes, zones, devices, and tags. The app translates those to firewall rules and uci commands. If a concept belongs to the implementation (uci section types, splot's own naming conventions for generated objects), it does not belong in the config.
+`splot.yml` says what the network is and what the operator decided about it; splot works out what each node has to do.
 
-Real network architecture (subnets, VLANs, NAT) is not an implementation detail — those concepts can appear in the config when they reflect what the operator genuinely needs to express.
+- **The network** is written the way the operator thinks about it: nodes, zones, devices, clients, tags, and services that say what may reach what. Real network facts belong here when the operator needs to state them: subnets, addresses, endpoints, which nodes can be dialled.
+- **The deployment** goes in each node's `platform` block: which OS the node runs, which program handles each concern, and which concerns splot leaves alone (`none`). These are the operator's choices and they change what the config can mean on that node, so `splot check` must see them for every node at once. They stay in that block, apart from the network.
+- **splot's implementation stays out:** uci section types, the names splot gives what it generates, how a backend spells a rule.
+- **Nothing is guessed.** Every node says what it runs. splot doesn't detect it and doesn't take a default from what one network happens to use; at most it checks that the node is what the config says. The only defaults are what a named OS ships with (on OpenWrt: netifd, fw4, dnsmasq).
+- **The same config means the same thing on every platform.** splot never relies on a platform's own defaults. Where a node won't carry something out because splot doesn't manage that concern there, `splot check` says so.
 
 ### Top-level config shape
 
@@ -40,12 +44,25 @@ Real network architecture (subnets, VLANs, NAT) is not an implementation detail 
 
 Each node carries:
 
+- `platform` — the OS it runs and the program behind each concern splot can manage there, or `none` (see "Node platform")
 - mesh metadata (`publicKey`, `endpoint` (optional, see "Endpoint"), `listenPort`, `meshIp`)
 - `zones` — map of downstream networks the router serves (LAN, VLANs). The map key is the OpenWRT zone name on that router. Splot does not manage these zones in OpenWRT — the operator configures them — splot only references them when generating rules.
 - `hub` — a network inside `meshNetwork` for devices that reach the mesh through this node alone (hub clients). See "Hubs".
 - `services` — services exposed by the router itself
 - `wanZone` — name of the OpenWRT firewall zone that is WAN-facing (only required if any service uses this node in `wan.via`)
 - `tags` — explicit tags on the node
+
+### Node platform
+
+Each node's `platform` says which OS it runs (`os: openwrt` or `linux`, required) and, per concern (`wireguard`, `firewall`, `dhcp`, `dns`), the program splot manages it with, or `none`.
+
+- **Values are the programs:** on OpenWrt `netifd`, `fw4`, `dnsmasq` (DHCP and DNS); on Linux `wg-quick`, `nftables`, `dnsmasq`. Not one `uci` value: uci is how OpenWrt's settings are written, not what carries them out, and naming the program lets a backend check that program's limits.
+- **`os` is required, with no default and no detection.** `splot check` works offline, for every node at once, and the config keeps one meaning when a node is reinstalled. Detecting the OS is for checking the node is what the config says, later.
+- **Defaults come from the OS alone:** on OpenWrt a concern left out is managed with what OpenWrt ships; on Linux there's no usual setup to assume, so every concern is written out, `none` included. A program the OS doesn't have is an error. Platform defaults for every node at the top level are planned.
+- **`dns`** is accepted, and does nothing until splot generates DNS config.
+- **`none`** means splot leaves that concern alone: nothing generated, nothing of the operator's touched. Applying a node with `none` for WireGuard, the firewall or DHCP, or a Linux node, isn't supported yet; `splot check` validates them.
+- **Errors and warnings:** an error when the config doesn't make sense, or a concern splot manages lacks something it needs from the config; a warning when a node leaves part of a valid config undone because a concern is `none`, saying what's left undone and what's the operator's to do.
+- **No partially working state:** what splot renders for a concern it manages is complete for what it covers, and never points at something a `none` concern would have created. With `wireguard: none` and the firewall managed, for one, there's no mesh zone and no rule for mesh traffic.
 
 ### Tags
 

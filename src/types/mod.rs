@@ -4,6 +4,7 @@ pub mod endpoint;
 pub mod identifier;
 pub mod ip;
 pub mod mac;
+pub mod platform;
 pub mod port;
 pub mod protocol;
 pub mod schema_helpers;
@@ -20,6 +21,7 @@ mod tests {
         identifier::{Identifier, NestedIdentifier},
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
+        platform::{FirewallProgram, Setting},
         port::{Port, PortOrRange, PortRange, ServicePort},
         schema_helpers::OneOrManyUnique,
         wan_via_target::{WanViaTarget, WanViaTargets},
@@ -33,7 +35,12 @@ mod tests {
         let Err(err) = input.parse::<T>() else {
             panic!("{input:?} parsed as a {}", std::any::type_name::<T>());
         };
-        let name = std::any::type_name::<T>().rsplit("::").next().unwrap();
+        // Without module paths: `Setting<FirewallProgram>`.
+        let name: Vec<&str> = std::any::type_name::<T>()
+            .split('<')
+            .map(|part| part.rsplit("::").next().unwrap())
+            .collect();
+        let name = name.join("<");
 
         format!("{name}: {input:?} → {err}")
     }
@@ -59,6 +66,7 @@ mod tests {
         is_error::<super::endpoint::ParseHostnameError>();
         is_error::<super::endpoint::ParseEndpointHostError>();
         is_error::<super::wg_key::KeyFormatError>();
+        is_error::<super::platform::ParseSettingError>();
         is_error::<crate::model::validator::types::ValidationError>();
         is_error::<crate::process::Error>();
     }
@@ -109,6 +117,7 @@ mod tests {
             error::<Hostname>("-a.net"),
             error::<Hostname>("10.0.0.300"),
             error::<EndpointHost>("a_b.net"),
+            error::<Setting<FirewallProgram>>("iptables"),
         ];
 
         // wan.via names a node at most once; only serde builds that list.

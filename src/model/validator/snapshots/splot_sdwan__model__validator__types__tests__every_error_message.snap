@@ -2,6 +2,8 @@
 source: src/model/validator/types.rs
 expression: "messages.join(\"\\n\")"
 ---
+nodes.Home.meshIp: firewall left out - a linux node names the program behind every concern, or none to leave it alone
+nodes.Home.meshIp: splot can't manage wireguard with wg-quick on openwrt - there it's netifd, or none
 nodes.Home.meshIp: name 'Home' is already used as another global name (node, client, or tag)
 nodes.Home.meshIp: local name Cabin conflicts with global Cabin - rename one to avoid ambiguity
 nodes.Home.meshIp: name 'lan' is already used in the same node

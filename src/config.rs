@@ -14,6 +14,7 @@ use crate::{
         identifier::Identifier,
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
+        platform::{DhcpProgram, DnsProgram, FirewallProgram, Os, Setting, WireGuardProgram},
         port::{Port, ServicePort},
         protocol::Protocol,
         schema_helpers::OneOrManyUnique,
@@ -97,9 +98,23 @@ pub struct NodeZone {
     pub tags: OneOrManyUnique<Identifier>,
 }
 
+/// Which software runs a node, and which concerns splot manages there: per
+/// concern, the program, or `none` to leave it alone. One left out takes the
+/// OS's default; a Linux node has none.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Platform {
+    pub os: Os,
+    pub wireguard: Option<Setting<WireGuardProgram>>,
+    pub firewall: Option<Setting<FirewallProgram>>,
+    pub dhcp: Option<Setting<DhcpProgram>>,
+    pub dns: Option<Setting<DnsProgram>>,
+}
+
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Node {
+    pub platform: Platform,
     pub public_key: WgPublicKey,
     /// Where the other nodes dial it; none when nobody can (behind NAT, or a
     /// firewall that drops what comes in).
@@ -415,6 +430,8 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820

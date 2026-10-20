@@ -381,6 +381,8 @@ mod tests {
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820

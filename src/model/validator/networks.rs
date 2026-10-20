@@ -9,6 +9,7 @@ use crate::{
     model::{
         host::{Host, HostAddress, HostRef, Place, WgPeer},
         node::Node,
+        platform::Platform,
         validator::types::{ValidationError, ValidationReport},
     },
     types::{
@@ -80,6 +81,7 @@ fn host_address(
 /// clients, then the global clients. What fails a check is left out.
 fn build(
     config: &Config,
+    platforms: &BTreeMap<Identifier, Platform>,
     report: &mut ValidationReport,
 ) -> (BTreeMap<Identifier, Node>, Vec<Host>) {
     // The mesh space and every zone: none may overlap another.
@@ -93,6 +95,7 @@ fn build(
             config,
             node_name,
             node,
+            platforms.get(node_name),
             &mut networks,
             &mut hub_networks,
             report,
@@ -110,14 +113,15 @@ fn build(
 }
 
 /// The node, and its hosts: the node itself, then its devices zone by zone, then
-/// its hub clients. A node whose mesh IP fails its check is left out (its host
-/// stays, for what's on its zones). A zone that overlaps another network is left
-/// out, and its devices with it; so is a hub that fails its checks, but not its
-/// clients.
+/// its hub clients. A node whose mesh IP or platform fails its check is left
+/// out (its host stays, for what's on its zones). A zone that overlaps another
+/// network is left out, and its devices with it; so is a hub that fails its
+/// checks, but not its clients.
 fn check_node(
     config: &Config,
     node_name: &Identifier,
     node: &config::Node,
+    platform: Option<&Platform>,
     networks: &mut Vec<Ipv4Network>,
     hub_networks: &mut Vec<Ipv4Network>,
     report: &mut ValidationReport,
@@ -183,8 +187,9 @@ fn check_node(
 
     let (hub, hub_clients) = check_hub(config, node_name, node, hub_networks, report);
 
-    let built = mesh.map(|mesh| Node {
+    let built = mesh.zip(platform).map(|(mesh, platform)| Node {
         name: node_name.clone(),
+        platform: *platform,
         public_key: node.public_key.clone(),
         psk: node.psk,
         endpoint: node.endpoint.clone(),
@@ -525,9 +530,10 @@ fn check_client_zones(config: &Config, report: &mut ValidationReport) {
 /// that pass.
 pub(super) fn check_networks(
     config: &Config,
+    platforms: &BTreeMap<Identifier, Platform>,
     report: &mut ValidationReport,
 ) -> (BTreeMap<Identifier, Node>, Vec<Host>) {
-    let (nodes, hosts) = build(config, report);
+    let (nodes, hosts) = build(config, platforms, report);
     check_mesh_ips_outside_hubs(config, report);
 
     check_mesh_ip_uniqueness(config, report);
@@ -545,7 +551,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        model::validator::HUB_HOME,
+        model::validator::{HUB_HOME, platform::check_platforms},
         test_support::{config, error_at, has_error, report},
         types::ip::ReservedAddress,
     };
@@ -563,6 +569,8 @@ mod tests {
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -579,7 +587,8 @@ nodes:
 ",
         );
         let mut report = ValidationReport::default();
-        let (nodes, hosts) = check_networks(&config, &mut report);
+        let platforms = check_platforms(&config, &mut report);
+        let (nodes, hosts) = check_networks(&config, &platforms, &mut report);
 
         assert_eq!(report.errors.len(), 2);
         let [home, printer] = hosts.as_slice() else {
@@ -607,6 +616,8 @@ nodes:
 meshNetwork: 10.100.0.0/16
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -614,6 +625,8 @@ nodes:
     hub:
       network: 10.200.49.0/24
   Cabin:
+    platform:
+      os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
@@ -621,7 +634,8 @@ nodes:
 ",
         );
         let mut report = ValidationReport::default();
-        let (nodes, _) = check_networks(&config, &mut report);
+        let platforms = check_platforms(&config, &mut report);
+        let (nodes, _) = check_networks(&config, &platforms, &mut report);
 
         assert_eq!(report.errors.len(), 2);
         let names: Vec<String> = nodes.keys().map(ToString::to_string).collect();
@@ -637,6 +651,8 @@ nodes:
 meshNetwork: 192.168.1.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -660,6 +676,8 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -668,6 +686,8 @@ nodes:
       lan:
         address: 192.168.1.1/24
   Cabin:
+    platform:
+      os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
@@ -691,6 +711,8 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -711,6 +733,8 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -738,11 +762,15 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
   Cabin:
+    platform:
+      os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
@@ -763,6 +791,8 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -803,6 +833,8 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -904,11 +936,15 @@ clients:
 meshNetwork: 10.100.0.0/31
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.0
   Cabin:
+    platform:
+      os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
@@ -959,6 +995,8 @@ nodes:
 meshNetwork: 10.100.0.0/16
 nodes:
   Alpha:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -966,6 +1004,8 @@ nodes:
     hub:
       network: {alpha_hub}
   Zeta:
+    platform:
+      os: openwrt
     publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
     endpoint: 5.6.7.8
     listenPort: 51820
@@ -1020,6 +1060,8 @@ nodes:
     hub:
       network: 10.100.49.0/24
   Cabin:
+    platform:
+      os: openwrt
     publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
     endpoint: 5.6.7.8
     listenPort: 51820

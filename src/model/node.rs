@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use super::platform::Platform;
 use crate::types::{
     endpoint::EndpointHost,
     identifier::Identifier,
@@ -14,6 +15,7 @@ use crate::types::{
 #[derive(Debug)]
 pub struct Node {
     pub(super) name: Identifier,
+    pub(super) platform: Platform,
     pub(super) public_key: WgPublicKey,
     /// Where the other nodes dial it; none when nobody can.
     pub(super) endpoint: Option<EndpointHost>,
@@ -33,6 +35,10 @@ pub struct Node {
 impl Node {
     pub fn name(&self) -> &Identifier {
         &self.name
+    }
+
+    pub fn platform(&self) -> &Platform {
+        &self.platform
     }
 
     pub fn public_key(&self) -> &WgPublicKey {

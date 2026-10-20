@@ -163,6 +163,8 @@ mod tests {
 meshNetwork: 10.100.0.0/16
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -174,6 +176,8 @@ nodes:
           publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
           ip: 10.100.49.10
   Cabin:
+    platform:
+      os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
@@ -261,6 +265,8 @@ clients:
             "\nclients:",
             "
   Lake:
+    platform:
+      os: openwrt
     publicKey: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFA=
     listenPort: 51820
     meshIp: 10.100.0.3
@@ -379,11 +385,15 @@ clients:",
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
   old-cabin:
+    platform:
+      os: openwrt
     publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     endpoint: 5.6.7.8
     listenPort: 51820

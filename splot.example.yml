@@ -8,8 +8,8 @@
 # placeholders below (`Replace…PublicKeyAAAA…=`) are well-formed fakes: the file
 # passes `splot check` as-is, but none of them is anyone's real key.
 #
-# Each router runs `splot` and identifies itself by matching its local
-# WireGuard public key against one of the nodes' `publicKey` values.
+# Each node runs `splot` with `--node <its name>`; before writing anything,
+# splot checks that the node's WireGuard key is the one in its `publicKey`.
 #
 # Addresses below use the RFC 5737 / RFC 1918 documentation ranges.
 
@@ -40,6 +40,11 @@ nodes:
   # Internet-facing router. Hosts services and exposes some to the WAN
   # through the firewall zone named in `wanZone`.
   Home:
+    # The software the node runs. On OpenWrt, splot manages WireGuard
+    # (netifd), the firewall (fw4) and DHCP (dnsmasq) unless told otherwise;
+    # `firewall: none`, for one, leaves the firewall to you.
+    platform:
+      os: openwrt
     publicKey: ReplaceHomePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 203.0.113.10
     listenPort: 51820
@@ -103,6 +108,8 @@ nodes:
 
   # Remote site. No WAN exposure of its own — reachable over the mesh.
   Cabin:
+    platform:
+      os: openwrt
     publicKey: ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=
     # Its public IP changes, so peers dial it by name. The name must resolve
     # through public DNS, never through the mesh: the tunnel can't need itself
@@ -133,6 +140,8 @@ nodes:
   # host a hub (hub clients dial their hub node), and two such nodes have no
   # tunnel between them.
   Lake:
+    platform:
+      os: openwrt
     publicKey: ReplaceLakePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
     listenPort: 51820
     meshIp: 10.100.0.3

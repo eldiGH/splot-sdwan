@@ -194,6 +194,8 @@ mod tests {
 meshNetwork: 10.100.0.0/24
 nodes:
   Phone:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -218,6 +220,8 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -250,6 +254,8 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -284,6 +290,8 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -296,6 +304,8 @@ nodes:
             ip: 192.168.1.20
             macs: AA:BB:CC:DD:EE:FF
   Cabin:
+    platform:
+      os: openwrt
     publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     endpoint: 5.6.7.8
     listenPort: 51820
@@ -319,6 +329,8 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Alpha:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -331,6 +343,8 @@ nodes:
             ip: 192.168.1.20
             macs: AA:BB:CC:DD:EE:FF
   Zeta:
+    platform:
+      os: openwrt
     publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     endpoint: 5.6.7.8
     listenPort: 51820
@@ -352,6 +366,8 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -375,6 +391,8 @@ nodes:
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -383,6 +401,8 @@ nodes:
       lan:
         address: 192.168.1.1/24
   Cabin:
+    platform:
+      os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820

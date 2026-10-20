@@ -14,6 +14,7 @@ use crate::{
     plan::{self, NodePlan},
     types::{
         identifier::Identifier,
+        platform::{Concern, Os},
         wg_key::{WgPresharedKey, WgPublicKey},
     },
     wg,
@@ -26,6 +27,15 @@ const SUGGESTED_LISTEN_PORT: u16 = 51820;
 /// never replaced), and says what the config needs for `node`: nothing, its new
 /// key, or a whole entry to paste.
 pub fn init(network: &Network, node: &Identifier) -> anyhow::Result<()> {
+    if let Some(known) = network.node(node)
+        && known.platform().os() != Os::OpenWrt
+    {
+        bail!(
+            "{node} runs {}: `splot init` keeps the key with uci, on OpenWrt only for now",
+            known.platform().os()
+        );
+    }
+
     let (store, created) = match SplotConfig::load() {
         Ok(store) => (store, false),
         Err(SplotConfigError::NotInitialised) => {
@@ -97,8 +107,11 @@ fn new_node_entry(
         None => "<an address in meshNetwork>  # it has no free address left".to_owned(),
     };
 
+    // `init` runs on OpenWrt only, for now: it keeps the key with uci.
     format!(
         "  {node}:
+    platform:
+      os: openwrt
     publicKey: {public_key}
     meshIp: {mesh_ip}
     listenPort: {SUGGESTED_LISTEN_PORT}
@@ -113,6 +126,7 @@ fn new_node_entry(
 /// `node`.
 pub fn apply(network: &Network, node: &Identifier, dry_run: bool) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
+    check_applicable(network, node)?;
     let splot_config = SplotConfig::load()?;
 
     let backend = OpenWrtBackend::new(splot_config);
@@ -137,6 +151,7 @@ pub fn apply(network: &Network, node: &Identifier, dry_run: bool) -> anyhow::Res
 /// `peer`, read from stdin, once it's checked this peer is `node`.
 pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
+    check_applicable(network, node)?;
     let splot_config = SplotConfig::load()?;
     splot_config.check_node(&plan.node, &plan.wireguard.public_key)?;
 
@@ -179,6 +194,42 @@ pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Resu
     Ok(())
 }
 
+/// Refuses a node splot can only check for now, not apply to: one that doesn't
+/// run OpenWrt, or leaves its WireGuard, firewall or DHCP alone (`none`).
+fn check_applicable(network: &Network, node: &Identifier) -> anyhow::Result<()> {
+    let Some(node) = network.node(node) else {
+        return Ok(());
+    };
+    let platform = node.platform();
+
+    if platform.os() != Os::OpenWrt {
+        bail!(
+            "{} runs {}: splot can check it, but can't apply to it yet",
+            node.name(),
+            platform.os()
+        );
+    }
+
+    let left_alone: Vec<String> = [
+        (Concern::WireGuard, platform.wireguard().is_none()),
+        (Concern::Firewall, platform.firewall().is_none()),
+        (Concern::Dhcp, platform.dhcp().is_none()),
+    ]
+    .into_iter()
+    .filter(|(_, none)| *none)
+    .map(|(concern, _)| format!("{concern}: none"))
+    .collect();
+    if !left_alone.is_empty() {
+        bail!(
+            "{} leaves a concern alone ({}): splot can check it, but can't apply to it yet",
+            node.name(),
+            left_alone.join(", ")
+        );
+    }
+
+    Ok(())
+}
+
 /// The plan for `node`; an error naming the config's nodes when it has no node
 /// of that name.
 fn node_plan(network: &Network, node: &Identifier) -> anyhow::Result<NodePlan> {
@@ -205,6 +256,8 @@ mod tests {
 meshNetwork: 10.100.0.0/16
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -234,6 +287,8 @@ nodes:
 meshNetwork: 10.100.0.0/16
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -245,6 +300,8 @@ nodes:
           publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
           ip: 10.100.49.10
   Cabin:
+    platform:
+      os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
@@ -275,17 +332,84 @@ clients:
     }
 
     #[test]
+    fn splot_applies_only_to_openwrt_nodes_it_manages_whole() {
+        let network = checked(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    platform:
+      os: openwrt
+      dns: none
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+  Cabin:
+    platform:
+      os: openwrt
+      firewall: none
+      dhcp: none
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+  Lake:
+    platform:
+      os: openwrt
+      wireguard: none
+    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+    listenPort: 51820
+    meshIp: 10.100.0.3
+  Pond:
+    platform:
+      os: linux
+      wireguard: wg-quick
+      firewall: nftables
+      dhcp: dnsmasq
+      dns: dnsmasq
+    publicKey: EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEA=
+    endpoint: 9.10.11.12
+    listenPort: 51820
+    meshIp: 10.100.0.4
+",
+        );
+        let applicable = |node: &str| {
+            check_applicable(&network, &node.parse().unwrap()).map_err(|err| err.to_string())
+        };
+
+        // DNS does nothing yet, so leaving it alone changes nothing.
+        assert!(applicable("Home").is_ok());
+        assert_eq!(
+            applicable("Cabin").unwrap_err(),
+            "Cabin leaves a concern alone (firewall: none, dhcp: none): splot can check it, but can't apply to it yet"
+        );
+        assert_eq!(
+            applicable("Lake").unwrap_err(),
+            "Lake leaves a concern alone (wireguard: none): splot can check it, but can't apply to it yet"
+        );
+        assert_eq!(
+            applicable("Pond").unwrap_err(),
+            "Pond runs linux: splot can check it, but can't apply to it yet"
+        );
+    }
+
+    #[test]
     fn a_node_the_config_doesnt_have_is_named_with_the_ones_it_has() {
         let network = checked(
             "
 meshNetwork: 10.100.0.0/16
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
   Cabin:
+    platform:
+      os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820

@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::types::identifier::Identifier;
+use crate::types::{identifier::Identifier, platform::Concern};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConfigLocation {
@@ -23,6 +23,7 @@ impl Display for ConfigLocation {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NodeLoc {
     Root,
+    Platform(PlatformLoc),
     PublicKey,
     Endpoint,
     ListenPort,
@@ -38,6 +39,7 @@ impl Display for NodeLoc {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Root => write!(f, ""),
+            Self::Platform(platform_loc) => write!(f, ".platform{platform_loc}"),
             Self::PublicKey => write!(f, ".publicKey"),
             Self::Endpoint => write!(f, ".endpoint"),
             Self::ListenPort => write!(f, ".listenPort"),
@@ -49,6 +51,21 @@ impl Display for NodeLoc {
             Self::Service(service_id, service_loc) => {
                 write!(f, ".services.{service_id}{service_loc}")
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PlatformLoc {
+    Root,
+    Concern(Concern),
+}
+
+impl Display for PlatformLoc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Root => write!(f, ""),
+            Self::Concern(concern) => write!(f, ".{concern}"),
         }
     }
 }
@@ -240,6 +257,22 @@ mod tests {
         assert_eq!(
             ConfigLocation::Node(id("Home"), NodeLoc::WanZone).to_string(),
             "nodes.Home.wanZone"
+        );
+    }
+
+    #[test]
+    fn platform_paths() {
+        assert_eq!(
+            ConfigLocation::Node(id("Home"), NodeLoc::Platform(PlatformLoc::Root)).to_string(),
+            "nodes.Home.platform"
+        );
+        assert_eq!(
+            ConfigLocation::Node(
+                id("Home"),
+                NodeLoc::Platform(PlatformLoc::Concern(Concern::WireGuard))
+            )
+            .to_string(),
+            "nodes.Home.platform.wireguard"
         );
     }
 

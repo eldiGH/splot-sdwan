@@ -1,3 +1,5 @@
+use crate::types::platform::{DhcpProgram, DnsProgram, FirewallProgram, WireGuardProgram};
+
 pub const SPLOT_SECTION_PREFIX: &str = "spl_";
 pub const SPLOT_NAME_PREFIX: &str = "[SPLOT] ";
 pub const MESH_INTERFACE_NAME: &str = "mesh";
@@ -16,3 +18,11 @@ pub const DEFAULT_KEEPALIVE_INTERVAL: u16 = 25;
 /// Whether a host's WireGuard pairs use a preshared key (`psk`): every pair
 /// does unless one end turns it off.
 pub const DEFAULT_PSK: bool = true;
+
+// What an `os: openwrt` node runs for a concern its `platform` leaves out: what
+// OpenWrt ships. A Linux node has no such defaults: it names every concern's.
+
+pub const OPENWRT_WIREGUARD: WireGuardProgram = WireGuardProgram::Netifd;
+pub const OPENWRT_FIREWALL: FirewallProgram = FirewallProgram::Fw4;
+pub const OPENWRT_DHCP: DhcpProgram = DhcpProgram::Dnsmasq;
+pub const OPENWRT_DNS: DnsProgram = DnsProgram::Dnsmasq;

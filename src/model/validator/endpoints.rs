@@ -54,6 +54,8 @@ mod tests {
         format!(
             "
   {name}:
+    platform:
+      os: openwrt
     publicKey: {key}{rest}A=
     {endpoint}
     listenPort: 51820

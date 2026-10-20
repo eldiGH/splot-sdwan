@@ -30,6 +30,8 @@ Represents a single router in the mesh.
 
 ```yaml
 HomeRouter:
+  platform:
+    os: openwrt
   publicKey: base64...
   endpoint: 1.2.3.4
   listenPort: 51820
@@ -43,6 +45,7 @@ HomeRouter:
 
 | Field           | Type                       | Required | Description                                                                                                                                                                                                       |
 | --------------- | -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `platform`      | Platform                   | yes      | The OS the node runs, and which concerns splot manages there. See [Platform](#platform). |
 | `publicKey`     | string                     | yes      | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients). Before splot acts as this node (`--node`), it checks the peer's own key is this one.                                                                                                                            |
 | `endpoint`      | IPv4 address or DNS name   | no       | Where other mesh nodes dial this node: its public IP, or a DNS name that resolves to it (labels of letters, digits and hyphens). Leave it out when nobody can dial the node (behind NAT or CGNAT with no port forward, or behind a firewall that drops what comes in): it then dials the others, and keeps its NAT mapping open with keepalives so they can reach it too. At least one node needs an endpoint; a node without one can't host a [hub](#hub), and two nodes without one have no tunnel between them (a warning). A name must resolve through public DNS, never through the mesh: the tunnel can't need itself to come up. Peers resolve it when their mesh interface comes up, so a changed address reaches them the next time it does; on OpenWrt a name that doesn't resolve keeps that whole interface down, not just this peer. |
 | `listenPort`    | integer                    | yes      | WireGuard listen port for the mesh interface.                                                                                                                                                                     |
@@ -53,6 +56,41 @@ HomeRouter:
 | `services`      | map of name → Service      | no       | Services exposed by the router itself (e.g. SSH, admin UI).                                                                                                                                                       |
 | `wanZone`       | string                     | no\*     | Name of the OpenWRT firewall zone that is WAN-facing on this router. Splot does not manage this zone; it only references it when generating port forwards. \*Required if any service uses this node in `wan.via`. |
 | `tags`          | string or list of strings  | no       | Explicit tags assigned to the node. See [Tags](#tags).                                                                                                                                                            |
+
+---
+
+## Platform
+
+Which software a node runs, and which concerns splot manages there: per concern, the program splot manages it with, or `none` to leave it to you.
+
+```yaml
+platform:
+  os: openwrt      # every concern managed with what OpenWrt ships...
+  dhcp: none       # ...except DHCP, which you keep by hand
+```
+
+```yaml
+platform:
+  os: linux        # every concern written out
+  wireguard: wg-quick
+  firewall: nftables
+  dhcp: dnsmasq
+  dns: none
+```
+
+| Field       | Values                                             | Required                              | Description                                                                 |
+| ----------- | -------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------- |
+| `os`        | `openwrt`, `linux`                                 | yes                                   | The node's operating system.                                                |
+| `wireguard` | `netifd` (OpenWrt), `wg-quick` (Linux), `none`     | OpenWrt: no (`netifd`); Linux: yes    | The mesh interface and its peers.                                           |
+| `firewall`  | `fw4` (OpenWrt), `nftables` (Linux), `none`        | OpenWrt: no (`fw4`); Linux: yes       | The mesh zone, the rules `allowFrom` grants, the port forwards `wan` makes. |
+| `dhcp`      | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | Static leases for devices and global clients.                               |
+| `dns`       | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | Nothing yet: splot generates no DNS config so far.                          |
+
+- **Every node says what it runs.** There's no default OS, and splot doesn't detect it: `splot check` validates every node without reaching any, and the config keeps its meaning when a node is reinstalled.
+- **On OpenWrt** a concern left out is managed with what OpenWrt ships. **On Linux** there's no usual setup to assume: every concern is written out, `none` included, and one left out is an error.
+- **A program the OS doesn't have** (`wg-quick` on OpenWrt) is an error.
+- **`none`** leaves that concern to you: splot generates nothing for it and doesn't touch what's there.
+- **Not yet:** `splot apply` (and `psk set`) refuse a Linux node, and a node with `none` for WireGuard, the firewall or DHCP; `splot check` validates them. `dns: none` applies, since splot generates no DNS config anyway.
 
 ---
 

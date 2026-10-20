@@ -2,6 +2,7 @@ mod endpoints;
 mod entities;
 mod names;
 mod networks;
+mod platform;
 mod ports;
 mod references;
 mod services;
@@ -19,8 +20,9 @@ use crate::{
         service::Service,
         validator::{
             endpoints::check_endpoints, entities::check_entities, names::validate_names,
-            networks::check_networks, ports::check_ports, services::check_services,
-            tags::validate_tags, types::ValidationReport, wan::check_wan_zones,
+            networks::check_networks, platform::check_platforms, ports::check_ports,
+            services::check_services, tags::validate_tags, types::ValidationReport,
+            wan::check_wan_zones,
         },
     },
     types::{allow_from_ref::AllowFromRef, identifier::Identifier},
@@ -39,13 +41,15 @@ pub(super) struct Checked {
 pub(super) fn check(config: &Config) -> Checked {
     let mut report = ValidationReport::default();
 
+    let platforms = check_platforms(config, &mut report);
+
     let names = validate_names(config, &mut report);
     let tags = validate_tags(config, &mut report, &names);
     let refs: HashSet<AllowFromRef> = names.into_iter().chain(tags).collect();
 
     check_entities(config, &mut report);
 
-    let (nodes, hosts) = check_networks(config, &mut report);
+    let (nodes, hosts) = check_networks(config, &platforms, &mut report);
     check_endpoints(config, &mut report);
 
     check_ports(config, &mut report);
@@ -74,6 +78,8 @@ const HUB_HOME: &str = "
 meshNetwork: 10.100.0.0/16
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -108,6 +114,8 @@ mod tests {
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
@@ -146,11 +154,15 @@ clients:
 meshNetwork: 10.100.0.0/24
 nodes:
   Alpha:
+    platform:
+      os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.200.0.1
   Zeta:
+    platform:
+      os: openwrt
     publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     endpoint: 5.6.7.8
     listenPort: 51820

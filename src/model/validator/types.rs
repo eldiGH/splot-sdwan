@@ -7,12 +7,33 @@ use crate::{
         config_location::ConfigLocation,
         identifier::Identifier,
         ip::{Ipv4Network, ReservedAddress},
+        platform::{Concern, Os},
         port::PortOrRange,
     },
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
+    // platform
+    #[error(
+        "{at}: {concern} left out - a {os} node names the program behind every concern, or none to leave it alone"
+    )]
+    ConcernMissing {
+        concern: Concern,
+        os: Os,
+        at: ConfigLocation,
+    },
+    #[error(
+        "{at}: splot can't manage {concern} with {program} on {os} - there it's {choices}, or none"
+    )]
+    UnsupportedProgram {
+        concern: Concern,
+        program: String,
+        os: Os,
+        choices: String,
+        at: ConfigLocation,
+    },
+
     // names
     #[error("{at}: name '{name}' is already used as another global name (node, client, or tag)")]
     GlobalNameCollision {
@@ -215,6 +236,8 @@ pub enum ValidationError {
 impl ValidationError {
     pub fn path(&self) -> &ConfigLocation {
         match self {
+            Self::ConcernMissing { at, .. } => at,
+            Self::UnsupportedProgram { at, .. } => at,
             Self::GlobalNameCollision { at, .. } => at,
             Self::InvalidPrefix { at, .. } => at,
             Self::ReservedName { at, .. } => at,
@@ -352,6 +375,18 @@ mod tests {
         let other: Ipv4Network = "10.1.0.0/16".parse().unwrap();
 
         let errors = [
+            ValidationError::ConcernMissing {
+                concern: Concern::Firewall,
+                os: Os::Linux,
+                at: at(),
+            },
+            ValidationError::UnsupportedProgram {
+                concern: Concern::WireGuard,
+                program: "wg-quick".to_owned(),
+                os: Os::OpenWrt,
+                choices: "netifd".to_owned(),
+                at: at(),
+            },
             ValidationError::GlobalNameCollision {
                 name: id("Home"),
                 at: at(),
