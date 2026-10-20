@@ -19,7 +19,9 @@ This is a hobby project that started as a way to learn Rust and systems programm
 - **The owner decides:** architecture, config shape, design decisions (tasks tagged `decision`), and whether each change goes in. When a task runs into a real design question, stop and ask — don't pick an answer silently.
 - **Claude implements** one task at a time from the owner's task list: tests first (watch them fail), then the change; `cargo test`, `cargo fmt --check` and `cargo clippy -- -D warnings` clean.
 - **Review gate:** leave each task's changes **uncommitted**. The owner reviews them in Neovim (diffview / gitsigns) and says "commit" or asks for changes; only then commit, with the task ID in the subject.
-- **Every task ends with a review guide:** what changed and why; where the risk is and the 2–3 spots worth reading; what the tests prove and what was verified; which files are mechanical and safe to skim. Keep commits single-purpose — formatting-only or mechanical changes separate from logic.
+- **Every task ends with a review guide:** what changed and why; where the risk is and the 2–3 spots worth reading; what the tests prove and what was verified (the mutations tried and whether the tests caught them; the container check when it ran); which files are mechanical and safe to skim. Keep commits single-purpose — formatting-only or mechanical changes separate from logic.
+- **A bigger task goes in steps**, each its own reviewable change set and commit: say up front how it splits. "Continue" after a review means commit that step, then start the next. Push only when asked.
+- **Every decision gets written down** where the next session reads it: design in this file (and CONFIG.md for the config), the task's notes, or the plan. A conversation ends; nothing that matters may live only in it.
 
 ---
 
@@ -208,6 +210,17 @@ A WireGuard pair can also share a preshared key (PSK). It adds nothing against t
 
 ---
 
+## Code conventions
+
+- **Parse, don't validate:** config values are checked types from `src/types/`, parsed where they enter; the model (`Network`) exists only through `model::validate`, so whatever reads it can rely on the checks.
+- **Defaults the config takes** (a key left out) are constants in `src/consts.rs`; serde's default functions return them.
+- **Errors** derive `thiserror::Error`; their messages are pinned by snapshot tests (`every_parse_error_message`, `every_error_message`). No panics in production code except `expect`s that can't fail.
+- **Secrets** (`WgPrivateKey`, `WgPresharedKey`) are never shown: no `Display`, a redacted `Debug`, the text only through `expose()` where WireGuard needs it.
+- **Messages to the user say "peer"** for the machine splot runs on, not "router": it runs on Linux hosts too.
+- **Modules are private** unless something outside needs them, so dead code shows up as a warning.
+
+---
+
 ## Testing
 
 ### Scope
@@ -247,7 +260,7 @@ Tests are inline `#[cfg(test)] mod tests { use super::*; ... }` modules, always 
 
 ### Verify
 
-`cargo test`, `cargo fmt --check`, and `cargo clippy -- -D warnings` all stay clean. Sanity-check a new test by temporarily inverting the condition it guards — if it still passes, it isn't testing what it claims.
+`cargo test`, `cargo fmt --check`, and `cargo clippy -- -D warnings` all stay clean. Sanity-check a new test by temporarily inverting the condition it guards — if it still passes, it isn't testing what it claims. `scripts/mutate.py FILE OLD NEW` does that one mutation at a time: it swaps one exact snippet, runs the tests, says which failed, and restores the file. A mutation no test fails on means a missing test; one that doesn't compile proves nothing, so rewrite it until it does.
 
 When dependencies change, `cargo audit` (RustSec advisory database) must report no advisories. It exits 0 even for "unsound"/"unmaintained" warnings, so read its output rather than the exit code.
 
