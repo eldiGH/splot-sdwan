@@ -8,14 +8,16 @@ use crate::{
     backend::{
         self, Backend,
         key_store::{KeyStore, KeyStoreError},
-        linux::key_store::FileKeyStore,
+        linux::{LinuxBackend, key_store::FileKeyStore},
         openwrt::{OpenWrtBackend, key_store::UciKeyStore},
     },
     model::Network,
     plan::{self, NodePlan, wireguard::WireGuardPlan},
     types::{
         identifier::Identifier,
-        platform::{self, DhcpProgram, DnsProgram, FirewallProgram, Os, Program, WireGuardProgram},
+        platform::{
+            self, Concern, DhcpProgram, DnsProgram, FirewallProgram, Os, Program, WireGuardProgram,
+        },
         wg_key::{WgPresharedKey, WgPublicKey},
     },
     wg,
@@ -211,17 +213,27 @@ fn new_node_entry(
 /// `node`.
 pub fn apply(network: &Network, node: &Identifier, dry_run: bool) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
-    checked_os(network, node)?;
+    let os = checked_os(network, node)?;
     check_applicable(network, node)?;
-    // splot keeps a key only where it runs the node's WireGuard.
-    let key_store = plan
-        .wireguard
-        .is_some()
-        .then(UciKeyStore::load)
-        .transpose()?;
 
-    let backend = OpenWrtBackend::new(key_store);
-    let rendered = backend.render(&plan);
+    match os {
+        Os::OpenWrt => apply_with(OpenWrtBackend::new(key_store(&plan)?), &plan, dry_run),
+        Os::Linux => apply_with(LinuxBackend::new(key_store(&plan)?), &plan, dry_run),
+    }
+}
+
+/// The node's key store, where splot runs its WireGuard: it keeps a key nowhere
+/// else.
+fn key_store<S: KeyStore>(plan: &NodePlan) -> Result<Option<S>, KeyStoreError> {
+    plan.wireguard.is_some().then(S::load).transpose()
+}
+
+/// `apply` with `backend`, the one for the node's OS.
+fn apply_with<B: Backend>(backend: B, plan: &NodePlan, dry_run: bool) -> anyhow::Result<()>
+where
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
+    let rendered = backend.render(plan);
 
     if dry_run {
         backend.dry_run(&rendered)?;
@@ -303,23 +315,42 @@ fn psk_set_with<S: KeyStore>(
     Ok(())
 }
 
-/// Refuses a node splot can only check for now, not apply to: one that doesn't
-/// run OpenWrt.
+/// Refuses a node that asks splot for what it can check but not do yet: on
+/// Linux, its firewall and DHCP. Applying the rest alone would leave the node
+/// short of what the config says.
 fn check_applicable(network: &Network, node: &Identifier) -> anyhow::Result<()> {
     let Some(node) = network.node(node) else {
         return Ok(());
     };
     let platform = node.platform();
-
-    if platform.os() != Os::OpenWrt {
-        bail!(
-            "{} runs {}: splot can check it, but can't apply to it yet",
-            node.name(),
-            platform.os()
-        );
+    if platform.os() != Os::Linux {
+        return Ok(());
     }
 
-    Ok(())
+    let not_yet: Vec<String> = [
+        platform
+            .firewall()
+            .map(|program| format!("{} ({program})", Concern::Firewall)),
+        platform
+            .dhcp()
+            .map(|program| format!("{} ({program})", Concern::Dhcp)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    match not_yet.as_slice() {
+        [] => Ok(()),
+        [one] => bail!(
+            "splot can't manage {}'s {one} on Linux yet: set it to `none` to apply the rest",
+            node.name()
+        ),
+        several => bail!(
+            "splot can't manage {}'s {} on Linux yet: set them to `none` to apply the rest",
+            node.name(),
+            several.join(" or ")
+        ),
+    }
 }
 
 /// The plan for `node`; an error naming the config's nodes when it has no node
@@ -486,58 +517,75 @@ clients:
     }
 
     #[test]
-    fn splot_applies_to_openwrt_nodes_only() {
-        let network = checked(
+    fn on_linux_splot_applies_only_what_it_manages_there() {
+        // On OpenWrt everything. On Linux the WireGuard so far: a node that asks
+        // splot for its firewall or DHCP there is refused, not half applied.
+        // DNS generates nothing on any platform yet.
+        let linux = |name: &str, key: char, ip: u8, platform: &str| {
+            format!(
+                "
+  {name}:
+    platform:
+      os: linux
+{platform}
+    publicKey: {}A=
+    listenPort: 51820
+    meshIp: 10.100.0.{ip}
+",
+                key.to_string().repeat(42)
+            )
+        };
+        let network = checked(&format!(
             "
 meshNetwork: 10.100.0.0/16
 nodes:
   Home:
     platform:
       os: openwrt
-      dns: none
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
-  Cabin:
-    platform:
-      os: openwrt
-      firewall: none
-      dhcp: none
-    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
-    endpoint: 5.6.7.8
-    listenPort: 51820
-    meshIp: 10.100.0.2
-  Lake:
-    platform:
-      os: openwrt
-      wireguard: none
-    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
-    listenPort: 51820
-    meshIp: 10.100.0.3
-  Pond:
-    platform:
-      os: linux
-      wireguard: wg-quick
-      firewall: nftables
-      dhcp: dnsmasq
-      dns: dnsmasq
-    publicKey: EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEA=
-    endpoint: 9.10.11.12
-    listenPort: 51820
-    meshIp: 10.100.0.4
-",
-        );
+{}{}{}{}",
+            linux(
+                "Barn",
+                'B',
+                2,
+                "      wireguard: wg-quick\n      firewall: none\n      dhcp: none\n      dns: dnsmasq"
+            ),
+            linux(
+                "Lake",
+                'C',
+                3,
+                "      wireguard: none\n      firewall: none\n      dhcp: none\n      dns: none"
+            ),
+            linux(
+                "Mill",
+                'D',
+                4,
+                "      wireguard: wg-quick\n      firewall: nftables\n      dhcp: none\n      dns: none"
+            ),
+            linux(
+                "Pond",
+                'E',
+                5,
+                "      wireguard: wg-quick\n      firewall: nftables\n      dhcp: dnsmasq\n      dns: none"
+            ),
+        ));
         let applicable = |node: &str| {
             check_applicable(&network, &node.parse().unwrap()).map_err(|err| err.to_string())
         };
 
         assert!(applicable("Home").is_ok());
-        assert!(applicable("Cabin").is_ok());
+        assert!(applicable("Barn").is_ok());
         assert!(applicable("Lake").is_ok());
         assert_eq!(
+            applicable("Mill").unwrap_err(),
+            "splot can't manage Mill's firewall (nftables) on Linux yet: set it to `none` to apply the rest"
+        );
+        assert_eq!(
             applicable("Pond").unwrap_err(),
-            "Pond runs linux: splot can check it, but can't apply to it yet"
+            "splot can't manage Pond's firewall (nftables) or dhcp (dnsmasq) on Linux yet: set them to `none` to apply the rest"
         );
     }
 

@@ -160,6 +160,24 @@ impl KeyStore for FileKeyStore {
 }
 
 #[cfg(test)]
+impl FileKeyStore {
+    /// Test-only constructor bypassing the file: a real `FileKeyStore` comes
+    /// only from `load()`, which checks the keys.
+    pub(crate) fn for_tests(private_key: &str) -> Self {
+        Self {
+            private_key: private_key.parse().expect("a test's private key is a key"),
+            psks: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn with_psk(mut self, peer: &HostRef, key: &str) -> Self {
+        let key = key.parse().expect("a test's preshared key is a key");
+        self.psks.insert(peer.to_string(), key);
+        self
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::{TempDir, mode};

@@ -107,7 +107,7 @@ Full reference: [CONFIG.md](CONFIG.md).
 
 ## Running
 
-Requires Rust (edition 2024), and on the target router: OpenWRT with `uci` and WireGuard tools (`wg`).
+Requires Rust (edition 2024), and on the node: OpenWrt with `uci` and WireGuard tools (`wg`), or Linux with systemd, wireguard-tools (`wg`, `wg-quick`) and iproute2. On Linux splot manages only the WireGuard so far ([CONFIG.md → Linux](CONFIG.md#linux)).
 
 ```sh
 cargo build --release

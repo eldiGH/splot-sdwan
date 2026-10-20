@@ -113,8 +113,8 @@ nodes:
     publicKey: ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=
     # Its public IP changes, so peers dial it by name. The name must resolve
     # through public DNS, never through the mesh: the tunnel can't need itself
-    # to come up. On OpenWrt, a peer name that doesn't resolve keeps the whole
-    # mesh interface down, not just that peer.
+    # to come up. A peer name that doesn't resolve keeps the whole mesh
+    # interface down, not just that peer (on OpenWrt and with wg-quick alike).
     endpoint: cabin.example.net
     listenPort: 51820
     meshIp: 10.100.0.2
@@ -155,8 +155,9 @@ nodes:
 
   # A Linux host that runs the mesh at its site, a Raspberry Pi say. Linux
   # has no usual setup to assume, so its platform names the program behind
-  # every concern (`none` where splot should leave one alone). splot checks
-  # it today; applying to a Linux node comes later.
+  # every concern (`none` where splot should leave one alone). On Linux splot
+  # applies only the WireGuard so far: `splot apply` refuses Barn until its
+  # firewall and DHCP are `none` too.
   Barn:
     platform:
       os: linux

@@ -65,10 +65,22 @@ Each node's `platform` says which OS it runs (`os: openwrt` or `linux`, required
 - **The key store follows the OS:** uci on OpenWrt, a file on Linux. For a node the config doesn't have yet, `init` takes the OS from `--os`, else from what the peer is; any two of the config, `--os` and the peer that disagree is an error.
 - **Defaults come from the OS alone:** on OpenWrt a concern left out is managed with what OpenWrt ships; on Linux there's no usual setup to assume, so every concern is written out, `none` included. A program the OS doesn't have is an error. Platform defaults for every node at the top level are planned.
 - **`dns`** is accepted, and does nothing until splot generates DNS config.
-- **`none`** means splot leaves that concern alone: nothing generated, nothing touched there, its own old sections included. The plan has no section for it, and a backend renders no file for it. Applying to a Linux node isn't supported yet; `splot check` validates it.
+- **`none`** means splot leaves that concern alone: nothing generated, nothing touched there, its own old sections included. The plan has no section for it, and a backend renders no file for it.
 - **`wireguard: none`** means the node is in the mesh with WireGuard set up by hand. splot keeps no key there; the key check uses the node's own WireGuard instead (one of its interfaces has the config's `publicKey`). Such a node has no hub (an error): hub clients are peers on splot's mesh interface; a WireGuard server of the operator's own, with its own subnet, is a zone. How to confirm a node that has no WireGuard key at all is an open question.
 - **Errors and warnings:** an error when the config doesn't make sense, or a concern splot manages lacks something it needs from the config (a `wan.via` node whose firewall splot manages needs a `wanZone`; one that leaves it alone doesn't); a warning when a node leaves part of a valid config undone because a concern is `none`, one per node and concern, saying what's left undone and what's the operator's to do. `allowFrom` that a firewall left alone won't enforce is a warning, not an error: `firewall: none` is written next to the services, and it's how a site moves to splot's firewall a step at a time.
 - **No partially working state:** what splot renders for a concern it manages is complete for what it covers, and never points at something a `none` concern would have created. With `wireguard: none` and the firewall managed, for one, there's no mesh zone and no port forward to a host reached over the mesh (the forward would name the mesh zone).
+- **What a platform can't do yet is refused, not half applied:** on Linux splot manages only WireGuard so far, so `apply` refuses a Linux node whose `firewall` or `dhcp` names a program until splot manages it there (`splot check` validates the node either way).
+
+### Linux: WireGuard with wg-quick
+
+splot owns `/etc/wireguard/spl_mesh.conf` and runs it through systemd's `wg-quick@spl_mesh`; a Linux node needs systemd.
+
+- **The keys are inside the file** (0600, rewritten whole: a new file renamed over it), never set by `PostUp`: `wg syncconf` with `wg-quick strip` would zero what a `PostUp` set.
+- **Started and enabled** (`systemctl enable --now`) when it isn't running, so the mesh comes back after a reboot; enabled when it runs but isn't.
+- **splot never sets an address or a route itself:** wg-quick sets them, and only when it starts. Apply compares what's live on `spl_mesh` (its address, its routes besides the kernel's own) with what wg-quick would set from the file: each peer's allowed IP that the address's network doesn't cover, i.e. the networks behind the other nodes. Different (a new node or zone, a changed `meshIp`): `systemctl restart`, saying why, and the tunnels drop for a moment. The same: `systemctl reload`, the unit's `wg syncconf`, and they stay up (a new client, a PSK, an endpoint).
+  - So what's live is always wg-quick's own: a bug in splot's idea of the routes shows as a restart at every apply, never as a route that's missing until the next reboot.
+  - Rejected: adding and removing routes by hand (no drop, but apply-time and boot-time routes could differ); restarting at every change (adding a phone would drop every tunnel).
+- **An interface up some other way** (`wg-quick up` by hand) is refused: the unit couldn't start over it.
 
 ### Tags
 
@@ -188,7 +200,7 @@ A node's `endpoint` (an IPv4 address or a DNS name) is where the other peers dia
 - **A node nobody can dial leaves it out:** behind NAT or CGNAT with no port forward, or a public address behind a firewall that drops what comes in. To WireGuard those are the same. Such a node dials the others; they learn its address from its handshake.
 - **No security in it:** WireGuard accepts an authenticated packet from any address and moves the peer's endpoint there (roaming). The keys authenticate.
 - **What follows:** at least one node needs an endpoint (an error otherwise); a node without one can't host a hub, since hub clients dial their hub node (an error); two nodes without one have no tunnel between them (a warning; relaying through a reachable node is future work).
-- **Names** must resolve through public DNS, never through the mesh. On OpenWrt a peer name that doesn't resolve keeps the whole mesh interface down, every peer with it.
+- **Names** must resolve through public DNS, never through the mesh. A peer name that doesn't resolve keeps the whole mesh interface down, every peer with it, on OpenWrt and with wg-quick alike.
 
 ### Keepalive
 
@@ -228,7 +240,7 @@ A WireGuard pair can also share a preshared key (PSK). It adds nothing against t
 
 ### Scope
 
-Tests cover the **deterministic core**: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (`src/model/`: hosts, reference resolution, WAN targets), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), and UCI command/builder rendering. The process/IO layer (`uci` executor, `wg`, `env`, the OpenWrt `apply`, `main` and `commands`) is **out of scope** for now — it shells out and touches the filesystem; revisit as integration tests later. The key store (`key_store`) is tested in its pure parts (reading the store's sections, the commands that write it) and in the store file's mode, in a temporary directory. The process helper (`process`) is tested with standard programs (`cat`, `sh`), not the ones splot drives.
+Tests cover the **deterministic core**: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (`src/model/`: hosts, reference resolution, WAN targets), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), UCI command/builder rendering, the wg-quick renderer, and the Linux apply's decisions (what's live, read from `ip -j`, against what wg-quick would set). The process/IO layer (`uci` executor, `wg`, `ip`, `systemctl`, `env`, the backends' `apply`, `main` and `commands`) is **out of scope** for now — it shells out and touches the filesystem; the container checks cover it. The key stores (`key_store`) are tested in their pure parts (reading the store, the commands that write it) and in the store file's mode, in a temporary directory. The process helper (`process`) is tested with standard programs (`cat`, `sh`), not the ones splot drives.
 
 ### Placement
 
@@ -247,6 +259,8 @@ Tests are inline `#[cfg(test)] mod tests { use super::*; ... }` modules, always 
 - **Accept an intended change** with `cargo insta review` (needs `cargo install cargo-insta`), or `INSTA_UPDATE=always cargo test` and then review the `.snap` diff in git. Never accept a snapshot change you haven't read.
 - **A change that touches generator output** comes with its snapshot diff in the same commit, so the commit shows what it does to the generated router config.
 - Keep the example config representative: a new feature that generates config should appear in `splot.example.yml`, which puts it under the snapshot too.
+
+`example_config_snapshot` in `src/backend/linux/mod.rs` does the same for the Linux backend: the wg-quick file of every Linux node of the example, secrets as placeholders. Its snapshots live in `src/backend/linux/snapshots/`.
 
 `example_plan_snapshot` (in `src/plan/mod.rs`) pins the node plan, the platform-neutral layer between the model and the renderers, as its plain-text view, for every node of `splot.example.yml`. Its snapshots live in `src/plan/snapshots/`.
 
