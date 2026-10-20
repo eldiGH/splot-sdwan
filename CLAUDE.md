@@ -2,13 +2,15 @@
 
 ## Project Purpose
 
-A Rust helper tool for managing WireGuard mesh networks on OpenWRT routers. It synchronizes configuration between multiple routers and configures network, DHCP, and firewall settings using the `uci` utility.
+A Rust tool that runs a WireGuard mesh between sites, and the access between the networks behind them. One `splot.yml` describes the whole network; splot works out what each node has to do and configures it: the mesh, the firewall, DHCP reservations and, later, DNS. Each node says what it runs: OpenWrt (configured through `uci`) or Linux (wg-quick, nftables, dnsmasq; in progress). OPNsense is planned.
 
 ## Goals
 
-- Automate WireGuard mesh network setup across multiple OpenWRT routers
-- Sync configuration state between routers
-- Drive network, DHCP, and firewall config via `uci`
+- One config for the whole mesh, validated before anything is touched
+- A WireGuard mesh between sites, roaming clients (phones, laptops) and devices behind a site (hubs)
+- Zero-trust access: each service says who may reach it, and nothing else gets through
+- Per node, each concern managed with the software that node runs, or left to the operator
+- Safe apply: only on the node it's meant for, staged, and (with the planned controller) confirmed on every node or rolled back
 
 ## Project Context
 
