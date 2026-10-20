@@ -277,7 +277,10 @@ mod tests {
         let network = checked(yaml);
         let plan = plan::plan(&network, &node.parse().unwrap()).unwrap();
 
-        OpenWrtBackend::new(SplotConfig::for_tests("FAKE_MESH_KEY")).render(&plan)
+        OpenWrtBackend::new(SplotConfig::for_tests(
+            "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRA=",
+        ))
+        .render(&plan)
     }
 
     fn set(path: &str, value: &str) -> UciBatchCommand {

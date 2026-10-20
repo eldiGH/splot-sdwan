@@ -15,7 +15,8 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 - Typed IP / network handling via `src/types/ip.rs` (`Ipv4Addr`, `Ipv4Interface`, `Ipv4Network` with subnet membership / overlap predicates).
 - Typed MAC handling via `src/types/mac.rs`.
 - Typed node endpoints via `src/types/endpoint.rs` (`EndpointHost`): an IPv4 address or a DNS name (labels of letters, digits and hyphens, at most 63 characters each and 253 in all). A name whose last label is all digits is rejected: no top-level domain is, so it's a mistyped IP.
-- Typed WireGuard public keys via `src/types/wg_key.rs` (`WgPublicKey`): 44 characters of canonical base64 ending in `=` — the same check stored private keys go through, and the same rule `wg` itself enforces.
+- Typed WireGuard public keys via `src/types/wg_key.rs` (`WgPublicKey`): 44 characters of canonical base64 ending in `=` — the same rule `wg` itself enforces.
+- Typed secret keys in the same file: `WgPrivateKey` and `WgPresharedKey`, two kinds of one `SecretKey<K>` (so each behaviour is written once, and one kind can't be passed for the other). Checked on parse like a public key; never shown: no `Display`, `Debug` prints `<redacted>`, and only `expose()` gives the text, where a key is written for WireGuard (the fill-in, the key store, `wg pubkey`'s input). They're parsed where they enter: the key store when it's read, `wg genkey`'s output, and the stdin of `splot psk set`.
 
 ### Splot config (persistent local state)
 
@@ -119,10 +120,9 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 
 ### WireGuard key handling (`src/wg.rs`)
 
-- Generates new private keys via `wg genkey`.
-- Derives public keys from private keys via `wg pubkey`.
-- Failures are typed errors (`wg::Error`): a missing `wg` binary, a non-zero exit (with wg's stderr), or non-UTF-8 output — never a panic or an empty key.
-- Validates stored private keys structurally (`validate_private_key` — length, base64 charset, padding).
+- Generates new private keys via `wg genkey` (a `WgPrivateKey`).
+- Derives public keys from private keys via `wg pubkey` (a `WgPublicKey`).
+- Failures are typed errors (`wg::Error`): a missing `wg` binary, a non-zero exit (with wg's stderr), non-UTF-8 output, or output that isn't a key — never a panic or an empty key.
 - Used during `splot_config` initialization and to identify the current node by matching the local pubkey against `node.publicKey` in the config.
 
 ### UCI section naming (`src/backend/openwrt/section.rs` `UciSection`, `naming.rs`)

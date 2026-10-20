@@ -42,9 +42,9 @@ impl Rendered {
 
         for slot in &self.secrets {
             let value = match &slot.secret {
-                Secret::PrivateKey => store.mesh_key(),
+                Secret::PrivateKey => store.mesh_key().expose(),
                 Secret::Psk(peer) => match store.psk(peer) {
-                    Some(key) => key,
+                    Some(key) => key.expose(),
                     None => {
                         missing.push(peer.to_string());
                         continue;
@@ -123,6 +123,11 @@ mod tests {
     use super::*;
     use crate::{model::host::HostRef, plan, test_support};
 
+    // Fake keys, but well-formed: the key store takes nothing else.
+    const PRIVATE_KEY: &str = "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRA=";
+    const CABIN_PSK: &str = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
+    const PHONE_PSK: &str = "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPA=";
+
     // ── Snapshot of everything generated for the example config ────────────
     //
     // Pins the complete uci output for every node of `splot.example.yml`, so any
@@ -176,7 +181,7 @@ mod tests {
         };
 
         let filled = rendered
-            .with_secrets(&SplotConfig::for_tests("REAL_KEY"))
+            .with_secrets(&SplotConfig::for_tests(PRIVATE_KEY))
             .unwrap();
 
         let commands: Vec<String> = filled
@@ -194,7 +199,7 @@ mod tests {
                 "set network.spl_other.private_key='<private key>'",
                 "set network.spl_mesh='interface'",
                 "set network.spl_mesh.proto='wireguard'",
-                "set network.spl_mesh.private_key='REAL_KEY'",
+                &format!("set network.spl_mesh.private_key='{PRIVATE_KEY}'"),
             ]
         );
         assert_eq!(filled.files(), ["dhcp", "network"]);
@@ -238,9 +243,9 @@ mod tests {
 
     #[test]
     fn apply_fills_in_each_pairs_psk_from_the_store() {
-        let store = SplotConfig::for_tests("REAL_KEY")
-            .with_psk(&cabin(), "CABIN_PSK")
-            .with_psk(&phone(), "PHONE_PSK");
+        let store = SplotConfig::for_tests(PRIVATE_KEY)
+            .with_psk(&cabin(), CABIN_PSK)
+            .with_psk(&phone(), PHONE_PSK);
         let filled = psk_peers(&[cabin(), phone()]).with_secrets(&store).unwrap();
 
         let commands: Vec<String> = filled.files[0]
@@ -253,9 +258,9 @@ mod tests {
             commands,
             [
                 "set network.spl_wireguard_spl_mesh_Cabin='wireguard_spl_mesh'",
-                "set network.spl_wireguard_spl_mesh_Cabin.preshared_key='CABIN_PSK'",
+                &format!("set network.spl_wireguard_spl_mesh_Cabin.preshared_key='{CABIN_PSK}'"),
                 "set network.spl_wireguard_spl_mesh_Phone='wireguard_spl_mesh'",
-                "set network.spl_wireguard_spl_mesh_Phone.preshared_key='PHONE_PSK'",
+                &format!("set network.spl_wireguard_spl_mesh_Phone.preshared_key='{PHONE_PSK}'"),
             ]
         );
     }
@@ -270,11 +275,11 @@ mod tests {
         };
 
         assert_eq!(
-            missing(&SplotConfig::for_tests("REAL_KEY")),
+            missing(&SplotConfig::for_tests(PRIVATE_KEY)),
             ["Cabin", "Phone"]
         );
         assert_eq!(
-            missing(&SplotConfig::for_tests("REAL_KEY").with_psk(&cabin(), "CABIN_PSK")),
+            missing(&SplotConfig::for_tests(PRIVATE_KEY).with_psk(&cabin(), CABIN_PSK)),
             ["Phone"]
         );
     }
@@ -285,7 +290,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/splot.example.yml"
         )));
-        let backend = OpenWrtBackend::new(SplotConfig::for_tests("FAKE_MESH_KEY"));
+        let backend = OpenWrtBackend::new(SplotConfig::for_tests(PRIVATE_KEY));
 
         for node in network.nodes() {
             let rendered = backend.render(&plan::plan(&network, node.name()).unwrap());
@@ -362,7 +367,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/splot.example.yml"
         )));
-        let backend = OpenWrtBackend::new(SplotConfig::for_tests("FAKE_MESH_KEY"));
+        let backend = OpenWrtBackend::new(SplotConfig::for_tests(PRIVATE_KEY));
 
         for node in network.nodes() {
             let plan = plan::plan(&network, node.name()).unwrap();
@@ -380,7 +385,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/splot.example.yml"
         )));
-        let backend = OpenWrtBackend::new(SplotConfig::for_tests("FAKE_MESH_KEY"));
+        let backend = OpenWrtBackend::new(SplotConfig::for_tests(PRIVATE_KEY));
 
         for node in network.nodes() {
             let plan = plan::plan(&network, node.name()).unwrap();

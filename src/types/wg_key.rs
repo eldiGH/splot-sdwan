@@ -1,7 +1,7 @@
 //! WireGuard key format: 32 bytes, base64-encoded with padding. That is always
 //! 44 characters: 43 base64 characters followed by a single `=`.
 
-use std::{fmt, str::FromStr};
+use std::{fmt, marker::PhantomData, str::FromStr};
 
 use serde::Deserialize;
 
@@ -97,6 +97,57 @@ impl fmt::Display for WgPublicKey {
     }
 }
 
+/// A secret WireGuard key of kind `K`: the node's private key, or the preshared
+/// key of one of its pairs. The same format as a public key, checked on parse.
+/// Never shown: `Debug` prints `<redacted>` and there's no `Display`; only
+/// `expose` gives the key, for the places that write it where WireGuard reads it.
+pub struct SecretKey<K> {
+    key: String,
+    kind: PhantomData<K>,
+}
+
+/// The node's own key: it never leaves the node.
+pub enum Private {}
+/// A key the node shares with one peer, mixed into their handshake.
+pub enum Preshared {}
+
+pub type WgPrivateKey = SecretKey<Private>;
+pub type WgPresharedKey = SecretKey<Preshared>;
+
+impl<K> SecretKey<K> {
+    pub fn expose(&self) -> &str {
+        &self.key
+    }
+}
+
+impl<K> FromStr for SecretKey<K> {
+    type Err = KeyFormatError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        check_key_format(s)?;
+
+        Ok(Self {
+            key: s.to_owned(),
+            kind: PhantomData,
+        })
+    }
+}
+
+impl<K> Clone for SecretKey<K> {
+    fn clone(&self) -> Self {
+        Self {
+            key: self.key.clone(),
+            kind: PhantomData,
+        }
+    }
+}
+
+impl<K> fmt::Debug for SecretKey<K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<redacted>")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +221,38 @@ mod tests {
         let ok: Wrapper = serde_norway::from_str(&format!("key: {VALID}")).unwrap();
         assert_eq!(ok.key.as_str(), VALID);
         assert!(serde_norway::from_str::<Wrapper>("key: AAAA").is_err());
+    }
+
+    const KEY: &str = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWY=";
+
+    #[test]
+    fn a_secret_key_is_checked_like_any_key() {
+        assert_eq!(KEY.parse::<WgPrivateKey>().unwrap().expose(), KEY);
+        assert_eq!(KEY.parse::<WgPresharedKey>().unwrap().expose(), KEY);
+
+        for bad in ["", "not a key", &KEY[..43], &format!("{}B=", &KEY[..42])] {
+            assert_eq!(
+                bad.parse::<WgPresharedKey>().err(),
+                check_key_format(bad).err(),
+                "{bad:?}"
+            );
+            assert!(bad.parse::<WgPrivateKey>().is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_secret_key_never_shows_itself() {
+        let key: WgPrivateKey = KEY.parse().unwrap();
+        let debug = format!("{key:?} {:?}", KEY.parse::<WgPresharedKey>().unwrap());
+
+        assert!(!debug.contains(KEY), "{debug}");
+        assert_eq!(debug, "<redacted> <redacted>");
+    }
+
+    #[test]
+    fn a_private_key_and_a_preshared_key_are_different_types() {
+        // So one can't be passed where the other belongs.
+        use std::any::TypeId;
+        assert_ne!(TypeId::of::<WgPrivateKey>(), TypeId::of::<WgPresharedKey>());
     }
 }

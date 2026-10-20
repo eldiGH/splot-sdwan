@@ -9,6 +9,7 @@ use crate::{
     },
     model::Network,
     plan::{self, NodePlan},
+    types::wg_key::WgPresharedKey,
     wg,
 };
 
@@ -67,7 +68,11 @@ pub fn psk_set(network: &Network, peer: &str) -> anyhow::Result<()> {
     std::io::stdin()
         .read_line(&mut key)
         .context("failed to read the preshared key from stdin")?;
-    SplotConfig::store_psk(&peer.host, key.trim())?;
+    let key: WgPresharedKey = key
+        .trim()
+        .parse()
+        .context("that's not a preshared key (as `wg genpsk` prints one)")?;
+    SplotConfig::store_psk(&peer.host, &key)?;
 
     println!(
         "Stored the preshared key of {}'s pair with {}.",
@@ -84,7 +89,7 @@ fn own_plan(network: &Network, splot_config: &SplotConfig) -> anyhow::Result<Nod
         .context("failed to derive this router's public key")?;
 
     network
-        .find_node_by_public_key(&own_public_key)
+        .find_node_by_public_key(own_public_key.as_str())
         .and_then(|node| plan::plan(network, node.name()))
         .context(
             "this router's public key was not found in the splot config - add this node and try again",

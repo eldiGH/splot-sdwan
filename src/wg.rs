@@ -2,7 +2,7 @@ use std::process::Command;
 
 use crate::{
     process,
-    types::wg_key::{KeyFormatError, check_key_format},
+    types::wg_key::{KeyFormatError, WgPrivateKey, WgPublicKey},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -15,6 +15,8 @@ pub enum Error {
     NonUtf8,
     #[error("wg failed (exit code {code:?}): {stderr}")]
     Failed { code: Option<i32>, stderr: String },
+    #[error("wg printed something that isn't a key")]
+    NotAKey(#[source] KeyFormatError),
 }
 
 impl From<process::Error> for Error {
@@ -47,40 +49,12 @@ fn run(args: &[&str], stdin: Option<&str>) -> Result<String, Error> {
         .map_err(|_| Error::NonUtf8)
 }
 
-pub fn generate_private_key() -> Result<String, Error> {
-    run(&["genkey"], None)
+pub fn generate_private_key() -> Result<WgPrivateKey, Error> {
+    run(&["genkey"], None)?.parse().map_err(Error::NotAKey)
 }
 
-pub fn get_pubkey(private_key: &str) -> Result<String, Error> {
-    run(&["pubkey"], Some(private_key))
-}
-
-/// Checks a stored private key's format. Private and public keys share one
-/// format, so this is the same check `WgPublicKey` uses.
-pub fn validate_private_key(private_key: &str) -> Result<(), KeyFormatError> {
-    check_key_format(private_key)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // The format rules themselves are tested in `types::wg_key`; these only pin
-    // that private keys go through the same check.
-
-    #[test]
-    fn valid_key_passes() {
-        assert!(validate_private_key("abcDEF0123456789+/abcDEF0123456789+/abcDEF0=").is_ok());
-    }
-
-    #[test]
-    fn key_wg_would_reject_is_rejected() {
-        // Passed the old shape-only check, but `wg pubkey` refuses it: the
-        // character before '=' isn't canonical for 32 bytes.
-        let key = format!("{}B=", "A".repeat(42));
-        assert_eq!(
-            validate_private_key(&key),
-            Err(KeyFormatError::NonCanonical)
-        );
-    }
+pub fn get_pubkey(private_key: &WgPrivateKey) -> Result<WgPublicKey, Error> {
+    run(&["pubkey"], Some(private_key.expose()))?
+        .parse()
+        .map_err(Error::NotAKey)
 }

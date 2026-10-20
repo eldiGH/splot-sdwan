@@ -14,8 +14,8 @@ use super::{
 use crate::{
     env,
     model::host::HostRef,
-    types::wg_key::{KeyFormatError, check_key_format},
-    wg::{self, validate_private_key},
+    types::wg_key::{KeyFormatError, WgPresharedKey, WgPrivateKey},
+    wg,
 };
 
 /// The uci file that holds the node's secrets.
@@ -32,7 +32,7 @@ fn psk_section(peer: &HostRef) -> UciSectionName {
 
 /// The preshared keys among the store's sections, by section name. A section
 /// without a key holds none.
-fn psks(sections: &[Section]) -> Result<BTreeMap<String, String>, SplotConfigError> {
+fn psks(sections: &[Section]) -> Result<BTreeMap<String, WgPresharedKey>, SplotConfigError> {
     let mut psks = BTreeMap::new();
 
     for section in sections
@@ -47,11 +47,11 @@ fn psks(sections: &[Section]) -> Result<BTreeMap<String, String>, SplotConfigErr
                 _ => None,
             });
         if let Some(key) = key {
-            check_key_format(key).map_err(|cause| SplotConfigError::InvalidPsk {
+            let key = key.parse().map_err(|cause| SplotConfigError::InvalidPsk {
                 section: section.name.clone(),
                 cause,
             })?;
-            psks.insert(section.name.clone(), key.clone());
+            psks.insert(section.name.clone(), key);
         }
     }
 
@@ -60,12 +60,12 @@ fn psks(sections: &[Section]) -> Result<BTreeMap<String, String>, SplotConfigErr
 
 /// The commands that store `key` as the preshared key of the node's pair with
 /// `peer`, in place of any it had.
-fn store_psk_commands(peer: &HostRef, key: &str) -> Vec<UciBatchCommand> {
+fn store_psk_commands(peer: &HostRef, key: &WgPresharedKey) -> Vec<UciBatchCommand> {
     let section = psk_section(peer);
 
     vec![
         UciBatchCommand::set(format!("{FILE}.{section}"), PSK_TYPE),
-        UciBatchCommand::set(format!("{FILE}.{section}.{PSK_KEY}"), key),
+        UciBatchCommand::set(format!("{FILE}.{section}.{PSK_KEY}"), key.expose()),
         UciBatchCommand::commit(FILE),
     ]
 }
@@ -92,13 +92,13 @@ fn make_private(path: &Path) -> Result<(), SplotConfigError> {
     Ok(())
 }
 
-fn init_mesh_key() -> Result<String, SplotConfigError> {
+fn init_mesh_key() -> Result<WgPrivateKey, SplotConfigError> {
     make_private(&get_config_dir().join(FILE))?;
 
     let private_key = wg::generate_private_key()?;
     uci::batch(&[
         UciBatchCommand::set("splot.config", "splot"),
-        UciBatchCommand::set("splot.config.private_key", &private_key),
+        UciBatchCommand::set("splot.config.private_key", private_key.expose()),
         UciBatchCommand::commit("splot"),
     ])?;
 
@@ -117,8 +117,6 @@ pub enum SplotConfigError {
         #[source]
         cause: KeyFormatError,
     },
-    #[error("that's not a preshared key (as `wg genpsk` prints one)")]
-    NotAPsk(#[source] KeyFormatError),
     #[error("can't read the key store ({FILE})")]
     Export(#[source] ParseError),
     #[error("uci error")]
@@ -130,18 +128,15 @@ pub enum SplotConfigError {
 /// The node's key store: its private key, and the preshared key of each of its
 /// pairs that has one.
 pub struct SplotConfig {
-    mesh_key: String,
+    mesh_key: WgPrivateKey,
     /// By section name (`psk_section`).
-    psks: BTreeMap<String, String>,
+    psks: BTreeMap<String, WgPresharedKey>,
 }
 
 impl SplotConfig {
     pub fn load() -> Result<Self, SplotConfigError> {
         let mesh_key = match uci::get("splot.config.private_key")? {
-            Some(pk) => {
-                validate_private_key(&pk).map_err(SplotConfigError::InvalidMeshKey)?;
-                pk
-            }
+            Some(key) => key.parse().map_err(SplotConfigError::InvalidMeshKey)?,
 
             None => init_mesh_key()?,
         };
@@ -154,21 +149,18 @@ impl SplotConfig {
         Ok(Self { mesh_key, psks })
     }
 
-    pub fn mesh_key(&self) -> &str {
+    pub fn mesh_key(&self) -> &WgPrivateKey {
         &self.mesh_key
     }
 
     /// The preshared key of the node's pair with `peer`, if one is stored.
-    pub fn psk(&self, peer: &HostRef) -> Option<&str> {
-        self.psks
-            .get(&psk_section(peer).to_string())
-            .map(String::as_str)
+    pub fn psk(&self, peer: &HostRef) -> Option<&WgPresharedKey> {
+        self.psks.get(&psk_section(peer).to_string())
     }
 
     /// Stores `key` as the preshared key of the node's pair with `peer`, in place
-    /// of any it had, once it's checked to be one.
-    pub fn store_psk(peer: &HostRef, key: &str) -> Result<(), SplotConfigError> {
-        check_key_format(key).map_err(SplotConfigError::NotAPsk)?;
+    /// of any it had.
+    pub fn store_psk(peer: &HostRef, key: &WgPresharedKey) -> Result<(), SplotConfigError> {
         make_private(&get_config_dir().join(FILE))?;
         uci::batch(&store_psk_commands(peer, key))?;
 
@@ -182,14 +174,14 @@ impl SplotConfig {
     /// `SplotConfig` can only come from `load()`, which validates the keys.
     pub(crate) fn for_tests(mesh_key: &str) -> Self {
         Self {
-            mesh_key: mesh_key.to_owned(),
+            mesh_key: mesh_key.parse().expect("a test's private key is a key"),
             psks: BTreeMap::new(),
         }
     }
 
     pub(crate) fn with_psk(mut self, peer: &HostRef, key: &str) -> Self {
-        self.psks
-            .insert(psk_section(peer).to_string(), key.to_owned());
+        let key = key.parse().expect("a test's preshared key is a key");
+        self.psks.insert(psk_section(peer).to_string(), key);
         self
     }
 }
@@ -214,7 +206,7 @@ mod tests {
 
     fn store(text: &str) -> Result<SplotConfig, SplotConfigError> {
         Ok(SplotConfig {
-            mesh_key: "FAKE_MESH_KEY".to_owned(),
+            mesh_key: CABIN_PSK.parse().unwrap(),
             psks: psks(&export::parse(text).unwrap())?,
         })
     }
@@ -264,7 +256,7 @@ mod tests {
 
     #[test]
     fn a_psk_is_stored_in_a_section_named_like_its_peer() {
-        let commands: Vec<String> = store_psk_commands(&lte_cam(), CAMERA_PSK)
+        let commands: Vec<String> = store_psk_commands(&lte_cam(), &CAMERA_PSK.parse().unwrap())
             .iter()
             .map(ToString::to_string)
             .collect();
@@ -300,12 +292,13 @@ config other 'spl_psk_Lake'
         ))
         .unwrap();
 
-        assert_eq!(store.psk(&cabin()), Some(CABIN_PSK));
-        assert_eq!(store.psk(&lte_cam()), Some(CAMERA_PSK));
+        let psk = |peer: &HostRef| store.psk(peer).map(WgPresharedKey::expose);
+        assert_eq!(psk(&cabin()), Some(CABIN_PSK));
+        assert_eq!(psk(&lte_cam()), Some(CAMERA_PSK));
         // A section without a key holds none, and neither does a section of
         // another type.
-        assert_eq!(store.psk(&HostRef::Client("Phone".parse().unwrap())), None);
-        assert_eq!(store.psk(&HostRef::Node("Lake".parse().unwrap())), None);
+        assert_eq!(psk(&HostRef::Client("Phone".parse().unwrap())), None);
+        assert_eq!(psk(&HostRef::Node("Lake".parse().unwrap())), None);
     }
 
     #[test]
