@@ -20,7 +20,6 @@ mod env;
 mod model;
 mod plan;
 mod process;
-mod protocol;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod types;

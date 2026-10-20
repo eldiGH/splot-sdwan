@@ -11,8 +11,7 @@ use crate::{
         service::{Service, Source},
     },
     plan::{list, proto_port},
-    protocol::Protocol,
-    types::{identifier::Identifier, ip::Ipv4Network, port::PortOrRange},
+    types::{identifier::Identifier, ip::Ipv4Network, port::PortOrRange, protocol::Protocol},
 };
 
 /// Where the protected host is, seen from the node being configured.

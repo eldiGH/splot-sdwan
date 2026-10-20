@@ -4,8 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     model::host::{HostAddress, Place},
-    protocol::Protocol,
-    types::{identifier::Identifier, ip::Ipv4Network, port::ServicePort},
+    types::{identifier::Identifier, ip::Ipv4Network, port::ServicePort, protocol::Protocol},
 };
 
 /// A service a host offers.

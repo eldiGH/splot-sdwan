@@ -9,9 +9,8 @@ use crate::{
         host::{HostRef, Place},
         node::Node,
     },
-    plan::{list, proto_port},
-    protocol::Protocol,
-    types::{identifier::Identifier, ip::Ipv4Network, port::PortOrRange, zone_ref::ZoneRef},
+    plan::{firewall::zone_ref::ZoneRef, list, proto_port},
+    types::{identifier::Identifier, ip::Ipv4Network, port::PortOrRange, protocol::Protocol},
 };
 
 /// A port forward from the internet, through this node, to one service of one

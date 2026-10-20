@@ -9,8 +9,7 @@ use std::{collections::BTreeSet, fmt};
 
 use crate::{
     model::Network,
-    protocol::Protocol,
-    types::{identifier::Identifier, port::PortOrRange},
+    types::{identifier::Identifier, port::PortOrRange, protocol::Protocol},
 };
 use dhcp::DhcpPlan;
 use firewall::FirewallPlan;

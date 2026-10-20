@@ -42,7 +42,9 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
-    use crate::{model::host::HostRef, protocol::Protocol, types::zone_ref::ZoneRef};
+    use crate::{
+        model::host::HostRef, plan::firewall::zone_ref::ZoneRef, types::protocol::Protocol,
+    };
 
     #[test]
     fn a_redirect_is_labelled_in_config_notation() {

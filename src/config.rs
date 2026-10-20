@@ -4,7 +4,6 @@ use serde::Deserialize;
 
 use crate::{
     consts,
-    protocol::Protocol,
     types::{
         allow_from_ref::AllowFromRef,
         config_location::{
@@ -16,6 +15,7 @@ use crate::{
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
         port::{Port, ServicePort},
+        protocol::Protocol,
         schema_helpers::OneOrManyUnique,
         wan_via_target::WanViaTargets,
         wg_key::WgPublicKey,

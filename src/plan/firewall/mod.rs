@@ -3,6 +3,7 @@
 
 pub mod redirect;
 pub mod rules;
+pub mod zone_ref;
 
 use std::fmt;
 

@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use crate::{
     config::{Config, Service},
     model::validator::types::{ValidationError, ValidationReport},
-    protocol::Protocol,
     types::{
         config_location::{
             ClientLoc, ConfigLocation, DeviceLoc, HubClientLoc, HubLoc, NodeLoc, ServiceLoc,
@@ -11,6 +10,7 @@ use crate::{
         },
         identifier::Identifier,
         port::PortOrRange,
+        protocol::Protocol,
     },
 };
 

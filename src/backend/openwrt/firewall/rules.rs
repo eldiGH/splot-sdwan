@@ -80,7 +80,7 @@ mod tests {
             sources: vec!["192.168.1.0/24".parse().unwrap()],
             destinations: vec!["192.168.2.30/32".parse().unwrap()],
             port: "554".parse().unwrap(),
-            proto: BTreeSet::from([crate::protocol::Protocol::Tcp]),
+            proto: BTreeSet::from([crate::types::protocol::Protocol::Tcp]),
         }
     }
 
