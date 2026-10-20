@@ -1,19 +1,114 @@
 //! What each command does, once the config is loaded and checked.
 
+use std::net::Ipv4Addr;
+
 use anyhow::{Context, bail};
 
 use crate::{
     backend::{
         Backend,
-        openwrt::{OpenWrtBackend, splot_config::SplotConfig},
+        openwrt::OpenWrtBackend,
+        openwrt::splot_config::{SplotConfig, SplotConfigError},
     },
     model::Network,
     plan::{self, NodePlan},
-    types::wg_key::WgPresharedKey,
+    types::{
+        identifier::Identifier,
+        wg_key::{WgPresharedKey, WgPublicKey},
+    },
     wg,
 };
 
-/// `apply`: makes this router's config what the plan says, or shows what that
+/// The listen port suggested to a new node: WireGuard's usual one.
+const SUGGESTED_LISTEN_PORT: u16 = 51820;
+
+/// `init`: gives this peer its WireGuard key, unless it has one (a key is
+/// never replaced), and says what the config needs for `node`: nothing, its new
+/// key, or a whole entry to paste.
+pub fn init(network: &Network, node: &Identifier) -> anyhow::Result<()> {
+    let (store, created) = match SplotConfig::load() {
+        Ok(store) => (store, false),
+        Err(SplotConfigError::NotInitialised) => {
+            SplotConfig::create_private_key()?;
+            (SplotConfig::load()?, true)
+        }
+        Err(err) => return Err(err.into()),
+    };
+    let public_key =
+        wg::get_pubkey(store.mesh_key()).context("failed to derive this peer's public key")?;
+
+    if created {
+        println!("Generated this peer's WireGuard key.");
+    }
+
+    match enrolment(network, node, &public_key) {
+        Enrolment::Initialised => {
+            println!("{node} is already initialised: the config has this peer's key for it.");
+        }
+        Enrolment::SomeoneElses(at) => {
+            bail!("this peer's key is the one at {at}, so this peer isn't {node}: check `--node`")
+        }
+        // A key just made can't be in the config yet: that's the next step.
+        Enrolment::OtherKey if created => println!(
+            "The config has another key for {node}. If this peer is {node} (new, reinstalled, or its key rotated), set nodes.{node}.publicKey to:\n  {public_key}"
+        ),
+        Enrolment::OtherKey => bail!(
+            "this peer's key isn't in the config, neither as {node}'s nor as anyone else's. If this peer is {node} (reinstalled, or its key rotated), set nodes.{node}.publicKey to:\n  {public_key}"
+        ),
+        Enrolment::NewNode => print!(
+            "{node} isn't in the config yet; add it under `nodes:`:\n\n{}",
+            new_node_entry(node, &public_key, network.free_mesh_ip())
+        ),
+    }
+
+    Ok(())
+}
+
+/// What the config says about this peer's key, for the node `init` was given.
+#[derive(Debug, PartialEq, Eq)]
+enum Enrolment {
+    /// The config has this key for the node.
+    Initialised,
+    /// The key is another entry's, there.
+    SomeoneElses(String),
+    /// The config has another key for the node, and this one nowhere.
+    OtherKey,
+    /// Neither the node nor the key is in the config.
+    NewNode,
+}
+
+fn enrolment(network: &Network, node: &Identifier, key: &WgPublicKey) -> Enrolment {
+    match (network.node(node), network.key_location(key)) {
+        (Some(known), _) if known.public_key() == key => Enrolment::Initialised,
+        (_, Some(at)) => Enrolment::SomeoneElses(at.to_string()),
+        (Some(_), None) => Enrolment::OtherKey,
+        (None, None) => Enrolment::NewNode,
+    }
+}
+
+/// A new node's entry for the config, to paste under `nodes:`.
+fn new_node_entry(
+    node: &Identifier,
+    public_key: &WgPublicKey,
+    mesh_ip: Option<Ipv4Addr>,
+) -> String {
+    let mesh_ip = match mesh_ip {
+        Some(ip) => format!("{ip}  # the lowest free address in meshNetwork; once set, keep it"),
+        None => "<an address in meshNetwork>  # it has no free address left".to_owned(),
+    };
+
+    format!(
+        "  {node}:
+    publicKey: {public_key}
+    meshIp: {mesh_ip}
+    listenPort: {SUGGESTED_LISTEN_PORT}
+    # endpoint: where the other nodes dial it, its public IP or DNS name;
+    # leave it out if nobody can (behind NAT)
+"
+    )
+}
+
+/// `apply`: makes this peer's config what the plan says, or shows what that
 /// would change (`dry_run`).
 pub fn apply(network: &Network, dry_run: bool) -> anyhow::Result<()> {
     let splot_config = SplotConfig::load()?;
@@ -37,7 +132,7 @@ pub fn apply(network: &Network, dry_run: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `psk set`: stores the preshared key of this router's pair with `peer`, read
+/// `psk set`: stores the preshared key of this peer's pair with `peer`, read
 /// from stdin.
 pub fn psk_set(network: &Network, peer: &str) -> anyhow::Result<()> {
     let splot_config = SplotConfig::load()?;
@@ -82,16 +177,97 @@ pub fn psk_set(network: &Network, peer: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// This router's plan: the node whose public key follows from the local private
+/// This peer's plan: the node whose public key follows from the local private
 /// key.
 fn own_plan(network: &Network, splot_config: &SplotConfig) -> anyhow::Result<NodePlan> {
     let own_public_key = wg::get_pubkey(splot_config.mesh_key())
-        .context("failed to derive this router's public key")?;
+        .context("failed to derive this peer's public key")?;
 
     network
         .find_node_by_public_key(own_public_key.as_str())
         .and_then(|node| plan::plan(network, node.name()))
         .context(
-            "this router's public key was not found in the splot config - add this node and try again",
+            "this peer's public key was not found in the splot config - add this node and try again",
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::checked;
+
+    #[test]
+    fn a_new_node_entry_pasted_into_the_config_is_that_node() {
+        let config = "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+";
+        let key: WgPublicKey = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA="
+            .parse()
+            .unwrap();
+        let cabin: Identifier = "Cabin".parse().unwrap();
+        let ip = checked(config).free_mesh_ip();
+
+        let network = checked(&format!("{config}{}", new_node_entry(&cabin, &key, ip)));
+        let node = network.node(&cabin).unwrap();
+
+        assert_eq!(*node.public_key(), key);
+        assert_eq!(node.mesh_address().to_string(), "10.100.0.2/16");
+        assert_eq!(node.listen_port().to_string(), "51820");
+        // Behind NAT until someone writes an endpoint in.
+        assert!(node.endpoint().is_none());
+    }
+
+    #[test]
+    fn init_finds_whose_key_this_peer_has() {
+        // Home's key is A, Cabin's C, the camera on Home's hub B, Phone's D.
+        let network = checked(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+clients:
+  Phone:
+    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+    meshIp: 10.100.1.10
+",
+        );
+        let enrolment = |node: &str, key: char| {
+            let key: WgPublicKey = format!("{}A=", key.to_string().repeat(42)).parse().unwrap();
+            enrolment(&network, &node.parse().unwrap(), &key)
+        };
+        let theirs = |at: &str| Enrolment::SomeoneElses(at.to_owned());
+
+        assert_eq!(enrolment("Home", 'A'), Enrolment::Initialised);
+        // Someone else's key, whether the node is in the config or not.
+        assert_eq!(enrolment("Home", 'C'), theirs("nodes.Cabin.publicKey"));
+        assert_eq!(
+            enrolment("Home", 'B'),
+            theirs("nodes.Home.hub.clients.camera.publicKey")
+        );
+        assert_eq!(enrolment("Pond", 'D'), theirs("clients.Phone.publicKey"));
+        // A key the config doesn't know.
+        assert_eq!(enrolment("Home", 'Z'), Enrolment::OtherKey);
+        assert_eq!(enrolment("Pond", 'Z'), Enrolment::NewNode);
+    }
 }

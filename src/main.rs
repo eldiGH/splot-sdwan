@@ -39,6 +39,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     match command {
+        Command::Init { node } => commands::init(&network, node),
         Command::Apply { dry_run } => commands::apply(&network, *dry_run),
         Command::Check => Ok(()),
         Command::Psk {

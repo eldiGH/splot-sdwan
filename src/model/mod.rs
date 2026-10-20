@@ -5,10 +5,22 @@ pub mod node;
 pub mod service;
 pub mod validator;
 
-use std::{collections::BTreeMap, num::NonZeroU16};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    net::Ipv4Addr,
+    num::NonZeroU16,
+};
 
-use crate::{config::Config, types::identifier::Identifier};
-use host::{Host, HostRef};
+use crate::{
+    config::Config,
+    types::{
+        config_location::{ClientLoc, ConfigLocation, HubClientLoc, HubLoc, NodeLoc},
+        identifier::Identifier,
+        ip::Ipv4Network,
+        wg_key::WgPublicKey,
+    },
+};
+use host::{Host, HostAddress, HostRef, Place};
 use node::Node;
 use service::Service;
 use validator::{
@@ -19,6 +31,8 @@ use validator::{
 /// The network a config describes, once it passed validation. Only [`validate`]
 /// makes one, so everything that reads it can rely on what validation checked.
 pub struct Network {
+    /// The whole mesh address space.
+    mesh_network: Ipv4Network,
     nodes: BTreeMap<Identifier, Node>,
     hosts: Vec<Host>,
     services: BTreeMap<HostRef, BTreeMap<Identifier, Service>>,
@@ -46,6 +60,54 @@ impl Network {
     /// clients, then the global clients.
     pub fn hosts(&self) -> &[Host] {
         &self.hosts
+    }
+
+    /// Where the config has `key`: a node's, a hub client's or a global client's
+    /// `publicKey`. Keys are unique, so there's at most one.
+    pub fn key_location(&self, key: &WgPublicKey) -> Option<ConfigLocation> {
+        if let Some(node) = self.nodes().find(|node| node.public_key() == key) {
+            return Some(ConfigLocation::Node(
+                node.name().clone(),
+                NodeLoc::PublicKey,
+            ));
+        }
+
+        let host = self.hosts.iter().find(|host| {
+            host.wg_peer()
+                .is_some_and(|wg_peer| wg_peer.public_key() == key)
+        })?;
+
+        Some(match host.id() {
+            HostRef::Node(name) => ConfigLocation::Node(name.clone(), NodeLoc::PublicKey),
+            HostRef::Local { node, name } => ConfigLocation::Node(
+                node.clone(),
+                NodeLoc::Hub(HubLoc::Client(name.clone(), HubClientLoc::PublicKey)),
+            ),
+            HostRef::Client(name) => ConfigLocation::Client(name.clone(), ClientLoc::PublicKey),
+        })
+    }
+
+    /// The lowest address in the mesh network that nothing has: no node's or
+    /// global client's mesh IP, in no hub network, and not the network's own or
+    /// broadcast address. A suggestion for a new node; none when the mesh is full.
+    pub fn free_mesh_ip(&self) -> Option<Ipv4Addr> {
+        let taken: BTreeSet<Ipv4Addr> = self
+            .hosts
+            .iter()
+            .flat_map(Host::addresses)
+            .filter(|address| *address.place() == Place::Mesh)
+            .map(HostAddress::ip)
+            .collect();
+        let hubs: Vec<Ipv4Network> = self.nodes().filter_map(|node| node.hub).collect();
+        let mesh = self.mesh_network;
+
+        (mesh.ip().to_bits()..=mesh.broadcast().to_bits())
+            .map(Ipv4Addr::from_bits)
+            .find(|ip| {
+                mesh.host_interface(*ip).is_ok()
+                    && !taken.contains(ip)
+                    && !hubs.iter().any(|hub| hub.contains(*ip))
+            })
     }
 
     /// Seconds between the keepalives splot turns on by itself; none when the
@@ -79,6 +141,7 @@ pub fn validate(config: &Config) -> Result<Validated, ValidationReport> {
     if report.errors.is_empty() {
         Ok(Validated {
             network: Network {
+                mesh_network: config.mesh_network,
                 nodes,
                 hosts,
                 services,
@@ -338,6 +401,84 @@ clients:
         // A node's key is on its node; a device has none.
         assert!(key(cabin).is_none());
         assert!(key(printer).is_none());
+    }
+
+    #[test]
+    fn a_key_is_found_where_the_config_has_it() {
+        let network = checked(HOSTS);
+        let location = |key: &str| {
+            network
+                .key_location(&key.parse().unwrap())
+                .map(|at| at.to_string())
+        };
+
+        assert_eq!(
+            location("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=").as_deref(),
+            Some("nodes.Cabin.publicKey")
+        );
+        assert_eq!(
+            location("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=").as_deref(),
+            Some("nodes.Home.hub.clients.camera.publicKey")
+        );
+        assert_eq!(
+            location("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=").as_deref(),
+            Some("clients.Phone.publicKey")
+        );
+        assert_eq!(
+            location("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZA="),
+            None
+        );
+    }
+
+    #[test]
+    fn a_new_node_is_offered_the_lowest_free_mesh_ip() {
+        // .0 is the network's own address, .1 and .3 are nodes, .2 a global
+        // client, .4-.7 Home's hub: .8 is the first that's free.
+        let network = checked(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    hub:
+      network: 10.100.0.4/30
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.3
+clients:
+  Phone:
+    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+    meshIp: 10.100.0.2
+",
+        );
+        assert_eq!(network.free_mesh_ip(), Some("10.100.0.8".parse().unwrap()));
+    }
+
+    #[test]
+    fn a_full_mesh_offers_no_mesh_ip() {
+        // A /30 has two host addresses, both taken; nor is the broadcast free.
+        let network = checked(
+            "
+meshNetwork: 10.100.0.0/30
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+",
+        );
+        assert_eq!(network.free_mesh_ip(), None);
     }
 
     #[test]

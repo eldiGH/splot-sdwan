@@ -21,7 +21,7 @@ Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md
 ### Splot config (persistent local state)
 
 - Local state file (`/etc/config/splot`) managed by `src/backend/openwrt/splot_config.rs` via the `SplotConfig` struct (the OpenWrt backend's key store) — stores the node's one private key, for the mesh interface (`splot.config.private_key`), and the preshared key of each of its pairs that has one, a `psk` section per peer named like the peer's own section (`splot.spl_psk_Cabin.key`). Stored PSKs are checked to be keys when it's read. The file is readable by root only (0600, as OpenWrt keeps its own files that hold secrets): splot makes it so before every write, so a new store is private before a secret goes in and one an older splot left readable gets tightened.
-- `SplotConfig::load()` reads and validates the key, generating and committing one on first run (idempotent init — handles missing file, section, or option uniformly).
+- `SplotConfig::load()` reads the keys and checks them, and writes nothing: a router without a private key is told to run `splot init`. Only `init` creates the key (`SplotConfig::create_private_key`), and only when there's none.
 - A stored key is validated on load; a corrupt key is a hard error, never silently regenerated (regeneration would orphan the node's peers).
 - Designed to grow as more local-only state is needed (e.g., last-applied config snapshot for distributed-reload rollback — see IDEAS.md).
 
@@ -108,7 +108,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 
 ### CLI (`src/cli.rs`, `src/main.rs`, `src/commands.rs`)
 
-- clap-based CLI: `splot check` (validate, report errors/warnings), `splot apply [--dry-run]`, and `splot psk set <peer>` (store the preshared key of this router's pair with a peer, read from stdin; refuses a name that isn't its peer, a pair with `psk: false`, and anything that isn't a key); `-c/--config` overrides the config path (default `splot.yml`).
+- clap-based CLI: `splot init --node <Name>` (gives the router its key if it has none, and holds the key against the config: initialised; a new key to set; an entry to paste for a node the config doesn't have, with the lowest free mesh IP; refused when the key is another entry's, named by its config path, or when an existing key is nowhere in the config; the only command that writes the key), `splot check` (validate, report errors/warnings), `splot apply [--dry-run]`, and `splot psk set <peer>` (store the preshared key of this router's pair with a peer, read from stdin; refuses a name that isn't its peer, a pair with `psk: false`, and anything that isn't a key); `-c/--config` overrides the config path (default `splot.yml`).
 - `main` parses the command line, loads and validates the config (every command does that first), and dispatches; each command is a function in `commands` (`apply`, `psk_set`).
 - `main` returns `anyhow::Result` — errors propagate with context chains (thiserror-typed at module boundaries, anyhow at the application layer); validation failures and an unenrolled router abort with actionable messages.
 - Every error type derives `thiserror::Error` (so each is a `std::error::Error`; a test lists them and stops compiling when one isn't). The parse errors of `src/types/` reach the user through serde, which shows only `Display`, so their messages include the inner reason, and that reason isn't also marked as their `source` (a chain would say it twice); a variant that only forwards an inner error is `transparent`. Snapshots pin every parse error's and every validation error's message. `ValidationWarning` keeps a hand-written `Display`: a warning isn't an error.
@@ -123,7 +123,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 - Generates new private keys via `wg genkey` (a `WgPrivateKey`).
 - Derives public keys from private keys via `wg pubkey` (a `WgPublicKey`).
 - Failures are typed errors (`wg::Error`): a missing `wg` binary, a non-zero exit (with wg's stderr), non-UTF-8 output, or output that isn't a key — never a panic or an empty key.
-- Used during `splot_config` initialization and to identify the current node by matching the local pubkey against `node.publicKey` in the config.
+- Used by `splot init` (to create the key and report its public key) and to identify the current node by matching the local pubkey against `node.publicKey` in the config.
 
 ### UCI section naming (`src/backend/openwrt/section.rs` `UciSection`, `naming.rs`)
 
@@ -145,6 +145,5 @@ Unit-test suite over the deterministic core (~340 tests). Covers: type parsers (
 See [ROADMAP.md](ROADMAP.md). At a glance, in priority order:
 
 1. **Per-zone src/dest scoping** — replace `src=*` / `dest=*` in generated accept rules with explicit zone names (redirects are already zone-scoped).
-2. **Enrollment UX** — a `splot pubkey` subcommand (ensure key exists, print the public key) so new routers can be enrolled over SSH without hopping consoles.
 
 See [IDEAS.md](IDEAS.md) for longer-horizon ideas (mesh-wide DNS, distributed reload, dynamic device presence, etc.).

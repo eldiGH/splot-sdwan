@@ -92,21 +92,10 @@ fn make_private(path: &Path) -> Result<(), SplotConfigError> {
     Ok(())
 }
 
-fn init_mesh_key() -> Result<WgPrivateKey, SplotConfigError> {
-    make_private(&get_config_dir().join(FILE))?;
-
-    let private_key = wg::generate_private_key()?;
-    uci::batch(&[
-        UciBatchCommand::set("splot.config", "splot"),
-        UciBatchCommand::set("splot.config.private_key", private_key.expose()),
-        UciBatchCommand::commit("splot"),
-    ])?;
-
-    Ok(private_key)
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum SplotConfigError {
+    #[error("this peer has no WireGuard key yet - run `splot init --node <name>` first")]
+    NotInitialised,
     #[error("can't create the key store or make it private")]
     Io(#[from] std::io::Error),
     #[error("stored mesh private key is invalid")]
@@ -134,11 +123,12 @@ pub struct SplotConfig {
 }
 
 impl SplotConfig {
+    /// The peer's key store. Writes nothing: a peer without a key is told to
+    /// run `splot init`.
     pub fn load() -> Result<Self, SplotConfigError> {
         let mesh_key = match uci::get("splot.config.private_key")? {
             Some(key) => key.parse().map_err(SplotConfigError::InvalidMeshKey)?,
-
-            None => init_mesh_key()?,
+            None => return Err(SplotConfigError::NotInitialised),
         };
 
         let psks = match uci::export(FILE)? {
@@ -151,6 +141,21 @@ impl SplotConfig {
 
     pub fn mesh_key(&self) -> &WgPrivateKey {
         &self.mesh_key
+    }
+
+    /// Generates the peer's private key and stores it. Only `splot init` does,
+    /// and only when the peer has none: a key is never replaced.
+    pub fn create_private_key() -> Result<(), SplotConfigError> {
+        make_private(&get_config_dir().join(FILE))?;
+
+        let private_key = wg::generate_private_key()?;
+        uci::batch(&[
+            UciBatchCommand::set("splot.config", "splot"),
+            UciBatchCommand::set("splot.config.private_key", private_key.expose()),
+            UciBatchCommand::commit("splot"),
+        ])?;
+
+        Ok(())
     }
 
     /// The preshared key of the node's pair with `peer`, if one is stored.

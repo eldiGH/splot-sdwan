@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use crate::types::identifier::Identifier;
+
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
@@ -25,7 +27,15 @@ impl Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Apply the config to this router using uci
+    /// Give this peer its WireGuard key (only if it has none) and say what the
+    /// config needs for NODE
+    Init {
+        /// The node this peer is, as the config names it
+        #[arg(long)]
+        node: Identifier,
+    },
+
+    /// Apply the config to this peer using uci
     Apply {
         #[arg(
             long,
@@ -37,7 +47,7 @@ pub enum Command {
     /// Validate the config and report all errors and warnings
     Check,
 
-    /// Manage the preshared keys of this router's WireGuard pairs
+    /// Manage the preshared keys of this peer's WireGuard pairs
     Psk {
         #[command(subcommand)]
         command: PskCommand,
@@ -46,7 +56,7 @@ pub enum Command {
 
 #[derive(Subcommand)]
 pub enum PskCommand {
-    /// Store the preshared key of this router's pair with PEER, read from stdin
+    /// Store the preshared key of this peer's pair with PEER, read from stdin
     /// (e.g. `wg genpsk`). The same key goes on the peer's side.
     Set {
         /// The peer, as the config names it: `Cabin`, `Phone`, `Home.camera`
@@ -93,6 +103,18 @@ mod tests {
             cli.command(),
             Some(Command::Apply { dry_run: false })
         ));
+    }
+
+    #[test]
+    fn init_names_the_node() {
+        let cli = parse(&["splot", "init", "--node", "Cabin"]);
+        assert!(matches!(
+            cli.command(),
+            Some(Command::Init { node }) if node.as_ref() == "Cabin"
+        ));
+        // Without one, or with one that isn't a name, it's a usage error.
+        assert!(Cli::try_parse_from(["splot", "init"]).is_err());
+        assert!(Cli::try_parse_from(["splot", "init", "--node", "a b"]).is_err());
     }
 
     #[test]

@@ -70,22 +70,46 @@ check_version() {
 		return
 	fi
 
-	# The node's key, and the example config with Home's public key filled in.
 	# The example's endpoint name resolves through /etc/hosts: there's no public
 	# DNS for it, and a name that doesn't resolve keeps the mesh interface down.
 	podman cp "$BINARY" "$container:/usr/bin/splot"
 	podman cp splot.example.yml "$container:/tmp/splot.example.yml"
 	run "echo '$CABIN_ADDRESS $CABIN_ENDPOINT' >>/etc/hosts"
-	run '
-		touch /etc/config/splot
-		key=$(wg genkey)
-		uci set splot.config=splot
-		uci set splot.config.private_key="$key"
-		uci commit splot
-		pubkey=$(echo "$key" | wg pubkey)
-		sed "s|ReplaceHomePublicKeyA*=|$pubkey|" /tmp/splot.example.yml >/tmp/splot.yml'
 
 	local log_lines output
+	# Only init writes the router's key: until it has run, the dry run says so
+	# and creates nothing.
+	output=$(run 'splot --config /tmp/splot.example.yml apply --dry-run 2>&1') || true
+	if printf '%s' "$output" | grep -q 'run `splot init' && ! run '[ -e /etc/config/splot ]'; then
+		pass "before init, the dry run asks for it and writes nothing"
+	else
+		fail "before init, the dry run asks for it and writes nothing" "$output"
+	fi
+
+	# init creates the key and says what to set for Home (the example has a
+	# placeholder key). With this router's key put in, Home is initialised; as
+	# Cabin, the key is someone else's (an error); with the placeholder back, the
+	# key is in the config nowhere (an error too, now that it isn't new).
+	local first initialised wrong stale
+	first=$(run 'splot --config /tmp/splot.example.yml init --node Home 2>&1') || true
+	run 'pubkey=$(uci get splot.config.private_key | wg pubkey)
+		sed "s|ReplaceHomePublicKeyA*=|$pubkey|" /tmp/splot.example.yml >/tmp/splot.yml'
+	initialised=$(run 'splot --config /tmp/splot.yml init --node Home 2>&1') || true
+	wrong=$(run 'splot --config /tmp/splot.yml init --node Cabin 2>&1; echo "exit $?"') || true
+	stale=$(run 'splot --config /tmp/splot.example.yml init --node Home 2>&1; echo "exit $?"') || true
+	if printf '%s' "$first" | grep -q "Generated this peer's WireGuard key" &&
+		printf '%s' "$first" | grep -qF "$(run 'uci get splot.config.private_key | wg pubkey')" &&
+		printf '%s' "$initialised" | grep -q "Home is already initialised" &&
+		printf '%s' "$wrong" | grep -q "the one at nodes.Home.publicKey, so this peer isn't Cabin" &&
+		printf '%s' "$wrong" | grep -q "exit 1" &&
+		printf '%s' "$stale" | grep -q "isn't in the config" &&
+		printf '%s' "$stale" | grep -q "exit 1"; then
+		pass "init: creates the key once; Home initialised; another node's key and an unknown key refused"
+	else
+		fail "init: creates the key once; Home initialised; another node's key and an unknown key refused" \
+			"first: $first"$'\n'"initialised: $initialised"$'\n'"wrong: $wrong"$'\n'"stale: $stale"
+	fi
+
 	# Every pair uses a preshared key unless an end turns it off (the example's
 	# lte-cam does). Until they're stored, apply refuses, names the peers and
 	# touches nothing.
@@ -110,18 +134,19 @@ check_version() {
 		fail "psk set refuses a non-peer, a pair without a PSK, and a non-key" "$output"
 	fi
 	# One key per pair. The peers' ends aren't in this container. The key store
-	# holds the private key and the PSKs, so only root may read it: this script
-	# created it with the default mode, and storing a PSK tightens it.
-	local store_before store_after
-	store_before=$(run 'ls -l /etc/config/splot | cut -c1-10')
+	# holds the private key and the PSKs, so only root may read it: init creates
+	# it that way, and storing a PSK tightens one an older splot left readable.
+	local store_created store_after
+	store_created=$(run 'ls -l /etc/config/splot | cut -c1-10')
+	run 'chmod 644 /etc/config/splot'
 	run 'for peer in Cabin Lake Phone; do
 		wg genpsk | splot --config /tmp/splot.yml psk set $peer >/dev/null || exit 1
 	done'
 	store_after=$(run 'ls -l /etc/config/splot | cut -c1-10')
-	if [ "$store_before" = "-rw-r--r--" ] && [ "$store_after" = "-rw-------" ]; then
-		pass "key store readable by root only (tightened from $store_before)"
+	if [ "$store_created" = "-rw-------" ] && [ "$store_after" = "-rw-------" ]; then
+		pass "key store readable by root only (created so; tightened again from 644)"
 	else
-		fail "key store readable by root only" "before: $store_before, after: $store_after"
+		fail "key store readable by root only" "created: $store_created, after psk set: $store_after"
 	fi
 
 	log_lines=$(run 'logread | wc -l')
