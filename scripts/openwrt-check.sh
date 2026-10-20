@@ -15,7 +15,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# freya runs 24.10, thor 25.12; they differ in how WireGuard picks up peers.
 DEFAULT_VERSIONS=(24.10.2 25.12.2)
 VERSIONS=("${@:-${DEFAULT_VERSIONS[@]}}")
 TARGET=x86_64-unknown-linux-musl
