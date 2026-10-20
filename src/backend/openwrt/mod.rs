@@ -20,19 +20,24 @@ use crate::{
     backend::Backend,
     plan::NodePlan,
     types::{identifier::Identifier, wg_key::WgPublicKey},
+    wg,
 };
 pub use apply::Error;
 use secret::{Secret, Slot};
 use section::{Section, Value};
-use splot_config::SplotConfig;
+use splot_config::{SplotConfig, SplotConfigError};
 
 /// The node's config as uci sections, file by file, in the order splot commits
 /// the files, with placeholders where its secrets go.
+#[derive(Clone)]
 pub struct Rendered {
     /// The node it's for, and the key the config has for it: the dry run and
     /// apply check this peer is that node before anything else.
     node: Identifier,
     public_key: WgPublicKey,
+    /// Whether splot runs the node's WireGuard: then its key store has the key,
+    /// and the secrets. Otherwise the node's own WireGuard has the key.
+    wireguard: bool,
     files: Vec<(&'static str, Vec<Section>)>,
     /// Where its secrets go: apply fills them in, the dry run masks them again.
     secrets: Vec<Slot>,
@@ -80,11 +85,23 @@ impl Rendered {
         }
 
         Ok(Self {
-            node: self.node.clone(),
-            public_key: self.public_key.clone(),
             files,
-            secrets: self.secrets.clone(),
+            ..self.clone()
         })
+    }
+}
+
+/// Checks this peer is `node` by its own WireGuard, which splot leaves alone:
+/// one of its interfaces has `expected`, the key the config has for `node`.
+fn is_node_by_its_interfaces(
+    node: &Identifier,
+    expected: &WgPublicKey,
+    interface_keys: &[WgPublicKey],
+) -> Result<(), Error> {
+    if interface_keys.contains(expected) {
+        Ok(())
+    } else {
+        Err(Error::NotTheNodesInterfaces { node: node.clone() })
     }
 }
 
@@ -97,6 +114,7 @@ impl Rendered {
             public_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
                 .parse()
                 .unwrap(),
+            wireguard: true,
             files: Vec::new(),
             secrets: Vec::new(),
         }
@@ -104,13 +122,34 @@ impl Rendered {
 }
 
 pub struct OpenWrtBackend {
-    /// The node's key store: `apply` fills its secrets into the rendered config.
-    splot_config: SplotConfig,
+    /// The node's key store, where splot runs its WireGuard: its key says this
+    /// peer is the node, and `apply` fills its secrets into the rendered config.
+    /// None where splot leaves the WireGuard alone: it keeps no key there.
+    splot_config: Option<SplotConfig>,
 }
 
 impl OpenWrtBackend {
-    pub fn new(splot_config: SplotConfig) -> Self {
+    pub fn new(splot_config: Option<SplotConfig>) -> Self {
         Self { splot_config }
+    }
+
+    /// `rendered` with its secrets filled in, once this peer is checked to be
+    /// the node it's for: by the key in the key store where splot runs the
+    /// node's WireGuard; by the node's own WireGuard where it doesn't (no
+    /// secrets then).
+    fn confirmed(&self, rendered: &Rendered) -> Result<Rendered, Error> {
+        if !rendered.wireguard {
+            let keys = wg::interface_public_keys().map_err(Error::InterfaceKeys)?;
+            is_node_by_its_interfaces(&rendered.node, &rendered.public_key, &keys)?;
+            return Ok(rendered.clone());
+        }
+
+        let store = self
+            .splot_config
+            .as_ref()
+            .ok_or(SplotConfigError::NotInitialised)?;
+        store.check_node(&rendered.node, &rendered.public_key)?;
+        rendered.with_secrets(store)
     }
 }
 
@@ -140,22 +179,18 @@ impl Backend for OpenWrtBackend {
         Rendered {
             node: plan.node.clone(),
             public_key: plan.public_key.clone(),
+            wireguard: plan.wireguard.is_some(),
             files,
             secrets,
         }
     }
 
     fn dry_run(&self, rendered: &Rendered) -> Result<(), Error> {
-        self.splot_config
-            .check_node(&rendered.node, &rendered.public_key)?;
-        apply::print(&rendered.with_secrets(&self.splot_config)?)
+        apply::print(&self.confirmed(rendered)?)
     }
 
     fn apply(&self, rendered: &Rendered) -> Result<Vec<String>, Error> {
-        self.splot_config
-            .check_node(&rendered.node, &rendered.public_key)?;
-        let rendered = rendered.with_secrets(&self.splot_config)?;
-        let changed = apply::run(&rendered)?;
+        let changed = apply::run(&self.confirmed(rendered)?)?;
 
         Ok(changed.into_iter().map(str::to_owned).collect())
     }
@@ -231,12 +266,13 @@ nodes:
 "
             ));
             let plan = plan::plan(&network, &"Home".parse().unwrap()).unwrap();
-            OpenWrtBackend::new(SplotConfig::for_tests(PRIVATE_KEY)).render(&plan)
+            OpenWrtBackend::new(Some(SplotConfig::for_tests(PRIVATE_KEY))).render(&plan)
         };
 
         let all = rendered("");
         assert_eq!(all.files(), ["network", "firewall", "dhcp"]);
         assert_eq!(all.secrets.len(), 1);
+        assert!(all.wireguard);
 
         let network_only = rendered("      firewall: none\n      dhcp: none");
         assert_eq!(network_only.files(), ["network"]);
@@ -250,14 +286,34 @@ nodes:
             ["network", "firewall"]
         );
 
-        // Without WireGuard, no key to fill in either.
+        // Without WireGuard, no key to fill in either, and the node's own
+        // WireGuard says it's this peer.
         let no_wireguard = rendered("      wireguard: none");
         assert_eq!(no_wireguard.files(), ["firewall", "dhcp"]);
         assert!(no_wireguard.secrets.is_empty());
+        assert!(!no_wireguard.wireguard);
         assert_eq!(
             no_wireguard.public_key.as_str(),
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         );
+    }
+
+    #[test]
+    fn a_node_whose_wireguard_splot_leaves_alone_is_known_by_its_interfaces() {
+        let key =
+            |c: char| -> WgPublicKey { format!("{}A=", c.to_string().repeat(42)).parse().unwrap() };
+        let home: Identifier = "Home".parse().unwrap();
+
+        assert!(is_node_by_its_interfaces(&home, &key('A'), &[key('B'), key('A')]).is_ok());
+
+        let err = is_node_by_its_interfaces(&home, &key('A'), &[key('B')]).unwrap_err();
+        assert!(matches!(&err, Error::NotTheNodesInterfaces { node } if *node == home));
+        assert_eq!(
+            err.to_string(),
+            "none of this peer's WireGuard interfaces has the key the config has for Home - is `--node` wrong, or is its WireGuard down? splot leaves Home's WireGuard alone, so that's how it knows the peer is Home"
+        );
+        // No WireGuard up at all.
+        assert!(is_node_by_its_interfaces(&home, &key('A'), &[]).is_err());
     }
 
     #[test]
@@ -402,7 +458,7 @@ nodes:
     #[test]
     fn every_slot_holds_its_placeholder_and_every_placeholder_has_a_slot() {
         let network = example();
-        let backend = OpenWrtBackend::new(SplotConfig::for_tests(PRIVATE_KEY));
+        let backend = OpenWrtBackend::new(Some(SplotConfig::for_tests(PRIVATE_KEY)));
 
         for node in openwrt_nodes(&network) {
             let rendered = backend.render(&plan::plan(&network, node.name()).unwrap());
@@ -476,7 +532,7 @@ nodes:
     fn what_splot_wrote_reads_back_as_nothing_to_change() {
         // Once the rendered config is in uci, the next apply finds nothing to stage.
         let network = example();
-        let backend = OpenWrtBackend::new(SplotConfig::for_tests(PRIVATE_KEY));
+        let backend = OpenWrtBackend::new(Some(SplotConfig::for_tests(PRIVATE_KEY)));
 
         for node in openwrt_nodes(&network) {
             let plan = plan::plan(&network, node.name()).unwrap();
@@ -491,7 +547,7 @@ nodes:
     #[test]
     fn example_config_snapshot() {
         let network = example();
-        let backend = OpenWrtBackend::new(SplotConfig::for_tests(PRIVATE_KEY));
+        let backend = OpenWrtBackend::new(Some(SplotConfig::for_tests(PRIVATE_KEY)));
 
         for node in openwrt_nodes(&network) {
             let plan = plan::plan(&network, node.name()).unwrap();

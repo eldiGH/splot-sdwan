@@ -92,10 +92,10 @@ platform:
 - **`none`** leaves that concern to you: splot generates nothing for it and doesn't touch what's there, its own sections from before included (on OpenWrt that file isn't staged, committed or reloaded). What's then yours to do:
   - **`firewall: none`**, with WireGuard managed by splot: the mesh interface (`spl_mesh` on OpenWrt) is in none of splot's zones. Put it into one of yours (e.g. `lan`, as a hand-made `wg0` usually is) and let its listen port in from the WAN. Nothing `allowFrom` says is enforced on that node, and nothing is forwarded from its WAN.
   - **`dhcp: none`**: the addresses the config gives devices and global clients are yours to make true, with a reservation in your DHCP server or a static address on the device. Firewall rules use them either way.
-  - **`wireguard: none`** (the node is in the mesh, its WireGuard set up by hand), with the firewall managed by splot: there's no mesh zone, so mesh traffic arrives in whichever zone your interface is in, and nothing is forwarded from the WAN to a host reached over the mesh. The rules `allowFrom` grants are still written.
+  - **`wireguard: none`** (the node is in the mesh, its WireGuard set up by hand): splot keeps no key there, so `splot init` has nothing to create, and before it writes anything it checks the node by your WireGuard instead: one of the peer's interfaces must have the node's `publicKey` (and be up). With the firewall managed by splot, there's no mesh zone, so mesh traffic arrives in whichever zone your interface is in, and nothing is forwarded from the WAN to a host reached over the mesh. The rules `allowFrom` grants are still written. Such a node can't have a [hub](#hub) (an error): hub clients are peers on splot's mesh interface. A WireGuard server of your own, with its own subnet, is a [zone](#zone) to splot.
   - `firewall: none` and `dhcp: none` together: splot manages the mesh alone.
 - **`splot check` warns**, once per node and concern, where a concern left alone leaves part of the config undone, naming what (the services whose `allowFrom` isn't enforced there, those not forwarded from its WAN) and what's yours to do. A concern left alone with nothing asked of it gets no warning.
-- **Not yet:** `splot apply` refuses a Linux node, and a node with `wireguard: none` (before writing, splot checks the node is the one `--node` names by the WireGuard key splot keeps there); `splot check` validates them.
+- **Not yet:** `splot apply` refuses a Linux node; `splot check` validates it.
 
 ---
 
@@ -148,7 +148,7 @@ Printer:
 
 ## Hub
 
-A network inside `meshNetwork` that the node sets aside for devices reaching the mesh through it alone — typically something behind NAT that offers services, like a camera on an LTE modem. Its clients are WireGuard peers on the node's mesh interface (same key, same port); splot creates no extra interface or firewall zone for them. The node needs an `endpoint`: hub clients dial it.
+A network inside `meshNetwork` that the node sets aside for devices reaching the mesh through it alone — typically something behind NAT that offers services, like a camera on an LTE modem. Its clients are WireGuard peers on the node's mesh interface (same key, same port); splot creates no extra interface or firewall zone for them. The node needs an `endpoint` (hub clients dial it), and splot must manage its WireGuard (no `wireguard: none`).
 
 ```yaml
 hub:

@@ -25,15 +25,22 @@ const SUGGESTED_LISTEN_PORT: u16 = 51820;
 
 /// `init`: gives this peer its WireGuard key, unless it has one (a key is
 /// never replaced), and says what the config needs for `node`: nothing, its new
-/// key, or a whole entry to paste.
+/// key, or a whole entry to paste. A node whose WireGuard splot leaves alone
+/// needs no key of splot's.
 pub fn init(network: &Network, node: &Identifier) -> anyhow::Result<()> {
-    if let Some(known) = network.node(node)
-        && known.platform().os() != Os::OpenWrt
-    {
-        bail!(
-            "{node} runs {}: `splot init` keeps the key with uci, on OpenWrt only for now",
-            known.platform().os()
-        );
+    if let Some(known) = network.node(node) {
+        if known.platform().os() != Os::OpenWrt {
+            bail!(
+                "{node} runs {}: `splot init` keeps the key with uci, on OpenWrt only for now",
+                known.platform().os()
+            );
+        }
+        if known.platform().wireguard().is_none() {
+            println!(
+                "splot leaves {node}'s WireGuard alone (wireguard: none), so it keeps no key there: nothing to initialise. apply checks this peer is {node} by its own WireGuard's key."
+            );
+            return Ok(());
+        }
     }
 
     let (store, created) = match SplotConfig::load() {
@@ -127,7 +134,12 @@ fn new_node_entry(
 pub fn apply(network: &Network, node: &Identifier, dry_run: bool) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
     check_applicable(network, node)?;
-    let splot_config = SplotConfig::load()?;
+    // splot keeps a key only where it runs the node's WireGuard.
+    let splot_config = plan
+        .wireguard
+        .is_some()
+        .then(SplotConfig::load)
+        .transpose()?;
 
     let backend = OpenWrtBackend::new(splot_config);
     let rendered = backend.render(&plan);
@@ -152,15 +164,15 @@ pub fn apply(network: &Network, node: &Identifier, dry_run: bool) -> anyhow::Res
 pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
     check_applicable(network, node)?;
-    let splot_config = SplotConfig::load()?;
-    splot_config.check_node(&plan.node, &plan.public_key)?;
-
     let Some(wireguard) = &plan.wireguard else {
         bail!(
             "splot leaves {}'s WireGuard alone (wireguard: none): it sets up no peers there, so it keeps no preshared keys",
             plan.node
         );
     };
+    let splot_config = SplotConfig::load()?;
+    splot_config.check_node(&plan.node, &plan.public_key)?;
+
     let Some(peer) = wireguard.peer(peer) else {
         let peers: Vec<String> = wireguard
             .peers
@@ -200,8 +212,7 @@ pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Resu
 }
 
 /// Refuses a node splot can only check for now, not apply to: one that doesn't
-/// run OpenWrt, or leaves its WireGuard alone (`none`): the key check needs
-/// splot's own key there.
+/// run OpenWrt.
 fn check_applicable(network: &Network, node: &Identifier) -> anyhow::Result<()> {
     let Some(node) = network.node(node) else {
         return Ok(());
@@ -213,13 +224,6 @@ fn check_applicable(network: &Network, node: &Identifier) -> anyhow::Result<()> 
             "{} runs {}: splot can check it, but can't apply to it yet",
             node.name(),
             platform.os()
-        );
-    }
-
-    if platform.wireguard().is_none() {
-        bail!(
-            "splot leaves {}'s WireGuard alone (wireguard: none): it can check the node, but can't apply to it yet",
-            node.name()
         );
     }
 
@@ -328,7 +332,7 @@ clients:
     }
 
     #[test]
-    fn splot_applies_to_openwrt_nodes_whose_wireguard_it_manages() {
+    fn splot_applies_to_openwrt_nodes_only() {
         let network = checked(
             "
 meshNetwork: 10.100.0.0/16
@@ -376,10 +380,7 @@ nodes:
 
         assert!(applicable("Home").is_ok());
         assert!(applicable("Cabin").is_ok());
-        assert_eq!(
-            applicable("Lake").unwrap_err(),
-            "splot leaves Lake's WireGuard alone (wireguard: none): it can check the node, but can't apply to it yet"
-        );
+        assert!(applicable("Lake").is_ok());
         assert_eq!(
             applicable("Pond").unwrap_err(),
             "Pond runs linux: splot can check it, but can't apply to it yet"

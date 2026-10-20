@@ -365,6 +365,29 @@ check_version() {
 		fail "concerns left alone (none): their files untouched" "dry run: $dry_run"$'\n'"$output"$'\n'"sections: $sections"$'\n'"before: $before"$'\n'"after: $after"
 	fi
 
+	# A node whose WireGuard splot leaves alone (`wireguard: none`, so no hub) is
+	# known by its own WireGuard. As Cabin, no interface here has Cabin's key:
+	# apply refuses and writes nothing. As Home, spl_mesh has Home's key: apply
+	# runs, and leaves the network file alone. init has nothing to create.
+	run "awk '/^      os: openwrt\$/ && n++ < 2 { print; print \"      wireguard: none\"; next }
+		/^    hub:\$/ { skip = 1 } skip && /^\$/ { skip = 0 } !skip' /tmp/splot.yml >/tmp/splot-own-wg.yml"
+	local all_files='/etc/config/network /etc/config/firewall /etc/config/dhcp'
+	local network_before refused_before refused_after
+	network_before=$(run 'ls -i /etc/config/network; md5sum /etc/config/network')
+	refused_before=$(run "ls -i $all_files; md5sum $all_files")
+	output=$(run '
+		splot --config /tmp/splot-own-wg.yml apply --node Cabin 2>&1 | grep -q "none of this peer.s WireGuard interfaces has the key the config has for Cabin" || echo "as Cabin: not refused;"') || true
+	refused_after=$(run "ls -i $all_files; md5sum $all_files")
+	output="$output$(run '
+		splot --config /tmp/splot-own-wg.yml apply --node Home >/dev/null 2>&1 || echo "as Home: refused;"
+		splot --config /tmp/splot-own-wg.yml init --node Home 2>&1 | grep -q "nothing to initialise" || echo "init;"')" || true
+	if [ -z "$output" ] && [ "$refused_before" = "$refused_after" ] &&
+		[ "$network_before" = "$(run 'ls -i /etc/config/network; md5sum /etc/config/network')" ]; then
+		pass "WireGuard left alone: the node is known by its own interface's key (as Cabin refused, as Home applied, network untouched)"
+	else
+		fail "WireGuard left alone: the node is known by its own interface's key" "$output"
+	fi
+
 	if [ "${SPLOT_CHECK_KEEP:-}" = 1 ]; then
 		info "kept: podman exec -it $container sh"
 	else

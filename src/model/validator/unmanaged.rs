@@ -110,6 +110,24 @@ mod tests {
     // forwarded from the WAN; the camera on its hub, forwarded too. Phone's own
     // http is forwarded to its mesh IP. Cabin's ssh is no concern of Home's.
     fn mesh(home_platform: &str) -> String {
+        mesh_without_hub(home_platform).replace(
+            "    wanZone: wan\n",
+            "    wanZone: wan
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+          services:
+            rtsp: { port: 554, proto: tcp, wan: { via: Home } }
+",
+        )
+    }
+
+    /// The same, without Home's hub: a node whose WireGuard splot leaves alone
+    /// has none.
+    fn mesh_without_hub(home_platform: &str) -> String {
         format!(
             "
 meshNetwork: 10.100.0.0/16
@@ -134,14 +152,6 @@ nodes:
             macs: AA:BB:CC:DD:EE:01
             services:
               ipp: {{ port: 631, proto: tcp, allowFrom: Phone, wan: {{ via: Home }} }}
-    hub:
-      network: 10.100.49.0/24
-      clients:
-        camera:
-          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
-          ip: 10.100.49.10
-          services:
-            rtsp: {{ port: 554, proto: tcp, wan: {{ via: Home }} }}
   Cabin:
     platform:
       os: openwrt
@@ -193,7 +203,10 @@ clients:
 
     #[test]
     fn a_firewall_left_alone_with_the_wireguard_has_no_mesh_interface_to_place() {
-        let r = report(&mesh("      firewall: none\n      wireguard: none"));
+        let r = report(&mesh_without_hub(
+            "      firewall: none\n      wireguard: none",
+        ));
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert!(warning_at(
             &r,
             "nodes.Home.platform.firewall",
@@ -261,7 +274,9 @@ clients:
 
     #[test]
     fn wireguard_left_alone_leaves_the_firewall_without_a_mesh_zone() {
-        let r = report(&mesh("      wireguard: none"));
+        // The printer is on Home's own lan: its forward stays.
+        let r = report(&mesh_without_hub("      wireguard: none"));
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
 
         assert!(warning_at(
             &r,
@@ -269,13 +284,13 @@ clients:
             |w| matches!(
                 w,
                 ValidationWarning::WireGuardLeftAlone { unforwarded, .. }
-                    if *unforwarded == strings(&["Home.camera.rtsp", "Phone.http"])
+                    if *unforwarded == strings(&["Phone.http"])
             )
         ));
         assert_eq!(
             messages(&r.warnings),
             [
-                "nodes.Home.platform.wireguard: splot leaves Home's WireGuard alone, so its firewall has no mesh zone - mesh traffic arrives in your interface's zone, under your rules; nothing is forwarded from its WAN to Home.camera.rtsp, Phone.http, as they're reached over the mesh"
+                "nodes.Home.platform.wireguard: splot leaves Home's WireGuard alone, so its firewall has no mesh zone - mesh traffic arrives in your interface's zone, under your rules; nothing is forwarded from its WAN to what's reached over the mesh: Phone.http"
             ]
         );
     }

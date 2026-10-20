@@ -34,6 +34,11 @@ pub enum ValidationError {
         at: ConfigLocation,
     },
 
+    #[error(
+        "{at}: the node has a hub, but splot leaves its WireGuard alone - hub clients are peers on splot's mesh interface; a WireGuard server of your own, with its own subnet, is a zone"
+    )]
+    HubWithoutWireGuard { at: ConfigLocation },
+
     // names
     #[error("{at}: name '{name}' is already used as another global name (node, client, or tag)")]
     GlobalNameCollision {
@@ -238,6 +243,7 @@ impl ValidationError {
         match self {
             Self::ConcernMissing { at, .. } => at,
             Self::UnsupportedProgram { at, .. } => at,
+            Self::HubWithoutWireGuard { at } => at,
             Self::GlobalNameCollision { at, .. } => at,
             Self::InvalidPrefix { at, .. } => at,
             Self::ReservedName { at, .. } => at,
@@ -370,7 +376,7 @@ impl fmt::Display for ValidationWarning {
                 if !unforwarded.is_empty() {
                     write!(
                         f,
-                        "; nothing is forwarded from its WAN to {}, as they're reached over the mesh",
+                        "; nothing is forwarded from its WAN to what's reached over the mesh: {}",
                         unforwarded.join(", ")
                     )?;
                 }
@@ -459,6 +465,7 @@ mod tests {
                 choices: "netifd".to_owned(),
                 at: at(),
             },
+            ValidationError::HubWithoutWireGuard { at: at() },
             ValidationError::GlobalNameCollision {
                 name: id("Home"),
                 at: at(),

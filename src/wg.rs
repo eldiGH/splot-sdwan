@@ -58,3 +58,41 @@ pub fn get_pubkey(private_key: &WgPrivateKey) -> Result<WgPublicKey, Error> {
         .parse()
         .map_err(Error::NotAKey)
 }
+
+/// The public keys of this peer's WireGuard interfaces, whoever set them up.
+/// Reads no private key.
+pub fn interface_public_keys() -> Result<Vec<WgPublicKey>, Error> {
+    Ok(public_keys(&run(&["show", "all", "public-key"], None)?))
+}
+
+/// The keys in `wg show all public-key`'s output: an interface and its public
+/// key per line, `(none)` for one without a key.
+fn public_keys(output: &str) -> Vec<WgPublicKey> {
+    output
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1)?.parse().ok())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_interface_with_a_key_gives_its_public_key() {
+        let output = "spl_mesh\tAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n\
+                      wg0\tBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=\n\
+                      wg1\t(none)\n";
+        let keys = public_keys(output);
+        let keys: Vec<&str> = keys.iter().map(WgPublicKey::as_str).collect();
+
+        assert_eq!(
+            keys,
+            [
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="
+            ]
+        );
+        assert!(public_keys("").is_empty());
+    }
+}

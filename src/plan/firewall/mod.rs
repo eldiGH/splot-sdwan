@@ -166,8 +166,11 @@ clients:
     fn without_splots_wireguard_nothing_points_into_the_mesh() {
         // The mesh arrives on the operator's own interface, in a zone of theirs
         // that splot doesn't know: no mesh zone, no forward to a host reached
-        // over the mesh. The rest stays.
-        let plan = home(&HOME.replace(
+        // over the mesh. The rest stays. Such a node has no hub.
+        let hub_start = HOME.find("    hub:\n").unwrap();
+        let hub_end = HOME.find("clients:\n  Phone").unwrap();
+        let without_hub = format!("{}{}", &HOME[..hub_start], &HOME[hub_end..]);
+        let plan = home(&without_hub.replace(
             "      os: openwrt\n",
             "      os: openwrt\n      wireguard: none\n",
         ));

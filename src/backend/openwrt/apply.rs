@@ -18,6 +18,14 @@ pub enum Error {
     Uci(#[from] uci::Error),
     #[error(transparent)]
     KeyStore(#[from] super::splot_config::SplotConfigError),
+    #[error("can't read this peer's WireGuard keys")]
+    InterfaceKeys(#[source] crate::wg::Error),
+    #[error(
+        "none of this peer's WireGuard interfaces has the key the config has for {node} - is `--node` wrong, or is its WireGuard down? splot leaves {node}'s WireGuard alone, so that's how it knows the peer is {node}"
+    )]
+    NotTheNodesInterfaces {
+        node: crate::types::identifier::Identifier,
+    },
     #[error("can't read the current uci config of {file}")]
     Export {
         file: &'static str,
@@ -279,9 +287,9 @@ mod tests {
         let network = checked(yaml);
         let plan = plan::plan(&network, &node.parse().unwrap()).unwrap();
 
-        OpenWrtBackend::new(SplotConfig::for_tests(
+        OpenWrtBackend::new(Some(SplotConfig::for_tests(
             "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRA=",
-        ))
+        )))
         .render(&plan)
     }
 

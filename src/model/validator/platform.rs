@@ -11,7 +11,7 @@ use crate::{
         validator::types::{ValidationError, ValidationReport},
     },
     types::{
-        config_location::{ConfigLocation, NodeLoc, PlatformLoc},
+        config_location::{ConfigLocation, HubLoc, NodeLoc, PlatformLoc},
         identifier::Identifier,
         platform::{Os, Program, Setting, names},
     },
@@ -19,7 +19,8 @@ use crate::{
 
 /// Every node's platform that passes its checks: each concern's program runs on
 /// the node's OS, and a concern left out has a default there (an OpenWrt node's;
-/// a Linux node has none).
+/// a Linux node has none). A node whose WireGuard splot leaves alone has no hub:
+/// hub clients are peers on splot's mesh interface.
 pub(super) fn check_platforms(
     config: &Config,
     report: &mut ValidationReport,
@@ -29,6 +30,13 @@ pub(super) fn check_platforms(
         .iter()
         .filter_map(|(name, node)| {
             let platform = check_platform(name, &node.platform, report)?;
+
+            if platform.wireguard.is_none() && node.hub.is_some() {
+                report.errors.push(ValidationError::HubWithoutWireGuard {
+                    at: ConfigLocation::Node(name.clone(), NodeLoc::Hub(HubLoc::Root)),
+                });
+            }
+
             Some((name.clone(), platform))
         })
         .collect()
@@ -276,6 +284,24 @@ nodes:
                 "nodes.Home.platform.firewall: splot can't manage firewall with fw4 on linux - there it's nftables, or none",
             ]
         );
+    }
+
+    #[test]
+    fn a_node_whose_wireguard_splot_leaves_alone_has_no_hub() {
+        let hub = "
+    hub:
+      network: 10.100.49.0/24
+";
+        let hub_error = |platform: &str| {
+            let r = report(&format!("{}{hub}", home(platform)));
+            error_at(&r, "nodes.Home.hub", |e| {
+                matches!(e, ValidationError::HubWithoutWireGuard { .. })
+            })
+        };
+
+        assert!(hub_error("      os: openwrt\n      wireguard: none"));
+        assert!(!hub_error("      os: openwrt"));
+        assert!(!hub_error("      os: openwrt\n      firewall: none"));
     }
 
     #[test]
