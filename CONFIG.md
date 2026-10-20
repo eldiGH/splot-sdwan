@@ -86,7 +86,7 @@ platform:
 | `dhcp`      | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | Static leases for devices and global clients.                               |
 | `dns`       | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | Nothing yet: splot generates no DNS config so far.                          |
 
-- **Every node says what it runs.** There's no default OS, and splot doesn't detect it: `splot check` validates every node without reaching any, and the config keeps its meaning when a node is reinstalled.
+- **Every node says what it runs.** There's no default OS, and splot doesn't detect it: `splot check` validates every node without reaching any, and the config keeps its meaning when a node is reinstalled. On the node itself, splot does check it's what the config says, and refuses otherwise.
 - **On OpenWrt** a concern left out is managed with what OpenWrt ships. **On Linux** there's no usual setup to assume: every concern is written out, `none` included, and one left out is an error.
 - **A program the OS doesn't have** (`wg-quick` on OpenWrt) is an error.
 - **`none`** leaves that concern to you: splot generates nothing for it and doesn't touch what's there, its own sections from before included (on OpenWrt that file isn't staged, committed or reloaded). What's then yours to do:
@@ -95,7 +95,7 @@ platform:
   - **`wireguard: none`** (the node is in the mesh, its WireGuard set up by hand): splot keeps no key there, so `splot init` has nothing to create, and before it writes anything it checks the node by your WireGuard instead: one of the peer's interfaces must have the node's `publicKey` (and be up). With the firewall managed by splot, there's no mesh zone, so mesh traffic arrives in whichever zone your interface is in, and nothing is forwarded from the WAN to a host reached over the mesh. The rules `allowFrom` grants are still written. Such a node can't have a [hub](#hub) (an error): hub clients are peers on splot's mesh interface. A WireGuard server of your own, with its own subnet, is a [zone](#zone) to splot.
   - `firewall: none` and `dhcp: none` together: splot manages the mesh alone.
 - **`splot check` warns**, once per node and concern, where a concern left alone leaves part of the config undone, naming what (the services whose `allowFrom` isn't enforced there, those not forwarded from its WAN) and what's yours to do. A concern left alone with nothing asked of it gets no warning.
-- **Not yet:** `splot apply` refuses a Linux node; `splot check` validates it.
+- **Not yet:** `splot apply` refuses a Linux node; `splot check` validates it, and `splot init` and `splot psk set` work there.
 
 ---
 
@@ -234,7 +234,7 @@ Every WireGuard pair (node and node, node and client) uses a preshared key (PSK)
 
 - A pair has one only when **both ends want it**. `psk: false` on a node, a hub client or a global client turns it off for all of that host's pairs: a PSK must exist on both ends, so one end is enough. Meant for WireGuard clients without a field for one, or profiles typed in by hand.
 - Each pair has its own PSK; the same key goes on both ends. Generate one with `wg genpsk`.
-- PSKs never go in `splot.yml`. Each node keeps its own in its key store (on OpenWrt `/etc/config/splot`, next to its private key, readable by root only), and splot fills them in when it applies; `--dry-run` shows `<preshared key>` instead.
+- PSKs never go in `splot.yml`. Each node keeps its own in its key store, next to its private key and readable by root only (on OpenWrt `/etc/config/splot`, on Linux `/etc/splot/keys`), and splot fills them in when it applies; `--dry-run` shows `<preshared key>` instead.
 - Store one on a node with `splot psk set --node <Name> <peer>`, which reads it from stdin (`splot psk set --node Home Cabin < cabin.psk`, so it stays out of your shell history). The peer is named as in the config: `Cabin`, `Phone`, `Home.camera`. On the other end, store the same key the same way, or put it in a client's WireGuard profile as `PresharedKey`.
 - `splot apply` refuses while a pair that uses a PSK has none stored, and names the peers.
 

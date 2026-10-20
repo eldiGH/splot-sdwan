@@ -6,15 +6,16 @@ use anyhow::{Context, bail};
 
 use crate::{
     backend::{
-        Backend,
+        self, Backend,
         key_store::{KeyStore, KeyStoreError},
+        linux::key_store::FileKeyStore,
         openwrt::{OpenWrtBackend, key_store::UciKeyStore},
     },
     model::Network,
-    plan::{self, NodePlan},
+    plan::{self, NodePlan, wireguard::WireGuardPlan},
     types::{
         identifier::Identifier,
-        platform::Os,
+        platform::{self, DhcpProgram, DnsProgram, FirewallProgram, Os, Program, WireGuardProgram},
         wg_key::{WgPresharedKey, WgPublicKey},
     },
     wg,
@@ -23,31 +24,80 @@ use crate::{
 /// The listen port suggested to a new node: WireGuard's usual one.
 const SUGGESTED_LISTEN_PORT: u16 = 51820;
 
-/// `init`: gives this peer its WireGuard key, unless it has one (a key is
-/// never replaced), and says what the config needs for `node`: nothing, its new
-/// key, or a whole entry to paste. A node whose WireGuard splot leaves alone
-/// needs no key of splot's.
-pub fn init(network: &Network, node: &Identifier) -> anyhow::Result<()> {
-    if let Some(known) = network.node(node) {
-        if known.platform().os() != Os::OpenWrt {
-            bail!(
-                "{node} runs {}: `splot init` keeps the key with uci, on OpenWrt only for now",
-                known.platform().os()
-            );
-        }
-        if known.platform().wireguard().is_none() {
-            println!(
-                "splot leaves {node}'s WireGuard alone (wireguard: none), so it keeps no key there: nothing to initialise. apply checks this peer is {node} by its own WireGuard's key."
-            );
-            return Ok(());
-        }
+/// The OS this peer runs, which decides where its keys are kept: what the
+/// config says for `node`, else what `--os` says, else what this peer looks like
+/// (`detected`). Any two that disagree is an error: the config or `--os` would
+/// be wrong about this peer.
+fn peer_os(
+    node: &Identifier,
+    config: Option<Os>,
+    flag: Option<Os>,
+    detected: Option<Os>,
+) -> anyhow::Result<Os> {
+    if let (Some(config), Some(flag)) = (config, flag)
+        && config != flag
+    {
+        bail!("--os says {flag}, but the config says {node} runs {config}");
     }
 
-    let (store, created) = match UciKeyStore::load() {
+    let Some(os) = config.or(flag).or(detected) else {
+        let names: Vec<String> = Os::ALL.iter().map(|os| format!("--os {os}")).collect();
+        bail!(
+            "can't tell which OS this peer runs, and the config doesn't have {node} yet: say it with {}",
+            names.join(" or ")
+        );
+    };
+
+    match detected {
+        Some(detected) if detected != os && config.is_some() => {
+            bail!("this peer runs {detected}, but the config says {node} runs {os}")
+        }
+        Some(detected) if detected != os => bail!("this peer runs {detected}, but --os says {os}"),
+        _ => Ok(os),
+    }
+}
+
+/// The OS the config says `node` runs, once this peer is checked to run it too.
+fn checked_os(network: &Network, node: &Identifier) -> anyhow::Result<Os> {
+    let config = network.node(node).map(|node| node.platform().os());
+
+    peer_os(node, config, None, backend::detect_os())
+}
+
+/// `init`: gives this peer its WireGuard key, unless it has one (a key is
+/// never replaced), and says what the config needs for `node`: nothing, its new
+/// key, or a whole entry to paste. The key goes in the key store of the OS the
+/// peer runs (see `peer_os`). A node whose WireGuard splot leaves alone needs
+/// no key of splot's.
+pub fn init(network: &Network, node: &Identifier, os: Option<Os>) -> anyhow::Result<()> {
+    let known = network.node(node);
+    let os = peer_os(
+        node,
+        known.map(|known| known.platform().os()),
+        os,
+        backend::detect_os(),
+    )?;
+
+    if known.is_some_and(|known| known.platform().wireguard().is_none()) {
+        println!(
+            "splot leaves {node}'s WireGuard alone (wireguard: none), so it keeps no key there: nothing to initialise. apply checks this peer is {node} by its own WireGuard's key."
+        );
+        return Ok(());
+    }
+
+    match os {
+        Os::OpenWrt => init_with::<UciKeyStore>(network, node, os),
+        Os::Linux => init_with::<FileKeyStore>(network, node, os),
+    }
+}
+
+/// `init` with the key store `S`, on a peer that runs `os`.
+fn init_with<S: KeyStore>(network: &Network, node: &Identifier, os: Os) -> anyhow::Result<()> {
+    let (store, created) = match S::load() {
         Ok(store) => (store, false),
         Err(KeyStoreError::NotInitialised) => {
-            UciKeyStore::create_private_key()?;
-            (UciKeyStore::load()?, true)
+            S::create_private_key()?;
+            (S::load()?, true)
         }
         Err(err) => return Err(err.into()),
     };
@@ -74,7 +124,7 @@ pub fn init(network: &Network, node: &Identifier) -> anyhow::Result<()> {
         ),
         Enrolment::NewNode => print!(
             "{node} isn't in the config yet; add it under `nodes:`:\n\n{}",
-            new_node_entry(node, &public_key, network.free_mesh_ip())
+            new_node_entry(node, os, &public_key, network.free_mesh_ip())
         ),
     }
 
@@ -103,9 +153,38 @@ fn enrolment(network: &Network, node: &Identifier, key: &WgPublicKey) -> Enrolme
     }
 }
 
+/// The programs splot can manage `P`'s concern with on `os`.
+fn programs_on<P: Program>(os: Os) -> String {
+    platform::names(P::ALL.iter().copied().filter(|program| program.runs_on(os)))
+}
+
+/// A new node's `platform`, for a peer that runs `os`. OpenWrt's defaults are
+/// what it ships. Linux has none, so every concern is written out: the
+/// WireGuard splot just made the key for, and the rest left to the operator
+/// until they choose otherwise.
+fn new_node_platform(os: Os) -> String {
+    match os {
+        Os::OpenWrt => format!("      os: {os}\n"),
+        Os::Linux => format!(
+            "      os: {os}
+      wireguard: {}
+      # What else splot manages on it; `none` leaves it to you.
+      firewall: none  # or {}
+      dhcp: none  # or {}
+      dns: none  # or {}
+",
+            WireGuardProgram::WgQuick,
+            programs_on::<FirewallProgram>(os),
+            programs_on::<DhcpProgram>(os),
+            programs_on::<DnsProgram>(os),
+        ),
+    }
+}
+
 /// A new node's entry for the config, to paste under `nodes:`.
 fn new_node_entry(
     node: &Identifier,
+    os: Os,
     public_key: &WgPublicKey,
     mesh_ip: Option<Ipv4Addr>,
 ) -> String {
@@ -114,17 +193,16 @@ fn new_node_entry(
         None => "<an address in meshNetwork>  # it has no free address left".to_owned(),
     };
 
-    // `init` runs on OpenWrt only, for now: it keeps the key with uci.
     format!(
         "  {node}:
     platform:
-      os: openwrt
-    publicKey: {public_key}
+{}    publicKey: {public_key}
     meshIp: {mesh_ip}
     listenPort: {SUGGESTED_LISTEN_PORT}
     # endpoint: where the other nodes dial it, its public IP or DNS name;
     # leave it out if nobody can (behind NAT)
-"
+",
+        new_node_platform(os)
     )
 }
 
@@ -133,6 +211,7 @@ fn new_node_entry(
 /// `node`.
 pub fn apply(network: &Network, node: &Identifier, dry_run: bool) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
+    checked_os(network, node)?;
     check_applicable(network, node)?;
     // splot keeps a key only where it runs the node's WireGuard.
     let key_store = plan
@@ -163,14 +242,27 @@ pub fn apply(network: &Network, node: &Identifier, dry_run: bool) -> anyhow::Res
 /// `peer`, read from stdin, once it's checked this peer is `node`.
 pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
-    check_applicable(network, node)?;
+    let os = checked_os(network, node)?;
     let Some(wireguard) = &plan.wireguard else {
         bail!(
             "splot leaves {}'s WireGuard alone (wireguard: none): it sets up no peers there, so it keeps no preshared keys",
             plan.node
         );
     };
-    let key_store = UciKeyStore::load()?;
+
+    match os {
+        Os::OpenWrt => psk_set_with::<UciKeyStore>(&plan, wireguard, peer),
+        Os::Linux => psk_set_with::<FileKeyStore>(&plan, wireguard, peer),
+    }
+}
+
+/// `psk set` with the key store `S`.
+fn psk_set_with<S: KeyStore>(
+    plan: &NodePlan,
+    wireguard: &WireGuardPlan,
+    peer: &str,
+) -> anyhow::Result<()> {
+    let key_store = S::load()?;
     key_store.check_node(&plan.node, &plan.public_key)?;
 
     let Some(peer) = wireguard.peer(peer) else {
@@ -201,7 +293,7 @@ pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Resu
         .trim()
         .parse()
         .context("that's not a preshared key (as `wg genpsk` prints one)")?;
-    UciKeyStore::store_psk(&peer.host, &key)?;
+    S::store_psk(&peer.host, &key)?;
 
     println!(
         "Stored the preshared key of {}'s pair with {}.",
@@ -251,6 +343,50 @@ mod tests {
     use crate::test_support::checked;
 
     #[test]
+    fn the_peers_os_is_the_configs_else_os_else_detected() {
+        let os = |config, flag, detected| {
+            peer_os(&"Barn".parse().unwrap(), config, flag, detected).map_err(|err| err.to_string())
+        };
+        let (openwrt, linux) = (Some(Os::OpenWrt), Some(Os::Linux));
+
+        // Each alone, or agreeing with the others.
+        for one in [openwrt, linux] {
+            assert_eq!(os(one, None, None), Ok(one.unwrap()));
+            assert_eq!(os(None, one, None), Ok(one.unwrap()));
+            assert_eq!(os(None, None, one), Ok(one.unwrap()));
+            assert_eq!(os(one, one, one), Ok(one.unwrap()));
+        }
+
+        // Any two that disagree, either way round.
+        for (one, other) in [(openwrt, linux), (linux, openwrt)] {
+            let (one_name, other_name) = (one.unwrap(), other.unwrap());
+            assert_eq!(
+                os(one, other, None),
+                Err(format!(
+                    "--os says {other_name}, but the config says Barn runs {one_name}"
+                ))
+            );
+            assert_eq!(
+                os(one, None, other),
+                Err(format!(
+                    "this peer runs {other_name}, but the config says Barn runs {one_name}"
+                ))
+            );
+            assert_eq!(
+                os(None, one, other),
+                Err(format!(
+                    "this peer runs {other_name}, but --os says {one_name}"
+                ))
+            );
+        }
+
+        assert_eq!(
+            os(None, None, None),
+            Err("can't tell which OS this peer runs, and the config doesn't have Barn yet: say it with --os openwrt or --os linux".to_owned())
+        );
+    }
+
+    #[test]
     fn a_new_node_entry_pasted_into_the_config_is_that_node() {
         let config = "
 meshNetwork: 10.100.0.0/16
@@ -269,14 +405,32 @@ nodes:
         let cabin: Identifier = "Cabin".parse().unwrap();
         let ip = checked(config).free_mesh_ip();
 
-        let network = checked(&format!("{config}{}", new_node_entry(&cabin, &key, ip)));
-        let node = network.node(&cabin).unwrap();
+        for os in Os::ALL {
+            let entry = new_node_entry(&cabin, os, &key, ip);
+            let network = checked(&format!("{config}{entry}"));
+            let node = network.node(&cabin).unwrap();
 
-        assert_eq!(*node.public_key(), key);
-        assert_eq!(node.mesh_address().to_string(), "10.100.0.2/16");
-        assert_eq!(node.listen_port().to_string(), "51820");
-        // Behind NAT until someone writes an endpoint in.
-        assert!(node.endpoint().is_none());
+            assert_eq!(*node.public_key(), key);
+            assert_eq!(node.mesh_address().to_string(), "10.100.0.2/16");
+            assert_eq!(node.listen_port().to_string(), "51820");
+            // Behind NAT until someone writes an endpoint in.
+            assert!(node.endpoint().is_none());
+
+            // The OS it was made on. splot runs its WireGuard (that's what the
+            // key is for), and on Linux, which has no defaults, leaves the rest
+            // alone until the operator says otherwise.
+            let platform = node.platform();
+            assert_eq!(platform.os(), os, "{entry}");
+            assert!(platform.wireguard().is_some(), "{entry}");
+            if os == Os::Linux {
+                assert_eq!(platform.wireguard(), Some(WireGuardProgram::WgQuick));
+                assert_eq!(platform.firewall(), None);
+                assert_eq!(platform.dhcp(), None);
+                assert!(entry.contains("firewall: none  # or nftables\n"), "{entry}");
+                assert!(entry.contains("dhcp: none  # or dnsmasq\n"), "{entry}");
+                assert!(entry.contains("dns: none  # or dnsmasq\n"), "{entry}");
+            }
+        }
     }
 
     #[test]

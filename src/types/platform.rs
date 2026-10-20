@@ -13,6 +13,37 @@ pub enum Os {
     Linux,
 }
 
+impl Os {
+    /// Every OS splot knows.
+    pub const ALL: [Self; 2] = [Self::OpenWrt, Self::Linux];
+}
+
+/// The OS named on the command line (`splot init --os`), which splot doesn't
+/// know.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{found:?} isn't an OS splot knows: {known}")]
+pub struct ParseOsError {
+    found: String,
+    known: String,
+}
+
+impl FromStr for Os {
+    type Err = ParseOsError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|os| os.to_string() == s)
+            .ok_or_else(|| {
+                let known: Vec<String> = Self::ALL.iter().map(Os::to_string).collect();
+                ParseOsError {
+                    found: s.to_owned(),
+                    known: known.join(", "),
+                }
+            })
+    }
+}
+
 /// What splot can manage on a node, each through a program of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Concern {
@@ -235,6 +266,16 @@ mod tests {
 
         assert_eq!(parse::<WireGuardProgram>("none"), Ok(Setting::None));
         assert_eq!(parse::<DnsProgram>("none"), Ok(Setting::None));
+    }
+
+    #[test]
+    fn an_os_is_known_by_the_name_the_config_gives_it() {
+        for os in Os::ALL {
+            assert_eq!(os.to_string().parse(), Ok(os));
+            let yaml: Os = serde_norway::from_str(&os.to_string()).unwrap();
+            assert_eq!(yaml, os);
+        }
+        assert!("OpenWrt".parse::<Os>().is_err());
     }
 
     #[test]

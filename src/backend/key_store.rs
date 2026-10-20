@@ -1,6 +1,6 @@
 //! Where a node keeps its secrets: its private key, and the preshared key of
 //! each of its pairs that has one. Each platform keeps them its own way (uci on
-//! OpenWrt); what uses them doesn't need to know which.
+//! OpenWrt, a file on Linux); what uses them doesn't need to know which.
 
 use std::error::Error;
 
@@ -80,6 +80,11 @@ pub enum KeyStoreError {
         #[source]
         cause: Box<dyn Error + Send + Sync>,
     },
+    /// A line of the store's file that isn't one splot writes there.
+    #[error(
+        "{at}: {problem} - it holds `private-key <key>` and `psk <peer> <key>` lines, written by splot"
+    )]
+    Malformed { at: String, problem: &'static str },
     #[error("the private key stored in {at} is invalid")]
     InvalidPrivateKey {
         at: String,

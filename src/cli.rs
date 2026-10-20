@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use crate::types::identifier::Identifier;
+use crate::types::{identifier::Identifier, platform::Os};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -33,6 +33,10 @@ pub enum Command {
         /// The node this peer is, as the config names it
         #[arg(long)]
         node: Identifier,
+        /// The OS this peer runs (openwrt, linux), for a node the config doesn't
+        /// have yet: it decides where the key is kept. Detected when left out
+        #[arg(long)]
+        os: Option<Os>,
     },
 
     /// Apply the config to this peer using uci
@@ -127,11 +131,24 @@ mod tests {
         let cli = parse(&["splot", "init", "--node", "Cabin"]);
         assert!(matches!(
             cli.command(),
-            Some(Command::Init { node }) if node.as_ref() == "Cabin"
+            Some(Command::Init { node, os: None }) if node.as_ref() == "Cabin"
         ));
         // Without one, or with one that isn't a name, it's a usage error.
         assert!(Cli::try_parse_from(["splot", "init"]).is_err());
         assert!(Cli::try_parse_from(["splot", "init", "--node", "a b"]).is_err());
+    }
+
+    #[test]
+    fn init_may_name_the_peers_os() {
+        let cli = parse(&["splot", "init", "--node", "Barn", "--os", "linux"]);
+        assert!(matches!(
+            cli.command(),
+            Some(Command::Init {
+                os: Some(Os::Linux),
+                ..
+            })
+        ));
+        assert!(Cli::try_parse_from(["splot", "init", "--node", "Barn", "--os", "bsd"]).is_err());
     }
 
     #[test]

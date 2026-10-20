@@ -21,7 +21,7 @@ mod tests {
         identifier::{Identifier, NestedIdentifier},
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
-        platform::{FirewallProgram, Setting},
+        platform::{FirewallProgram, Os, Setting},
         port::{Port, PortOrRange, PortRange, ServicePort},
         schema_helpers::OneOrManyUnique,
         wan_via_target::{WanViaTarget, WanViaTargets},
@@ -67,6 +67,7 @@ mod tests {
         is_error::<super::endpoint::ParseEndpointHostError>();
         is_error::<super::wg_key::KeyFormatError>();
         is_error::<super::platform::ParseSettingError>();
+        is_error::<super::platform::ParseOsError>();
         is_error::<crate::model::validator::types::ValidationError>();
         is_error::<crate::process::Error>();
     }
@@ -118,6 +119,7 @@ mod tests {
             error::<Hostname>("10.0.0.300"),
             error::<EndpointHost>("a_b.net"),
             error::<Setting<FirewallProgram>>("iptables"),
+            error::<Os>("windows"),
         ];
 
         // wan.via names a node at most once; only serde builds that list.

@@ -1,9 +1,27 @@
 //! Backends: how a node's plan becomes config on the platform it runs.
 
 pub mod key_store;
+pub mod linux;
 pub mod openwrt;
 
-use crate::plan::NodePlan;
+use std::path::Path;
+
+use crate::{plan::NodePlan, types::platform::Os};
+
+/// The file every OpenWrt has, saying which release it is.
+const OPENWRT_RELEASE: &str = "/etc/openwrt_release";
+
+/// The OS this peer runs, as far as splot can tell: OpenWrt by its release
+/// file, any other Linux as Linux. None for anything else.
+pub fn detect_os() -> Option<Os> {
+    if Path::new(OPENWRT_RELEASE).exists() {
+        Some(Os::OpenWrt)
+    } else if cfg!(target_os = "linux") {
+        Some(Os::Linux)
+    } else {
+        None
+    }
+}
 
 /// A platform splot configures a node through.
 pub trait Backend {
