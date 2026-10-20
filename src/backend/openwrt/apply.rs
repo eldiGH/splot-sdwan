@@ -8,7 +8,7 @@ use super::{
     export::{self, ParseError},
     naming,
     reload::{self, Reload},
-    secret,
+    slot,
     uci::{self, UciBatchCommand},
 };
 
@@ -17,15 +17,7 @@ pub enum Error {
     #[error(transparent)]
     Uci(#[from] uci::Error),
     #[error(transparent)]
-    KeyStore(#[from] crate::backend::key_store::KeyStoreError),
-    #[error("can't read this peer's WireGuard keys")]
-    InterfaceKeys(#[source] crate::wg::Error),
-    #[error(
-        "none of this peer's WireGuard interfaces has the key the config has for {node} - is `--node` wrong, or is its WireGuard down? splot leaves {node}'s WireGuard alone, so that's how it knows the peer is {node}"
-    )]
-    NotTheNodesInterfaces {
-        node: crate::types::identifier::Identifier,
-    },
+    NotConfirmed(#[from] crate::backend::NotConfirmed),
     #[error("can't read the current uci config of {file}")]
     Export {
         file: &'static str,
@@ -41,11 +33,8 @@ pub enum Error {
         .0.join(", ")
     )]
     DuplicateSections(Vec<String>),
-    #[error(
-        "no preshared key stored for {}: every WireGuard pair uses one unless an end sets `psk: false`. Generate one per pair (`wg genpsk`) and store the same key on both ends, here with `splot psk set <peer>`",
-        .0.join(", ")
-    )]
-    MissingPsks(Vec<String>),
+    #[error(transparent)]
+    MissingPsks(#[from] crate::backend::secret::MissingPsks),
     #[error(
         "{} already has uncommitted uci changes, which splot would commit or revert together with its own - review them with `uci changes <file>`, commit or revert them, then run splot again",
         .0.join(", ")
@@ -142,7 +131,7 @@ pub(super) fn print(rendered: &Rendered) -> Result<(), Error> {
     }
 
     for command in changeset.commands() {
-        println!("{}", secret::masked(command, &rendered.secrets));
+        println!("{}", slot::masked(command, &rendered.secrets));
     }
 
     // As comments, so the output stays a valid `uci batch` script.

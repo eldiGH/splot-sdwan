@@ -2,10 +2,11 @@ use log::{debug, info};
 
 use super::{
     naming::{self, UciSectionName},
-    secret::{Secret, Slot},
     section::{Section, UciSection, UciSectionBuilder},
+    slot::Slot,
 };
 use crate::{
+    backend::secret::Secret,
     consts,
     plan::wireguard::{Endpoint, Peer, WireGuardPlan},
 };

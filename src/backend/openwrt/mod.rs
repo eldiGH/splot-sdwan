@@ -10,25 +10,21 @@ pub mod key_store;
 mod naming;
 mod network;
 mod reload;
-mod secret;
 mod section;
+mod slot;
 pub mod uci;
 
 use log::info;
 
 use crate::{
-    backend::{
-        Backend,
-        key_store::{KeyStore, KeyStoreError},
-    },
+    backend::{self, Backend, secret},
     plan::NodePlan,
     types::{identifier::Identifier, wg_key::WgPublicKey},
-    wg,
 };
 pub use apply::Error;
 use key_store::UciKeyStore;
-use secret::{Secret, Slot};
 use section::{Section, Value};
+use slot::Slot;
 
 /// The node's config as uci sections, file by file, in the order splot commits
 /// the files, with placeholders where its secrets go.
@@ -55,21 +51,10 @@ impl Rendered {
     /// The same config with the node's secrets from `store` in their slots.
     /// Refuses when a pair's preshared key isn't stored, naming the peers.
     fn with_secrets(&self, store: &UciKeyStore) -> Result<Self, Error> {
-        let mut missing = Vec::new();
+        let values = secret::values(self.secrets.iter().map(|slot| &slot.secret), store)?;
         let mut files = self.files.clone();
 
-        for slot in &self.secrets {
-            let value = match &slot.secret {
-                Secret::PrivateKey => store.private_key().expose(),
-                Secret::Psk(peer) => match store.psk(peer) {
-                    Some(key) => key.expose(),
-                    None => {
-                        missing.push(peer.to_string());
-                        continue;
-                    }
-                },
-            };
-
+        for (slot, value) in self.secrets.iter().zip(values) {
             let option = files
                 .iter_mut()
                 .filter(|(file, _)| *file == slot.file)
@@ -83,28 +68,10 @@ impl Rendered {
             }
         }
 
-        if !missing.is_empty() {
-            return Err(Error::MissingPsks(missing));
-        }
-
         Ok(Self {
             files,
             ..self.clone()
         })
-    }
-}
-
-/// Checks this peer is `node` by its own WireGuard, which splot leaves alone:
-/// one of its interfaces has `expected`, the key the config has for `node`.
-fn is_node_by_its_interfaces(
-    node: &Identifier,
-    expected: &WgPublicKey,
-    interface_keys: &[WgPublicKey],
-) -> Result<(), Error> {
-    if interface_keys.contains(expected) {
-        Ok(())
-    } else {
-        Err(Error::NotTheNodesInterfaces { node: node.clone() })
     }
 }
 
@@ -141,18 +108,17 @@ impl OpenWrtBackend {
     /// node's WireGuard; by the node's own WireGuard where it doesn't (no
     /// secrets then).
     fn confirmed(&self, rendered: &Rendered) -> Result<Rendered, Error> {
-        if !rendered.wireguard {
-            let keys = wg::interface_public_keys().map_err(Error::InterfaceKeys)?;
-            is_node_by_its_interfaces(&rendered.node, &rendered.public_key, &keys)?;
-            return Ok(rendered.clone());
-        }
+        let store = backend::confirm_node(
+            &rendered.node,
+            &rendered.public_key,
+            rendered.wireguard,
+            self.key_store.as_ref(),
+        )?;
 
-        let store = self
-            .key_store
-            .as_ref()
-            .ok_or(KeyStoreError::NotInitialised)?;
-        store.check_node(&rendered.node, &rendered.public_key)?;
-        rendered.with_secrets(store)
+        match store {
+            Some(store) => rendered.with_secrets(store),
+            None => Ok(rendered.clone()),
+        }
     }
 }
 
@@ -205,6 +171,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        backend::secret::Secret,
         model::{Network, host::HostRef, node::Node},
         plan, test_support,
         types::platform::Os,
@@ -299,24 +266,6 @@ nodes:
             no_wireguard.public_key.as_str(),
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         );
-    }
-
-    #[test]
-    fn a_node_whose_wireguard_splot_leaves_alone_is_known_by_its_interfaces() {
-        let key =
-            |c: char| -> WgPublicKey { format!("{}A=", c.to_string().repeat(42)).parse().unwrap() };
-        let home: Identifier = "Home".parse().unwrap();
-
-        assert!(is_node_by_its_interfaces(&home, &key('A'), &[key('B'), key('A')]).is_ok());
-
-        let err = is_node_by_its_interfaces(&home, &key('A'), &[key('B')]).unwrap_err();
-        assert!(matches!(&err, Error::NotTheNodesInterfaces { node } if *node == home));
-        assert_eq!(
-            err.to_string(),
-            "none of this peer's WireGuard interfaces has the key the config has for Home - is `--node` wrong, or is its WireGuard down? splot leaves Home's WireGuard alone, so that's how it knows the peer is Home"
-        );
-        // No WireGuard up at all.
-        assert!(is_node_by_its_interfaces(&home, &key('A'), &[]).is_err());
     }
 
     #[test]
@@ -443,7 +392,7 @@ nodes:
     fn apply_refuses_while_a_pairs_psk_is_missing() {
         let missing = |store: &UciKeyStore| match psk_peers(&[cabin(), phone()]).with_secrets(store)
         {
-            Err(Error::MissingPsks(peers)) => peers,
+            Err(Error::MissingPsks(secret::MissingPsks(peers))) => peers,
             Err(err) => panic!("{err}"),
             Ok(_) => panic!("filled in without every PSK"),
         };
