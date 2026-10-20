@@ -105,9 +105,10 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 - Every command is a request to procd/netifd that returns at once; the daemons do the restarts afterwards, independently of splot's session, so a reload that briefly drops the mesh can't cut splot off halfway. splot runs all commands even after one fails, then reports every failure.
 - `apply` fails before writing anything when `ubus` isn't available. `--dry-run` lists the reload commands as `#` comments, which `uci batch` ignores.
 
-### CLI (`src/cli.rs`, `src/main.rs`)
+### CLI (`src/cli.rs`, `src/main.rs`, `src/commands.rs`)
 
 - clap-based CLI: `splot check` (validate, report errors/warnings), `splot apply [--dry-run]`, and `splot psk set <peer>` (store the preshared key of this router's pair with a peer, read from stdin; refuses a name that isn't its peer, a pair with `psk: false`, and anything that isn't a key); `-c/--config` overrides the config path (default `splot.yml`).
+- `main` parses the command line, loads and validates the config (every command does that first), and dispatches; each command is a function in `commands` (`apply`, `psk_set`).
 - `main` returns `anyhow::Result` — errors propagate with context chains (thiserror-typed at module boundaries, anyhow at the application layer); validation failures and an unenrolled router abort with actionable messages.
 - Every error type derives `thiserror::Error` (so each is a `std::error::Error`; a test lists them and stops compiling when one isn't). The parse errors of `src/types/` reach the user through serde, which shows only `Display`, so their messages include the inner reason, and that reason isn't also marked as their `source` (a chain would say it twice); a variant that only forwards an inner error is `transparent`. Snapshots pin every parse error's and every validation error's message. `ValidationWarning` keeps a hand-written `Display`: a warning isn't an error.
 - Logging via `log`/`env_logger` (`info` progress per manager, `debug` for details).
