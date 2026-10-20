@@ -79,7 +79,7 @@ check_version() {
 	local log_lines output
 	# Only init writes the router's key: until it has run, the dry run says so
 	# and creates nothing.
-	output=$(run 'splot --config /tmp/splot.example.yml apply --dry-run 2>&1') || true
+	output=$(run 'splot --config /tmp/splot.example.yml apply --node Home --dry-run 2>&1') || true
 	if printf '%s' "$output" | grep -q 'run `splot init' && ! run '[ -e /etc/config/splot ]'; then
 		pass "before init, the dry run asks for it and writes nothing"
 	else
@@ -110,10 +110,25 @@ check_version() {
 			"first: $first"$'\n'"initialised: $initialised"$'\n'"wrong: $wrong"$'\n'"stale: $stale"
 	fi
 
+	# A command acts as the node --node names once it has checked this peer is
+	# that node: as Cabin, or as a node the config doesn't have, it refuses and
+	# writes nothing.
+	output=$(run '
+		splot --config /tmp/splot.yml apply --node Cabin --dry-run 2>&1 | grep -q "isn.t the one the config has for Cabin" || echo "apply as Cabin;"
+		wg genpsk | splot --config /tmp/splot.yml psk set --node Cabin Home 2>&1 | grep -q "isn.t the one the config has for Cabin" || echo "psk set as Cabin;"
+		splot --config /tmp/splot.yml apply --node Pond --dry-run 2>&1 | grep -q "no node Pond in the config; its nodes are Cabin, Home, Lake" || echo "apply as Pond;"
+		uci show splot | grep -q spl_psk_ && echo "stored a PSK anyway;"
+		[ -n "$(uci changes)" ] && echo "staged changes;"') || true
+	if [ -z "$output" ]; then
+		pass "as another node or one the config doesn't have, commands refuse"
+	else
+		fail "as another node or one the config doesn't have, commands refuse" "$output"
+	fi
+
 	# Every pair uses a preshared key unless an end turns it off (the example's
 	# lte-cam does). Until they're stored, apply refuses, names the peers and
 	# touches nothing.
-	if output=$(run 'splot --config /tmp/splot.yml apply' 2>&1); then
+	if output=$(run 'splot --config /tmp/splot.yml apply --node Home' 2>&1); then
 		fail "apply refuses while PSKs are missing" "$output"
 	elif printf '%s' "$output" | grep -q 'no preshared key stored for Cabin, Lake, Phone:' &&
 		[ "$(run 'uci show network | grep -c spl_')" = 0 ]; then
@@ -124,9 +139,9 @@ check_version() {
 	# psk set stores nothing for a name that isn't Home's peer, a pair with psk
 	# turned off, or input that isn't a key.
 	output=$(run '
-		wg genpsk | splot --config /tmp/splot.yml psk set Cabin.camera 2>&1 | grep -q "isn.t a peer of Home" || echo "not a peer;"
-		wg genpsk | splot --config /tmp/splot.yml psk set Home.lte-cam 2>&1 | grep -q "uses no preshared key" || echo "psk: false;"
-		echo "not a key" | splot --config /tmp/splot.yml psk set Cabin 2>&1 | grep -q "not a preshared key" || echo "not a key;"
+		wg genpsk | splot --config /tmp/splot.yml psk set --node Home Cabin.camera 2>&1 | grep -q "isn.t a peer of Home" || echo "not a peer;"
+		wg genpsk | splot --config /tmp/splot.yml psk set --node Home Home.lte-cam 2>&1 | grep -q "uses no preshared key" || echo "psk: false;"
+		echo "not a key" | splot --config /tmp/splot.yml psk set --node Home Cabin 2>&1 | grep -q "not a preshared key" || echo "not a key;"
 		uci show splot | grep -q spl_psk_ && echo "stored one anyway;"') || true
 	if [ -z "$output" ]; then
 		pass "psk set refuses a non-peer, a pair without a PSK, and a non-key"
@@ -140,7 +155,7 @@ check_version() {
 	store_created=$(run 'ls -l /etc/config/splot | cut -c1-10')
 	run 'chmod 644 /etc/config/splot'
 	run 'for peer in Cabin Lake Phone; do
-		wg genpsk | splot --config /tmp/splot.yml psk set $peer >/dev/null || exit 1
+		wg genpsk | splot --config /tmp/splot.yml psk set --node Home $peer >/dev/null || exit 1
 	done'
 	store_after=$(run 'ls -l /etc/config/splot | cut -c1-10')
 	if [ "$store_created" = "-rw-------" ] && [ "$store_after" = "-rw-------" ]; then
@@ -150,7 +165,7 @@ check_version() {
 	fi
 
 	log_lines=$(run 'logread | wc -l')
-	if output=$(run 'splot --config /tmp/splot.yml apply' 2>&1); then
+	if output=$(run 'splot --config /tmp/splot.yml apply --node Home' 2>&1); then
 		pass "splot apply: $(printf '%s' "$output" | tail -1)"
 	else
 		fail "splot apply" "$output"
@@ -259,7 +274,7 @@ check_version() {
 	local before after
 	# Applying an unchanged config stages nothing, so uci rewrites no file.
 	# stdout only: the log goes to stderr.
-	output=$(run 'splot --config /tmp/splot.yml apply --dry-run 2>/dev/null') || true
+	output=$(run 'splot --config /tmp/splot.yml apply --node Home --dry-run 2>/dev/null') || true
 	if [ "$output" = "# Nothing to change." ]; then
 		pass "dry run of an unchanged node stages nothing"
 	else
@@ -270,7 +285,7 @@ check_version() {
 	# here has no stat.)
 	local files='/etc/config/network /etc/config/firewall /etc/config/dhcp'
 	before=$(run "ls -i $files; md5sum $files")
-	output=$(run 'splot --config /tmp/splot.yml apply' 2>&1) || true
+	output=$(run 'splot --config /tmp/splot.yml apply --node Home' 2>&1) || true
 	after=$(run "ls -i $files; md5sum $files")
 	if [ "$(printf '%s' "$output" | tail -1)" = "Nothing changed." ] && [ "$before" = "$after" ]; then
 		pass "second apply changes nothing, files untouched"
@@ -284,14 +299,14 @@ check_version() {
 	before=$(run 'cat /sys/class/net/spl_mesh/ifindex 2>/dev/null') || true
 	run "sed -i 's/$CABIN_ENDPOINT/203.0.113.21/' /tmp/splot.yml"
 	# Only that peer's endpoint is staged, then the network file is committed.
-	output=$(run 'splot --config /tmp/splot.yml apply --dry-run 2>/dev/null' | grep -v '^#') || true
+	output=$(run 'splot --config /tmp/splot.yml apply --node Home --dry-run 2>/dev/null' | grep -v '^#') || true
 	expected="set network.spl_wireguard_spl_mesh_Cabin.endpoint_host='203.0.113.21'"$'\n'"commit network"
 	if [ "$output" = "$expected" ]; then
 		pass "peer change stages only that peer"
 	else
 		fail "peer change stages only that peer" "$output"
 	fi
-	if ! output=$(run 'splot --config /tmp/splot.yml apply' 2>&1); then
+	if ! output=$(run 'splot --config /tmp/splot.yml apply --node Home' 2>&1); then
 		fail "peer update: apply" "$output"
 	else
 		sleep 3
@@ -312,15 +327,15 @@ check_version() {
 
 	# A PSK change: Cabin's pair gets a new key. Only that option is staged, the
 	# dry run shows its placeholder, and WireGuard gets the new key.
-	run 'wg genpsk | splot --config /tmp/splot.yml psk set Cabin >/dev/null'
-	output=$(run 'splot --config /tmp/splot.yml apply --dry-run 2>/dev/null' | grep -v '^#') || true
+	run 'wg genpsk | splot --config /tmp/splot.yml psk set --node Home Cabin >/dev/null'
+	output=$(run 'splot --config /tmp/splot.yml apply --node Home --dry-run 2>/dev/null' | grep -v '^#') || true
 	expected="set network.spl_wireguard_spl_mesh_Cabin.preshared_key='<preshared key>'"$'\n'"commit network"
 	if [ "$output" = "$expected" ]; then
 		pass "PSK change stages only that key, shown as its placeholder"
 	else
 		fail "PSK change stages only that key, shown as its placeholder" "$output"
 	fi
-	if ! output=$(run 'splot --config /tmp/splot.yml apply' 2>&1); then
+	if ! output=$(run 'splot --config /tmp/splot.yml apply --node Home' 2>&1); then
 		fail "PSK update: apply" "$output"
 	else
 		sleep 3

@@ -108,11 +108,12 @@ fn new_node_entry(
     )
 }
 
-/// `apply`: makes this peer's config what the plan says, or shows what that
-/// would change (`dry_run`).
-pub fn apply(network: &Network, dry_run: bool) -> anyhow::Result<()> {
+/// `apply`: makes this peer's config what the plan for `node` says, or shows
+/// what that would change (`dry_run`). The backend first checks this peer is
+/// `node`.
+pub fn apply(network: &Network, node: &Identifier, dry_run: bool) -> anyhow::Result<()> {
+    let plan = node_plan(network, node)?;
     let splot_config = SplotConfig::load()?;
-    let plan = own_plan(network, &splot_config)?;
 
     let backend = OpenWrtBackend::new(splot_config);
     let rendered = backend.render(&plan);
@@ -132,11 +133,12 @@ pub fn apply(network: &Network, dry_run: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `psk set`: stores the preshared key of this peer's pair with `peer`, read
-/// from stdin.
-pub fn psk_set(network: &Network, peer: &str) -> anyhow::Result<()> {
+/// `psk set`: stores the preshared key of the pair of `node` (this peer) with
+/// `peer`, read from stdin, once it's checked this peer is `node`.
+pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Result<()> {
+    let plan = node_plan(network, node)?;
     let splot_config = SplotConfig::load()?;
-    let plan = own_plan(network, &splot_config)?;
+    splot_config.check_node(&plan.node, &plan.wireguard.public_key)?;
 
     let Some(peer) = plan.wireguard.peer(peer) else {
         let peers: Vec<String> = plan
@@ -177,18 +179,19 @@ pub fn psk_set(network: &Network, peer: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// This peer's plan: the node whose public key follows from the local private
-/// key.
-fn own_plan(network: &Network, splot_config: &SplotConfig) -> anyhow::Result<NodePlan> {
-    let own_public_key = wg::get_pubkey(splot_config.mesh_key())
-        .context("failed to derive this peer's public key")?;
-
-    network
-        .find_node_by_public_key(own_public_key.as_str())
-        .and_then(|node| plan::plan(network, node.name()))
-        .context(
-            "this peer's public key was not found in the splot config - add this node and try again",
+/// The plan for `node`; an error naming the config's nodes when it has no node
+/// of that name.
+fn node_plan(network: &Network, node: &Identifier) -> anyhow::Result<NodePlan> {
+    plan::plan(network, node).with_context(|| {
+        let nodes: Vec<String> = network
+            .nodes()
+            .map(|node| node.name().to_string())
+            .collect();
+        format!(
+            "there's no node {node} in the config; its nodes are {}",
+            nodes.join(", ")
         )
+    })
 }
 
 #[cfg(test)]
@@ -269,5 +272,38 @@ clients:
         // A key the config doesn't know.
         assert_eq!(enrolment("Home", 'Z'), Enrolment::OtherKey);
         assert_eq!(enrolment("Pond", 'Z'), Enrolment::NewNode);
+    }
+
+    #[test]
+    fn a_node_the_config_doesnt_have_is_named_with_the_ones_it_has() {
+        let network = checked(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+  Cabin:
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+",
+        );
+
+        let err = node_plan(&network, &"Pond".parse().unwrap()).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "there's no node Pond in the config; its nodes are Cabin, Home"
+        );
+        assert_eq!(
+            node_plan(&network, &"Home".parse().unwrap())
+                .unwrap()
+                .node
+                .as_ref(),
+            "Home"
+        );
     }
 }

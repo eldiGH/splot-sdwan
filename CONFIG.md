@@ -1,6 +1,6 @@
 # splot Configuration Reference
 
-The config file (`splot.yml`) describes the entire mesh network. Every router in the mesh uses the same shared config. splot reads it, identifies which node it is by matching its WireGuard public key, and generates the appropriate network, DHCP, and firewall configuration for that router.
+The config file (`splot.yml`) describes the entire mesh network. Every router in the mesh uses the same shared config. splot reads it, takes which node a peer is from `--node` (and checks the peer's WireGuard key is that node's `publicKey`), and generates the appropriate network, DHCP, and firewall configuration for that router.
 
 ---
 
@@ -43,7 +43,7 @@ HomeRouter:
 
 | Field           | Type                       | Required | Description                                                                                                                                                                                                       |
 | --------------- | -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `publicKey`     | string                     | yes      | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients). splot uses this to identify which node it's running on.                                                                                                                            |
+| `publicKey`     | string                     | yes      | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients). Before splot acts as this node (`--node`), it checks the peer's own key is this one.                                                                                                                            |
 | `endpoint`      | IPv4 address or DNS name   | no       | Where other mesh nodes dial this node: its public IP, or a DNS name that resolves to it (labels of letters, digits and hyphens). Leave it out when nobody can dial the node (behind NAT or CGNAT with no port forward, or behind a firewall that drops what comes in): it then dials the others, and keeps its NAT mapping open with keepalives so they can reach it too. At least one node needs an endpoint; a node without one can't host a [hub](#hub), and two nodes without one have no tunnel between them (a warning). A name must resolve through public DNS, never through the mesh: the tunnel can't need itself to come up. Peers resolve it when their mesh interface comes up, so a changed address reaches them the next time it does; on OpenWrt a name that doesn't resolve keeps that whole interface down, not just this peer. |
 | `listenPort`    | integer                    | yes      | WireGuard listen port for the mesh interface.                                                                                                                                                                     |
 | `psk`           | boolean                    | no       | Whether this node's WireGuard pairs use a preshared key. Default `true`; a pair has one only when both ends want it. See [Preshared keys](#preshared-keys). |
@@ -192,7 +192,7 @@ Every WireGuard pair (node and node, node and client) uses a preshared key (PSK)
 - A pair has one only when **both ends want it**. `psk: false` on a node, a hub client or a global client turns it off for all of that host's pairs: a PSK must exist on both ends, so one end is enough. Meant for WireGuard clients without a field for one, or profiles typed in by hand.
 - Each pair has its own PSK; the same key goes on both ends. Generate one with `wg genpsk`.
 - PSKs never go in `splot.yml`. Each node keeps its own in its key store (on OpenWrt `/etc/config/splot`, next to its private key, readable by root only), and splot fills them in when it applies; `--dry-run` shows `<preshared key>` instead.
-- Store one on a node with `splot psk set <peer>`, which reads it from stdin (`splot psk set Cabin < cabin.psk`, so it stays out of your shell history). The peer is named as in the config: `Cabin`, `Phone`, `Home.camera`. On the other end, store the same key the same way, or put it in a client's WireGuard profile as `PresharedKey`.
+- Store one on a node with `splot psk set --node <Name> <peer>`, which reads it from stdin (`splot psk set --node Home Cabin < cabin.psk`, so it stays out of your shell history). The peer is named as in the config: `Cabin`, `Phone`, `Home.camera`. On the other end, store the same key the same way, or put it in a client's WireGuard profile as `PresharedKey`.
 - `splot apply` refuses while a pair that uses a PSK has none stored, and names the peers.
 
 ---

@@ -14,7 +14,10 @@ use super::{
 use crate::{
     env,
     model::host::HostRef,
-    types::wg_key::{KeyFormatError, WgPresharedKey, WgPrivateKey},
+    types::{
+        identifier::Identifier,
+        wg_key::{KeyFormatError, WgPresharedKey, WgPrivateKey, WgPublicKey},
+    },
     wg,
 };
 
@@ -58,6 +61,23 @@ fn psks(sections: &[Section]) -> Result<BTreeMap<String, WgPresharedKey>, SplotC
     Ok(psks)
 }
 
+/// Whether a peer whose public key is `own` is `node`, whose key the config has
+/// as `expected`.
+fn is_node(
+    node: &Identifier,
+    expected: &WgPublicKey,
+    own: WgPublicKey,
+) -> Result<(), SplotConfigError> {
+    if own == *expected {
+        Ok(())
+    } else {
+        Err(SplotConfigError::WrongNode {
+            node: node.clone(),
+            own,
+        })
+    }
+}
+
 /// The commands that store `key` as the preshared key of the node's pair with
 /// `peer`, in place of any it had.
 fn store_psk_commands(peer: &HostRef, key: &WgPresharedKey) -> Vec<UciBatchCommand> {
@@ -96,6 +116,10 @@ fn make_private(path: &Path) -> Result<(), SplotConfigError> {
 pub enum SplotConfigError {
     #[error("this peer has no WireGuard key yet - run `splot init --node <name>` first")]
     NotInitialised,
+    #[error(
+        "this peer's key isn't the one the config has for {node} - is `--node` wrong? `splot init --node {node}` says whose key it is; if this peer is {node} (reinstalled, or its key rotated), set nodes.{node}.publicKey to {own}"
+    )]
+    WrongNode { node: Identifier, own: WgPublicKey },
     #[error("can't create the key store or make it private")]
     Io(#[from] std::io::Error),
     #[error("stored mesh private key is invalid")]
@@ -156,6 +180,16 @@ impl SplotConfig {
         ])?;
 
         Ok(())
+    }
+
+    /// Checks this peer is `node`: its private key's public half is the key the
+    /// config has for `node`. Before anything acts as that node.
+    pub fn check_node(
+        &self,
+        node: &Identifier,
+        expected: &WgPublicKey,
+    ) -> Result<(), SplotConfigError> {
+        is_node(node, expected, wg::get_pubkey(&self.mesh_key)?)
     }
 
     /// The preshared key of the node's pair with `peer`, if one is stored.
@@ -257,6 +291,22 @@ mod tests {
         assert_eq!(mode(&path), 0o600);
         // What it held stays.
         assert_eq!(fs::read_to_string(&path).unwrap(), "package splot\n");
+    }
+
+    #[test]
+    fn a_peer_is_the_node_whose_key_it_has() {
+        let home: Identifier = "Home".parse().unwrap();
+        let key = |key: &str| -> WgPublicKey { key.parse().unwrap() };
+
+        assert!(is_node(&home, &key(CABIN_PSK), key(CABIN_PSK)).is_ok());
+
+        let err = is_node(&home, &key(CABIN_PSK), key(CAMERA_PSK)).unwrap_err();
+        assert!(
+            matches!(&err, SplotConfigError::WrongNode { node, own } if node == &home && own.as_str() == CAMERA_PSK),
+            "{err}"
+        );
+        // It names the key this peer has, so the config can be fixed.
+        assert!(err.to_string().contains(CAMERA_PSK), "{err}");
     }
 
     #[test]

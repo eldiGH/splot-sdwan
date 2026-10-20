@@ -109,16 +109,18 @@ cargo build --release
 # on the router, with splot.yml in the working directory:
 ./splot-sdwan init --node Cabin  # give the router its WireGuard key; print what the config needs
 ./splot-sdwan check              # validate the config, report errors and warnings
-./splot-sdwan apply --dry-run    # print the uci commands (with placeholders for the keys)
-./splot-sdwan apply              # validate, generate, and apply via uci
-./splot-sdwan psk set Cabin < cabin.psk   # store this router's preshared key with Cabin
+./splot-sdwan apply --node Cabin --dry-run  # print the uci commands (with placeholders for the keys)
+./splot-sdwan apply --node Cabin            # validate, generate, and apply via uci
+./splot-sdwan psk set --node Cabin Home < home.psk  # store Cabin's preshared key with Home
 ```
 
 `-c/--config <FILE>` overrides the config path (default: `splot.yml`).
 
 Start a new router with `splot init --node <Name>`. It generates the router's WireGuard key, only if it has none (a key is never replaced), and stores it in the router's key store (`/etc/config/splot`, readable by root only). Then it holds the router's key against the config: the node is already initialised when the config has this key for it; for a node the config doesn't have yet, it prints its entry ready to paste under `nodes:`, with the public key and the lowest free mesh IP; for a key it just generated, it prints the key to set for the node. It refuses (exits non-zero) when the key is another node's or client's, naming where the config has it (a wrong `--node`), and when a key the router already had is nowhere in the config. `init` is the only command that writes the key: every other one, `--dry-run` included, asks for `init` on a router that has none.
 
-Every WireGuard pair uses a preshared key unless one end sets `psk: false`, and `apply` refuses until they're stored: generate one per pair (`wg genpsk`) and store the same key on both ends with `splot psk set <peer>`. See [CONFIG.md → Preshared keys](CONFIG.md#preshared-keys).
+Every WireGuard pair uses a preshared key unless one end sets `psk: false`, and `apply` refuses until they're stored: generate one per pair (`wg genpsk`) and store the same key on both ends with `splot psk set --node <Name> <peer>`.
+
+`--node` names the node a peer is; every command that acts as it (`apply`, `psk set`) first checks the peer's own key is the one the config has for that node, and refuses otherwise, writing nothing. See [CONFIG.md → Preshared keys](CONFIG.md#preshared-keys).
 
 For local development, `SPLOT_UCI_CONFIG_DIR` redirects UCI output to a directory of your choice instead of `/etc/config`.
 

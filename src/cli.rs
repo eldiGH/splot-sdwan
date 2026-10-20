@@ -37,6 +37,9 @@ pub enum Command {
 
     /// Apply the config to this peer using uci
     Apply {
+        /// The node this peer is, as the config names it
+        #[arg(long)]
+        node: Identifier,
         #[arg(
             long,
             help = "Print the uci commands that would run without executing them"
@@ -59,6 +62,9 @@ pub enum PskCommand {
     /// Store the preshared key of this peer's pair with PEER, read from stdin
     /// (e.g. `wg genpsk`). The same key goes on the peer's side.
     Set {
+        /// The node this peer is, as the config names it
+        #[arg(long)]
+        node: Identifier,
         /// The peer, as the config names it: `Cabin`, `Phone`, `Home.camera`
         peer: String,
     },
@@ -98,11 +104,22 @@ mod tests {
 
     #[test]
     fn apply_subcommand_defaults_dry_run_false() {
-        let cli = parse(&["splot", "apply"]);
+        let cli = parse(&["splot", "apply", "--node", "Home"]);
         assert!(matches!(
             cli.command(),
-            Some(Command::Apply { dry_run: false })
+            Some(Command::Apply { node, dry_run: false }) if node.as_ref() == "Home"
         ));
+    }
+
+    #[test]
+    fn a_command_that_acts_on_a_node_needs_its_name() {
+        for args in [
+            &["splot", "apply"][..],
+            &["splot", "apply", "--dry-run"],
+            &["splot", "psk", "set", "Cabin"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err(), "{args:?}");
+        }
     }
 
     #[test]
@@ -119,21 +136,21 @@ mod tests {
 
     #[test]
     fn psk_set_names_the_peer() {
-        let cli = parse(&["splot", "psk", "set", "Home.camera"]);
+        let cli = parse(&["splot", "psk", "set", "--node", "Cabin", "Home.camera"]);
         assert!(matches!(
             cli.command(),
             Some(Command::Psk {
-                command: PskCommand::Set { peer }
-            }) if peer == "Home.camera"
+                command: PskCommand::Set { node, peer }
+            }) if node.as_ref() == "Cabin" && peer == "Home.camera"
         ));
     }
 
     #[test]
     fn apply_dry_run_flag() {
-        let cli = parse(&["splot", "apply", "--dry-run"]);
+        let cli = parse(&["splot", "apply", "--node", "Home", "--dry-run"]);
         assert!(matches!(
             cli.command(),
-            Some(Command::Apply { dry_run: true })
+            Some(Command::Apply { dry_run: true, .. })
         ));
     }
 }

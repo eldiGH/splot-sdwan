@@ -49,13 +49,6 @@ impl Network {
         self.nodes.get(name)
     }
 
-    /// The node with this public key. Keys are unique, so there's at most one.
-    pub fn find_node_by_public_key(&self, public_key: &str) -> Option<&Node> {
-        self.nodes
-            .values()
-            .find(|node| node.public_key.as_str() == public_key)
-    }
-
     /// Every host, in config order: each node, its devices zone by zone and its hub
     /// clients, then the global clients.
     pub fn hosts(&self) -> &[Host] {
@@ -361,22 +354,6 @@ clients:
                 "    meshIp: 10.100.1.10\n    psk: false\n",
             );
         assert_eq!(psks(&off), [true, false, false, false]);
-    }
-
-    #[test]
-    fn a_node_is_found_by_its_public_key() {
-        let network = checked(HOSTS);
-        let found = network.find_node_by_public_key("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=");
-        assert_eq!(
-            found.map(|node| node.name().to_string()),
-            Some("Cabin".into())
-        );
-        // A hub client's key is no node's.
-        assert!(
-            network
-                .find_node_by_public_key("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=")
-                .is_none()
-        );
     }
 
     #[test]

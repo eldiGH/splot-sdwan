@@ -40,11 +40,11 @@ fn main() -> anyhow::Result<()> {
 
     match command {
         Command::Init { node } => commands::init(&network, node),
-        Command::Apply { dry_run } => commands::apply(&network, *dry_run),
+        Command::Apply { node, dry_run } => commands::apply(&network, node, *dry_run),
         Command::Check => Ok(()),
         Command::Psk {
-            command: PskCommand::Set { peer },
-        } => commands::psk_set(&network, peer),
+            command: PskCommand::Set { node, peer },
+        } => commands::psk_set(&network, node, peer),
     }
 }
 

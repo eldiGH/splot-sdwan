@@ -16,6 +16,8 @@ use super::{
 pub enum Error {
     #[error(transparent)]
     Uci(#[from] uci::Error),
+    #[error(transparent)]
+    KeyStore(#[from] super::splot_config::SplotConfigError),
     #[error("can't read the current uci config of {file}")]
     Export {
         file: &'static str,
@@ -347,6 +349,7 @@ mod tests {
                 ),
             ],
             secrets: Vec::new(),
+            ..Rendered::empty()
         };
         assert!(find_duplicate_sections(&rendered).is_empty());
     }
@@ -363,6 +366,7 @@ mod tests {
                 ],
             )],
             secrets: Vec::new(),
+            ..Rendered::empty()
         };
         assert_eq!(find_duplicate_sections(&rendered), ["firewall.spl_x"]);
     }

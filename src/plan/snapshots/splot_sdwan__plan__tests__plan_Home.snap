@@ -5,7 +5,7 @@ expression: plan.to_string()
 # Home
 
 [wireguard]
-interface: listen 51820, address 10.100.0.1/16
+interface: key ReplaceHomePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, listen 51820, address 10.100.0.1/16
 peer Cabin: key ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.2/32, 192.168.2.0/24], routed, endpoint cabin.example.net:51820, psk
 peer Lake: key ReplaceLakePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.3/32, 192.168.3.0/24], routed, psk
 peer Phone: key ReplacePhonePublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.100/32], psk

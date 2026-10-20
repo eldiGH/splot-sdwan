@@ -14,7 +14,11 @@ mod section;
 pub mod splot_config;
 pub mod uci;
 
-use crate::{backend::Backend, plan::NodePlan};
+use crate::{
+    backend::Backend,
+    plan::NodePlan,
+    types::{identifier::Identifier, wg_key::WgPublicKey},
+};
 pub use apply::Error;
 use secret::{Secret, Slot};
 use section::{Section, Value};
@@ -23,6 +27,10 @@ use splot_config::SplotConfig;
 /// The node's config as uci sections, file by file, in the order splot commits
 /// the files, with placeholders where its secrets go.
 pub struct Rendered {
+    /// The node it's for, and the key the config has for it: the dry run and
+    /// apply check this peer is that node before anything else.
+    node: Identifier,
+    public_key: WgPublicKey,
     files: Vec<(&'static str, Vec<Section>)>,
     /// Where its secrets go: apply fills them in, the dry run masks them again.
     secrets: Vec<Slot>,
@@ -70,9 +78,26 @@ impl Rendered {
         }
 
         Ok(Self {
+            node: self.node.clone(),
+            public_key: self.public_key.clone(),
             files,
             secrets: self.secrets.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+impl Rendered {
+    /// Nothing rendered, for Home: the rest of the tests' own `Rendered`s.
+    fn empty() -> Self {
+        Self {
+            node: "Home".parse().unwrap(),
+            public_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+                .parse()
+                .unwrap(),
+            files: Vec::new(),
+            secrets: Vec::new(),
+        }
     }
 }
 
@@ -95,6 +120,8 @@ impl Backend for OpenWrtBackend {
         let (network, secrets) = network::render(plan);
 
         Rendered {
+            node: plan.node.clone(),
+            public_key: plan.wireguard.public_key.clone(),
             files: vec![
                 (network::FILE, network),
                 (firewall::FILE, firewall::render(plan)),
@@ -105,10 +132,14 @@ impl Backend for OpenWrtBackend {
     }
 
     fn dry_run(&self, rendered: &Rendered) -> Result<(), Error> {
+        self.splot_config
+            .check_node(&rendered.node, &rendered.public_key)?;
         apply::print(&rendered.with_secrets(&self.splot_config)?)
     }
 
     fn apply(&self, rendered: &Rendered) -> Result<Vec<String>, Error> {
+        self.splot_config
+            .check_node(&rendered.node, &rendered.public_key)?;
         let rendered = rendered.with_secrets(&self.splot_config)?;
         let changed = apply::run(&rendered)?;
 
@@ -178,6 +209,7 @@ mod tests {
                 option: "private_key",
                 secret: Secret::PrivateKey,
             }],
+            ..Rendered::empty()
         };
 
         let filled = rendered
@@ -238,6 +270,7 @@ mod tests {
         Rendered {
             files: vec![("network", sections)],
             secrets,
+            ..Rendered::empty()
         }
     }
 
