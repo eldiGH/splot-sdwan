@@ -4,7 +4,6 @@
 mod apply;
 mod dhcp;
 mod diff;
-mod export;
 mod firewall;
 pub mod key_store;
 mod naming;
@@ -13,6 +12,8 @@ mod reload;
 mod section;
 mod slot;
 pub mod uci;
+
+use splot_core::uci::export;
 
 use log::info;
 

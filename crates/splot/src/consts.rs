@@ -1,10 +1,17 @@
-use crate::types::platform::{DhcpProgram, DnsProgram, FirewallProgram, WireGuardProgram};
+use crate::types::{
+    identifier::Identifier,
+    platform::{DhcpProgram, DnsProgram, FirewallProgram, WireGuardProgram},
+};
 
-pub const SPLOT_SECTION_PREFIX: &str = "spl_";
+pub use splot_core::consts::{MESH_INTERFACE_NAME, SPLOT_SECTION_PREFIX};
 pub const SPLOT_NAME_PREFIX: &str = "[SPLOT] ";
-pub const MESH_INTERFACE_NAME: &str = "mesh";
 /// `{Node}.hub` refers to the node's hub network.
 pub const HUB_NAME: &str = "hub";
+
+/// The name `{Node}.hub` uses for a node's hub network, as an identifier.
+pub fn hub() -> Identifier {
+    HUB_NAME.parse().expect("`hub` is an identifier")
+}
 /// Local names (zones, devices, hub clients) that splot gives a meaning of its
 /// own on every node.
 pub const RESERVED_LOCAL_NAMES: [&str; 1] = [HUB_NAME];
@@ -26,3 +33,13 @@ pub const OPENWRT_WIREGUARD: WireGuardProgram = WireGuardProgram::Netifd;
 pub const OPENWRT_FIREWALL: FirewallProgram = FirewallProgram::Fw4;
 pub const OPENWRT_DHCP: DhcpProgram = DhcpProgram::Dnsmasq;
 pub const OPENWRT_DNS: DnsProgram = DnsProgram::Dnsmasq;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_hub_name_is_an_identifier() {
+        assert_eq!(hub().as_ref(), HUB_NAME);
+    }
+}

@@ -153,7 +153,7 @@ pub(super) fn validate_names(
         let Some(hub) = &node.hub else { continue };
 
         // The hub itself, by its reserved name.
-        refs.insert(AllowFromRef::nested(node_name.clone(), Identifier::hub()));
+        refs.insert(AllowFromRef::nested(node_name.clone(), consts::hub()));
 
         for client_name in hub.clients.keys() {
             add_name(

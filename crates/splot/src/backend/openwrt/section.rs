@@ -3,45 +3,9 @@
 
 use std::{fmt::Display, iter};
 
-use super::{naming::UciSectionName, uci::UciBatchCommand};
+pub(super) use splot_core::uci::section::{Section, Value};
 
-/// An option's value: one value, or a list.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Value {
-    Single(String),
-    List(Vec<String>),
-}
-
-/// A uci section: its name, its type and its options, in order.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Section {
-    pub(super) name: String,
-    pub(super) section_type: String,
-    pub(super) options: Vec<(String, Value)>,
-}
-
-impl Section {
-    /// The commands that create it in `file`: the section, then each option.
-    pub(super) fn commands(&self, file: &str) -> Vec<UciBatchCommand> {
-        let path = format!("{file}.{}", self.name);
-        let mut commands = vec![UciBatchCommand::set(&path, &self.section_type)];
-
-        for (option, value) in &self.options {
-            let option = format!("{path}.{option}");
-
-            match value {
-                Value::Single(value) => commands.push(UciBatchCommand::set(option, value)),
-                Value::List(values) => commands.extend(
-                    values
-                        .iter()
-                        .map(|value| UciBatchCommand::add_list(&option, value)),
-                ),
-            }
-        }
-
-        commands
-    }
-}
+use super::naming::UciSectionName;
 
 /// A generated object as one uci section. Its section name follows from what it
 /// is: `spl_<section type>_<id>`.
@@ -123,6 +87,7 @@ impl UciSectionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::openwrt::uci::UciBatchCommand;
 
     fn render(cmd: &UciBatchCommand) -> String {
         cmd.to_string()

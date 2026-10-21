@@ -1,70 +1,43 @@
 //! Hosts: everything in the network that has an address.
 
-use std::{collections::BTreeSet, fmt, net::Ipv4Addr};
+use std::{collections::BTreeSet, net::Ipv4Addr};
 
 use crate::{
     config::ServiceHost,
     types::{identifier::Identifier, ip::Ipv4Interface, mac::MacAddress, wg_key::WgPublicKey},
 };
 
-/// Which host it is, by the name an `allowFrom` refers to it with. A zone device
-/// and a hub client share their node's namespace (`Cabin.camera` either way), so
-/// both are `Local`; which of the two it is shows in where its address lives.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum HostRef {
-    Node(Identifier),
-    Local { node: Identifier, name: Identifier },
-    Client(Identifier),
-}
+pub use splot_core::host::HostRef;
 
-/// Config notation: `Home`, `Cabin.camera`, `Laptop`, as an `allowFrom` names it.
-impl fmt::Display for HostRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Node(name) | Self::Client(name) => write!(f, "{name}"),
-            Self::Local { node, name } => write!(f, "{node}.{name}"),
+/// The host a config service belongs to, and the service's name.
+pub(super) fn of_service(host: ServiceHost<'_>) -> (HostRef, &Identifier) {
+    match host {
+        ServiceHost::Node {
+            node_name,
+            service_name,
+        } => (HostRef::Node(node_name.clone()), service_name),
+        ServiceHost::Device {
+            node_name,
+            device_name: name,
+            service_name,
+            ..
         }
-    }
-}
-
-impl HostRef {
-    /// The host a config service belongs to, and the service's name.
-    pub(super) fn of_service(host: ServiceHost<'_>) -> (Self, &Identifier) {
-        match host {
-            ServiceHost::Node {
-                node_name,
-                service_name,
-            } => (Self::Node(node_name.clone()), service_name),
-            ServiceHost::Device {
-                node_name,
-                device_name: name,
-                service_name,
-                ..
-            }
-            | ServiceHost::HubClient {
-                node_name,
-                client_name: name,
-                service_name,
-            } => (
-                Self::Local {
-                    node: node_name.clone(),
-                    name: name.clone(),
-                },
-                service_name,
-            ),
-            ServiceHost::Client {
-                client_name,
-                service_name,
-                ..
-            } => (Self::Client(client_name.clone()), service_name),
-        }
-    }
-
-    /// Its own name, without its node's.
-    pub fn name(&self) -> &Identifier {
-        match self {
-            Self::Node(name) | Self::Local { name, .. } | Self::Client(name) => name,
-        }
+        | ServiceHost::HubClient {
+            node_name,
+            client_name: name,
+            service_name,
+        } => (
+            HostRef::Local {
+                node: node_name.clone(),
+                name: name.clone(),
+            },
+            service_name,
+        ),
+        ServiceHost::Client {
+            client_name,
+            service_name,
+            ..
+        } => (HostRef::Client(client_name.clone()), service_name),
     }
 }
 
@@ -210,17 +183,6 @@ mod tests {
 
     fn id(s: &str) -> Identifier {
         s.parse().unwrap()
-    }
-
-    #[test]
-    fn a_host_ref_reads_as_in_the_config() {
-        assert_eq!(HostRef::Node(id("Home")).to_string(), "Home");
-        assert_eq!(HostRef::Client(id("Laptop")).to_string(), "Laptop");
-        let camera = HostRef::Local {
-            node: id("Cabin"),
-            name: id("camera"),
-        };
-        assert_eq!(camera.to_string(), "Cabin.camera");
     }
 
     #[test]

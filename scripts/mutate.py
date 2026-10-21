@@ -33,6 +33,10 @@ try:
         print("DID NOT COMPILE")
     else:
         print("FAILED:", ", ".join(failed) or "NONE (no test caught it)")
-        print(summary[-1])
+        # One line per test binary of the workspace: add them up.
+        count = lambda word: sum(
+            int(line.split(f" {word}")[0].split()[-1]) for line in summary
+        )
+        print(f"{count('passed')} passed, {count('failed')} failed")
 finally:
     open(path, "w").write(original)

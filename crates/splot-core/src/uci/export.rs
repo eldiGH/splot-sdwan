@@ -77,7 +77,7 @@ fn statements(text: &str) -> Result<Vec<Statement>, ParseError> {
 /// The file's sections, in order. An anonymous section is named the way `uci show`
 /// names it, `@<type>[<n>]`, `n` counting every section of its type before it: it
 /// can't clash with a named one.
-pub(super) fn parse(text: &str) -> Result<Vec<Section>, ParseError> {
+pub fn parse(text: &str) -> Result<Vec<Section>, ParseError> {
     let mut sections: Vec<Section> = Vec::new();
 
     for (line, words) in statements(text)? {

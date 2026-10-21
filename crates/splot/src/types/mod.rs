@@ -1,7 +1,11 @@
+//! The checked types the config is read into. Those the agent on a node reads
+//! too live in `splot-core`, and are used from here as if they were here.
+
+pub use splot_core::{identifier, wg_key};
+
 pub mod allow_from_ref;
 pub mod config_location;
 pub mod endpoint;
-pub mod identifier;
 pub mod ip;
 pub mod mac;
 pub mod platform;
@@ -9,7 +13,6 @@ pub mod port;
 pub mod protocol;
 pub mod schema_helpers;
 pub mod wan_via_target;
-pub mod wg_key;
 
 #[cfg(test)]
 mod tests {
@@ -67,7 +70,7 @@ mod tests {
         is_error::<super::endpoint::ParseEndpointHostError>();
         is_error::<super::wg_key::KeyFormatError>();
         is_error::<super::platform::ParseSettingError>();
-        is_error::<super::platform::ParseOsError>();
+        is_error::<splot_core::os::ParseOsError>();
         is_error::<crate::model::validator::types::ValidationError>();
         is_error::<crate::process::Error>();
     }

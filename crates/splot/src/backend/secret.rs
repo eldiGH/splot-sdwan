@@ -3,26 +3,8 @@
 //! the dry run shows the placeholders. Each backend records where they go.
 
 use super::key_store::KeyStore;
-use crate::model::host::HostRef;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Secret {
-    /// The node's private key.
-    PrivateKey,
-    /// The preshared key of the node's pair with this peer.
-    Psk(HostRef),
-}
-
-impl Secret {
-    /// What the rendered config holds in its place. Not a valid key, so it can't
-    /// pass for one.
-    pub(super) fn placeholder(&self) -> &'static str {
-        match self {
-            Self::PrivateKey => "<private key>",
-            Self::Psk(_) => "<preshared key>",
-        }
-    }
-}
+pub use splot_core::secret::Secret;
 
 /// The value of each of `secrets` in `store`, in order. Refuses when a pair's
 /// preshared key isn't stored, naming every such peer.
@@ -62,7 +44,7 @@ pub struct MissingPsks(pub Vec<String>);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{backend::openwrt::key_store::UciKeyStore, types::wg_key::check_key_format};
+    use crate::{backend::openwrt::key_store::UciKeyStore, model::host::HostRef};
 
     const PRIVATE_KEY: &str = "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRA=";
     const CABIN_PSK: &str = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
@@ -73,16 +55,6 @@ mod tests {
 
     fn phone() -> HostRef {
         HostRef::Client("Phone".parse().unwrap())
-    }
-
-    #[test]
-    fn a_placeholder_cant_pass_for_a_key() {
-        for secret in [Secret::PrivateKey, Secret::Psk(cabin())] {
-            assert!(
-                check_key_format(secret.placeholder()).is_err(),
-                "{secret:?}"
-            );
-        }
     }
 
     #[test]

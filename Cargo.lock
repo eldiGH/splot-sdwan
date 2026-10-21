@@ -472,6 +472,16 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
+ "splot-core",
+ "thiserror",
+]
+
+[[package]]
+name = "splot-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_norway",
  "thiserror",
 ]
 

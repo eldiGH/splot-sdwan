@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use crate::{
     config::Config,
     model::{
-        host::{Host, HostRef},
+        host::{self, Host, HostRef},
         platform::Platform,
         service::{Service, Wan},
         validator::{
@@ -31,7 +31,7 @@ pub(super) fn check_services(
     let mut services: BTreeMap<HostRef, BTreeMap<Identifier, Service>> = BTreeMap::new();
 
     for (service, host) in config.services() {
-        let (host_ref, name) = HostRef::of_service(host);
+        let (host_ref, name) = host::of_service(host);
 
         let sources = resolve_sources(service, known_references, &resolution, report, |loc| {
             host.to_location(loc)

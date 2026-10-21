@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     config::{self, Client, Config, Node},
+    consts,
     model::{
         host::Place,
         service::{Source, Sources},
@@ -107,7 +108,7 @@ impl Resolution {
         };
 
         self.add(node_refs.iter().cloned(), &network);
-        self.add(local_refs(&Identifier::hub(), &hub.tags), &network);
+        self.add(local_refs(&consts::hub(), &hub.tags), &network);
 
         for (client_name, client) in &hub.clients {
             let host = Source {
