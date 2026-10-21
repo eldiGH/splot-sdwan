@@ -4,7 +4,7 @@ use std::net::Ipv4Addr;
 
 use anyhow::{Context, bail};
 
-use splot_core::protocol::{Reply, Request};
+use splot_core::protocol::{Reply, Request, Run};
 
 use crate::{
     agent::{self, Agent},
@@ -193,25 +193,57 @@ fn new_node_entry(
 
 /// `apply`: makes this peer's config what the plan for `node` says, or shows
 /// what that would change (`dry_run`). splot renders it; the agent checks this
-/// peer is `node` and applies it.
+/// peer is `node` and applies it, under a run: the node puts back what it had
+/// unless splot reaches it again and confirms within `confirm_within` seconds.
 pub fn apply(
     network: &Network,
     node: &Identifier,
     dry_run: bool,
+    confirm_within: u32,
     agent: &mut Agent,
 ) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
     check_applicable(network, node)?;
-
     let rendered = backend::render(&plan, node_os(network, node));
-    match agent.ask(Request::Apply { rendered, dry_run })? {
-        Reply::Applied(changed) if changed.is_empty() => println!("Nothing changed."),
-        Reply::Applied(changed) => println!("Applied and reloaded: {}", changed.join(", ")),
-        Reply::DryRun(text) => print!("{text}"),
-        reply => return Err(agent::unexpected(reply)),
+
+    if dry_run {
+        match agent.ask(Request::DryRun { rendered })? {
+            Reply::DryRun(text) => print!("{text}"),
+            reply => return Err(agent::unexpected(reply)),
+        }
+        return Ok(());
     }
 
-    Ok(())
+    let run = Run {
+        id: agent::run_id(),
+        confirm_within,
+    };
+    let changed = match agent.ask(Request::Apply {
+        rendered,
+        run: run.clone(),
+    })? {
+        Reply::Applied(changed) => changed,
+        reply => return Err(agent::unexpected(reply)),
+    };
+    if changed.is_empty() {
+        println!("Nothing changed.");
+        return Ok(());
+    }
+    println!("Applied and reloaded: {}", changed.join(", "));
+
+    // The node keeps it once splot reaches it again: with a session of its
+    // own, as after a reload that cut the one that applied it.
+    agent.reconnect();
+    match agent.ask(Request::Confirm { run: run.id }) {
+        Ok(Reply::Confirmed) => {
+            println!("Confirmed: splot reached {node} again, and it keeps the change.");
+            Ok(())
+        }
+        Ok(reply) => Err(agent::unexpected(reply)),
+        Err(err) => Err(err.context(format!(
+            "splot couldn't confirm the change, so {node} puts back what it had by itself, within {confirm_within} s of the apply"
+        ))),
+    }
 }
 
 /// The OS the config says `node` runs: for a node it has a plan for.

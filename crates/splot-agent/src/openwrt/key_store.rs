@@ -19,7 +19,6 @@ use splot_core::{
 
 use super::uci::{self, UciBatchCommand};
 use crate::{
-    env,
     key_store::{KeyStore, KeyStoreError},
     wg,
 };
@@ -80,7 +79,7 @@ fn store_psk_commands(peer: &HostRef, key: &WgPresharedKey) -> Vec<UciBatchComma
 
 /// The key store's file: where uci keeps it.
 fn path() -> PathBuf {
-    PathBuf::from(env::uci_config_dir().unwrap_or_else(|| "/etc/config".to_owned())).join(FILE)
+    uci::file_path(FILE)
 }
 
 /// Only root may read or write the key store, the way OpenWrt keeps its own

@@ -1,7 +1,13 @@
 //! Applying the rendered config: stage what differs from the current config in
 //! one `uci batch`, commit the files that change, then reload their services.
 
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    fs, io,
+    path::{Path, PathBuf},
+};
+
+use splot_core::protocol::Run;
 
 use splot_core::{
     protocol::openwrt::Rendered,
@@ -17,11 +23,28 @@ use super::{
     slot,
     uci::{self, UciBatchCommand},
 };
+use crate::run::{self, Backup};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     Uci(#[from] uci::Error),
+    #[error(transparent)]
+    RunState(#[from] run::Error),
+    #[error("can't read {} to keep it for the run", .0.display())]
+    Backup(PathBuf, #[source] io::Error),
+    #[error("can't put back {}", .0.display())]
+    Restore(PathBuf, #[source] io::Error),
+    #[error("applying failed, so this peer put back what it had")]
+    PutBack(#[source] Box<Error>),
+    #[error(
+        "applying failed, and putting back what this peer had failed too ({rollback}) - check it"
+    )]
+    NotPutBack {
+        #[source]
+        cause: Box<Error>,
+        rollback: run::Error,
+    },
     #[error(transparent)]
     NotConfirmed(#[from] crate::node::NotConfirmed),
     #[error("can't read the current uci config of {file}")]
@@ -86,11 +109,13 @@ fn commit_failed_message(file: &str, committed: &[String], reverted: bool) -> St
     format!("committing {file} failed: {outcome} ({revert})")
 }
 
-/// Applies the rendered config and makes it live: refuses to start while its
-/// files have uncommitted changes, stages what differs from the current config,
-/// commits the files that change, then reloads their services. Returns those
-/// files; none when the config already matches.
-pub(super) fn run(rendered: &Rendered) -> Result<Vec<String>, Error> {
+/// Applies the rendered config under `run` and makes it live: refuses to start
+/// while its files have uncommitted changes, keeps the files that change for
+/// the run, stages what differs from the current config, commits those files,
+/// then reloads their services. When any of that fails, puts the files back.
+/// Returns the files that changed; none (and no run) when the config already
+/// matches.
+pub(super) fn run(rendered: &Rendered, run: &Run) -> Result<Vec<String>, Error> {
     // uci keeps uncommitted changes in one place per file, shared by every uci
     // user on the router: committing or reverting ours would commit or revert
     // theirs too. So don't start while there are any.
@@ -111,17 +136,84 @@ pub(super) fn run(rendered: &Rendered) -> Result<Vec<String>, Error> {
     if changeset.files.is_empty() {
         return Ok(Vec::new());
     }
-    changeset.apply()?;
 
-    if let Some(reload) = Reload::new(
-        &changeset.files,
-        naming::mesh_interface().to_string(),
-        peer_update,
-    ) {
-        reload.run()?;
+    let backup = changeset
+        .files
+        .iter()
+        .map(|file| {
+            let path = uci::file_path(file);
+            let text = read_optional(&path).map_err(|err| Error::Backup(path.clone(), err))?;
+            Ok((path, text))
+        })
+        .collect::<Result<_, Error>>()?;
+    run::begin(
+        &run.id,
+        run.confirm_within,
+        Backup::OpenWrt { files: backup },
+    )?;
+
+    let applied = changeset.apply().and_then(|()| {
+        match Reload::new(
+            &changeset.files,
+            naming::mesh_interface().to_string(),
+            peer_update,
+        ) {
+            Some(reload) => reload.run().map_err(Error::from),
+            None => Ok(()),
+        }
+    });
+    if let Err(cause) = applied {
+        let cause = Box::new(cause);
+        return Err(match run::rollback(&run.id) {
+            Ok(()) => Error::PutBack(cause),
+            Err(rollback) => Error::NotPutBack { cause, rollback },
+        });
     }
 
     Ok(changeset.files)
+}
+
+/// What the file at `path` holds; none when there's no such file.
+fn read_optional(path: &Path) -> io::Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Puts back the uci files a run changed, each as it was (`files`: none for
+/// one there wasn't), and makes them live: the services reload, and splot's
+/// WireGuard interface comes up as it was, when it's still there.
+pub(super) fn restore(files: &[(PathBuf, Option<String>)]) -> Result<(), Error> {
+    for (path, text) in files {
+        let restored = match text {
+            Some(text) => fs::write(path, text),
+            None => fs::remove_file(path).or_else(|err| match err.kind() {
+                io::ErrorKind::NotFound => Ok(()),
+                _ => Err(err),
+            }),
+        };
+        restored.map_err(|err| Error::Restore(path.clone(), err))?;
+    }
+
+    let names: Vec<String> = files
+        .iter()
+        .filter_map(|(path, _)| Some(path.file_name()?.to_str()?.to_owned()))
+        .collect();
+    let mesh = naming::mesh_interface().to_string();
+    let peer_update = reload::peer_update().map_err(Error::Netifd)?;
+    let mesh_is_there = uci::get(&format!("{}.{mesh}", reload::NETWORK))?.is_some();
+    if let Some(reload) = Reload::new(&names, mesh, peer_update) {
+        let reload = if mesh_is_there {
+            reload
+        } else {
+            reload.without_interface()
+        };
+        reload.run()?;
+    }
+
+    Ok(())
 }
 
 /// What `run` would send to uci, and the reload after it, as the dry run shows

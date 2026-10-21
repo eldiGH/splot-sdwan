@@ -21,6 +21,8 @@ pub(crate) mod test_support;
 mod types;
 
 fn main() -> anyhow::Result<()> {
+    // Started again to keep the deadline of a run it applied here.
+    splot_agent::watch_if_asked();
     env::init();
     env_logger::init();
 
@@ -44,8 +46,15 @@ fn main() -> anyhow::Result<()> {
         Command::Apply {
             node,
             dry_run,
+            confirm_within,
             reach,
-        } => commands::apply(&network, node, *dry_run, &mut reach.agent()),
+        } => commands::apply(
+            &network,
+            node,
+            *dry_run,
+            *confirm_within,
+            &mut reach.agent(),
+        ),
         Command::Check => Ok(()),
         Command::Psk {
             command: PskCommand::Set { node, peer, reach },

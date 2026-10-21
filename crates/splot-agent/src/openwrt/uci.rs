@@ -1,6 +1,6 @@
 //! Running uci on this peer.
 
-use std::process::Command;
+use std::{path::PathBuf, process::Command};
 
 pub use splot_core::uci::UciBatchCommand;
 use splot_core::uci::{UnsafeCommand, check};
@@ -106,6 +106,11 @@ pub fn has_changes(file: &str) -> Result<bool, Error> {
     let changes = optional(run(&["changes", file], None).map(|output| output.stdout))?;
 
     Ok(changes.is_some_and(|changes| !changes.is_empty()))
+}
+
+/// Where uci keeps `file`.
+pub(super) fn file_path(file: &str) -> PathBuf {
+    PathBuf::from(env::uci_config_dir().unwrap_or_else(|| "/etc/config".to_owned())).join(file)
 }
 
 /// The file as `uci export` prints it; `None` when uci doesn't know the file.

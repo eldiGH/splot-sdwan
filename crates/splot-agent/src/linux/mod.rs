@@ -5,7 +5,10 @@ mod apply;
 mod file;
 pub(crate) mod key_store;
 
-use splot_core::protocol::linux::{Rendered, WgQuickConfig};
+use splot_core::protocol::{
+    Run,
+    linux::{Rendered, WgQuickConfig},
+};
 
 use crate::{
     key_store::KeyStore,
@@ -56,12 +59,17 @@ pub fn dry_run(rendered: &Rendered) -> Result<String, Error> {
     }
 }
 
-/// Makes `rendered` live on this peer. Returns what changed.
-pub fn apply(rendered: &Rendered) -> Result<Vec<String>, Error> {
+/// Makes `rendered` live on this peer, under `run`. Returns what changed.
+pub fn apply(rendered: &Rendered, run: &Run) -> Result<Vec<String>, Error> {
     match confirmed(rendered)? {
-        Some((config, text)) => apply::run_config(config, &text),
+        Some((config, text)) => apply::run_config(config, &text, run),
         None => Ok(Vec::new()),
     }
+}
+
+/// Puts back the wg-quick file a run changed (see `apply::restore`).
+pub(crate) fn restore(file: Option<&str>, active: bool, enabled: bool) -> Result<(), Error> {
+    apply::restore(file, active, enabled)
 }
 
 #[cfg(test)]

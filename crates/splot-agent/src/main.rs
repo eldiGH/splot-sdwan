@@ -4,5 +4,6 @@
 use std::io;
 
 fn main() -> io::Result<()> {
+    splot_agent::watch_if_asked();
     splot_agent::serve(io::stdin().lock(), io::stdout().lock())
 }

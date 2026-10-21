@@ -54,7 +54,20 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
 ssh-keygen -q -t ed25519 -N '' -C splot-check -f "$work/key"
-printf '#!/bin/sh\nexec %s -F %s "$@"\n' "$(command -v ssh)" "$work/ssh_config" >"$work/bin/ssh"
+# With $work/cut there, every session after the first fails, as if the router
+# had gone out of reach: `cut`.
+cat >"$work/bin/ssh" <<EOF
+#!/bin/sh
+if [ -f "$work/cut" ]; then
+	n=\$(cat "$work/cut")
+	echo \$((n + 1)) >"$work/cut"
+	if [ "\$n" -ge 1 ]; then
+		echo "ssh: router: cut off by the check" >&2
+		exit 255
+	fi
+fi
+exec $(command -v ssh) -F "$work/ssh_config" "\$@"
+EOF
 chmod +x "$work/bin/ssh"
 cp splot.example.yml "$work/splot.example.yml"
 
@@ -246,10 +259,18 @@ EOF
 
 	log_lines=$(run 'logread | wc -l')
 	if output=$(splot --config "$work/splot.yml" apply --node Home 2>&1); then
-		pass "splot apply over ssh: $(tail -1 <<<"$output")"
+		pass "splot apply over ssh: $(head -1 <<<"$output")"
 	else
 		fail "splot apply over ssh" "$output"
 		return
+	fi
+	# splot reached the router again and confirmed: the run is over, and the
+	# router keeps the change.
+	if grep -q "^Confirmed: splot reached Home again" <<<"$output" &&
+		! run '[ -e /tmp/splot/run ]' && run 'grep -q confirmed /tmp/splot/last'; then
+		pass "the change is confirmed: no run left on the router"
+	else
+		fail "the change is confirmed: no run left on the router" "$output"$'\n'"$(run 'ls -l /tmp/splot; cat /tmp/splot/last' 2>&1)"
 	fi
 	# procd runs the reloads that reload_config triggers a second later.
 	sleep 3
@@ -425,6 +446,29 @@ EOF
 			fail "PSK update reaches WireGuard"
 		fi
 	fi
+
+	# The router keeps a change only once splot reaches it again: cut off after
+	# the apply, it puts back what it had by itself at the deadline.
+	local cut_before cut_applied cut_after status last
+	sed 's/port: 22$/port: 2222/' "$work/splot.yml" >"$work/splot-cut.yml"
+	cut_before=$(run "md5sum $files")
+	echo 0 >"$work/cut"
+	output=$(splot --config "$work/splot-cut.yml" apply --node Home --confirm-within 10 2>&1) && status=0 || status=$?
+	rm -f "$work/cut"
+	cut_applied=$(run "md5sum $files")
+	sleep 15
+	cut_after=$(run "md5sum $files")
+	last=$(run 'cat /tmp/splot/last 2>&1') || true
+	if [ "$status" -ne 0 ] &&
+		grep -q "couldn't confirm the change, so Home puts back what it had by itself, within 10 s" <<<"$output" &&
+		[ "$cut_applied" != "$cut_before" ] && [ "$cut_after" = "$cut_before" ] &&
+		grep -q "rolled back" <<<"$last" && ! run '[ -e /tmp/splot/run ]'; then
+		pass "cut off before the confirm: the router put back what it had at the deadline"
+	else
+		fail "cut off before the confirm: the router put back what it had at the deadline" \
+			"exit $status: $output"$'\n'"last: $last"$'\n'"before: $cut_before"$'\n'"applied: $cut_applied"$'\n'"after: $cut_after"
+	fi
+	sleep 3
 
 	# Concerns left alone: with `firewall: none` and `dhcp: none` on Home, splot
 	# renders neither file, so it stages, deletes, commits and reloads nothing

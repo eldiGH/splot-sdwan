@@ -15,10 +15,15 @@ use std::{
 
 use serde::{Deserialize, de::DeserializeOwned};
 
-use splot_core::protocol::linux::WgQuickConfig;
+use splot_core::protocol::{Run, linux::WgQuickConfig};
 
 use super::{INTERFACE, file};
-use crate::{node::NotConfirmed, process, secret::MissingPsks};
+use crate::{
+    node::NotConfirmed,
+    process,
+    run::{self, Backup},
+    secret::MissingPsks,
+};
 
 /// The file wg-quick reads for the interface.
 pub(super) const PATH: &str = "/etc/wireguard/spl_mesh.conf";
@@ -29,6 +34,18 @@ const UNIT: &str = "wg-quick@spl_mesh";
 pub enum Error {
     #[error(transparent)]
     NotConfirmed(#[from] NotConfirmed),
+    #[error(transparent)]
+    RunState(#[from] run::Error),
+    #[error("applying failed, so this peer put back what it had")]
+    PutBack(#[source] Box<Error>),
+    #[error(
+        "applying failed, and putting back what this peer had failed too ({rollback}) - check it"
+    )]
+    NotPutBack {
+        #[source]
+        cause: Box<Error>,
+        rollback: run::Error,
+    },
     #[error(transparent)]
     MissingPsks(#[from] MissingPsks),
     #[error("can't read {PATH}")]
@@ -331,38 +348,87 @@ fn current() -> Result<Option<String>, Error> {
     }
 }
 
-/// What `run` would do: whether the file changes, and the steps after it.
-/// Reads only.
-fn changes(config: &WgQuickConfig, text: &str) -> Result<(bool, Vec<Step>), Error> {
+/// What `run` would do: whether the file changes, and the steps after it;
+/// and what's live now. Reads only.
+fn changes(config: &WgQuickConfig, text: &str) -> Result<(bool, Vec<Step>, Live), Error> {
     let file_changed = current()?.as_deref() != Some(text);
-    let steps = steps(&Live::read()?, config, file_changed)?;
+    let live = Live::read()?;
+    let steps = steps(&live, config, file_changed)?;
 
-    Ok((file_changed, steps))
+    Ok((file_changed, steps, live))
 }
 
 /// Writes `text`, the file with its secrets in, if it differs from what's
-/// there, then makes it live. Returns what changed; nothing when it all
-/// matches already.
-pub(super) fn run_config(config: &WgQuickConfig, text: &str) -> Result<Vec<String>, Error> {
-    let (file_changed, steps) = changes(config, text)?;
-    let mut changed = Vec::new();
-
-    if file_changed {
-        file::write_private(Path::new(PATH), text).map_err(Error::Write)?;
-        changed.push(PATH.to_owned());
+/// there, then makes it live, under `run`: what the node had is kept, and put
+/// back when any of it fails. Returns what changed; nothing (and no run) when
+/// it all matches already.
+pub(super) fn run_config(
+    config: &WgQuickConfig,
+    text: &str,
+    run: &Run,
+) -> Result<Vec<String>, Error> {
+    let (file_changed, steps, live) = changes(config, text)?;
+    if !file_changed && steps.is_empty() {
+        return Ok(Vec::new());
     }
-    for step in &steps {
-        step.run()?;
-        changed.push(step.done());
+
+    let backup = Backup::Linux {
+        file: current()?,
+        active: live.active,
+        enabled: live.enabled,
+    };
+    run::begin(&run.id, run.confirm_within, backup)?;
+
+    let mut changed = Vec::new();
+    let applied = (|| {
+        if file_changed {
+            file::write_private(Path::new(PATH), text).map_err(Error::Write)?;
+            changed.push(PATH.to_owned());
+        }
+        for step in &steps {
+            step.run()?;
+            changed.push(step.done());
+        }
+        Ok(())
+    })();
+    if let Err(cause) = applied {
+        let cause = Box::new(cause);
+        return Err(match run::rollback(&run.id) {
+            Ok(()) => Error::PutBack(cause),
+            Err(rollback) => Error::NotPutBack { cause, rollback },
+        });
     }
 
     Ok(changed)
 }
 
+/// Puts back the wg-quick file a run changed as it was (`file`: none for one
+/// there wasn't), and its unit running and enabled as it was.
+pub(super) fn restore(file: Option<&str>, active: bool, enabled: bool) -> Result<(), Error> {
+    match file {
+        Some(text) => file::write_private(Path::new(PATH), text).map_err(Error::Write)?,
+        None => match fs::remove_file(PATH) {
+            Err(err) if err.kind() != io::ErrorKind::NotFound => return Err(Error::Write(err)),
+            _ => {}
+        },
+    }
+
+    run(
+        "systemctl",
+        &[if active { "restart" } else { "stop" }, UNIT],
+    )?;
+    run(
+        "systemctl",
+        &[if enabled { "enable" } else { "disable" }, UNIT],
+    )?;
+
+    Ok(())
+}
+
 /// What `run_config` would do, as the dry run shows it: the file, masked, if
 /// it changes, and the systemd steps after it.
 pub(super) fn print(config: &WgQuickConfig, text: &str) -> Result<String, Error> {
-    let (file_changed, steps) = changes(config, text)?;
+    let (file_changed, steps, _) = changes(config, text)?;
 
     if !file_changed && steps.is_empty() {
         return Ok("# Nothing to change.\n".to_owned());

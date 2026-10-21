@@ -9,6 +9,7 @@ mod linux;
 mod node;
 pub mod openwrt;
 mod process;
+mod run;
 mod secret;
 #[cfg(test)]
 mod test_support;
@@ -18,7 +19,7 @@ use splot_core::{
     host::HostRef,
     identifier::Identifier,
     os::Os,
-    protocol::{Failure, PROTOCOL, Rendered, Reply, Request},
+    protocol::{Failure, PROTOCOL, Rendered, Reply, Request, Run},
     wg_key::{WgPresharedKey, WgPublicKey},
 };
 
@@ -65,7 +66,14 @@ pub fn handle(request: Request) -> Reply {
             peer,
             key,
         } => store_psk(&node, &public_key, os, &peer, &key),
-        Request::Apply { rendered, dry_run } => apply(&rendered, dry_run),
+        Request::DryRun { rendered } => dry_run(&rendered),
+        Request::Apply { rendered, run } => apply(&rendered, &run),
+        Request::Confirm { run } => run::confirm(&run)
+            .map(|()| Reply::Confirmed)
+            .map_err(Error::from),
+        Request::Rollback { run } => run::rollback(&run)
+            .map(|()| Reply::RolledBack)
+            .map_err(Error::from),
     };
 
     result.unwrap_or_else(|error| Reply::Failed(Failure::of(error.as_ref())))
@@ -145,22 +153,39 @@ fn store_psk_with<S: KeyStore>(
     S::store_psk(peer, key)
 }
 
-/// Makes this peer hold `rendered`, or (`dry_run`) says what that would change,
-/// once it's checked this peer runs the OS `rendered` is for.
-fn apply(rendered: &Rendered, dry_run: bool) -> Result<Reply, Error> {
+/// Checks this peer runs the OS `rendered` is for: the node it names runs it.
+fn check_os(rendered: &Rendered) -> Result<(), Error> {
     let (node, os) = match rendered {
         Rendered::OpenWrt(rendered) => (&rendered.node, Os::OpenWrt),
         Rendered::Linux(rendered) => (&rendered.node, Os::Linux),
     };
-    node::check_os(node, os)?;
 
-    Ok(match (rendered, dry_run) {
-        (Rendered::OpenWrt(rendered), true) => Reply::DryRun(openwrt::dry_run(rendered)?),
-        (Rendered::OpenWrt(rendered), false) => Reply::Applied(openwrt::apply(rendered)?),
-        (Rendered::Linux(rendered), true) => Reply::DryRun(linux::dry_run(rendered)?),
-        (Rendered::Linux(rendered), false) => Reply::Applied(linux::apply(rendered)?),
-    })
+    Ok(node::check_os(node, os)?)
 }
+
+/// What making this peer hold `rendered` would change.
+fn dry_run(rendered: &Rendered) -> Result<Reply, Error> {
+    check_os(rendered)?;
+
+    Ok(Reply::DryRun(match rendered {
+        Rendered::OpenWrt(rendered) => openwrt::dry_run(rendered)?,
+        Rendered::Linux(rendered) => linux::dry_run(rendered)?,
+    }))
+}
+
+/// Makes this peer hold `rendered`, under `run`.
+fn apply(rendered: &Rendered, run: &Run) -> Result<Reply, Error> {
+    check_os(rendered)?;
+
+    Ok(Reply::Applied(match rendered {
+        Rendered::OpenWrt(rendered) => openwrt::apply(rendered, run)?,
+        Rendered::Linux(rendered) => linux::apply(rendered, run)?,
+    }))
+}
+
+/// When this process was started to keep a run's deadline, keeps it and ends
+/// the process: the first thing a program that may run as the agent does.
+pub use run::watch_if_asked;
 
 #[cfg(test)]
 mod tests {
@@ -237,6 +262,7 @@ mod tests {
         is_error::<secret::MissingPsks>();
         is_error::<crate::openwrt::Error>();
         is_error::<crate::linux::Error>();
+        is_error::<run::Error>();
     }
 
     #[test]
@@ -270,11 +296,20 @@ mod tests {
             Os::OpenWrt => Os::Linux,
         };
 
-        for dry_run in [true, false] {
-            let reply = handle(Request::Apply {
+        let run = Run {
+            id: "r1".to_owned(),
+            confirm_within: 120,
+        };
+        for request in [
+            Request::DryRun {
                 rendered: rendered.clone(),
-                dry_run,
-            });
+            },
+            Request::Apply {
+                rendered: rendered.clone(),
+                run,
+            },
+        ] {
+            let reply = handle(request);
             assert_eq!(
                 reply,
                 Reply::Failed(Failure(vec![format!(

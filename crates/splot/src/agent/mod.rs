@@ -4,7 +4,10 @@
 mod embedded;
 mod session;
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use splot_core::protocol::{Failure, Reply, Request};
 
@@ -38,6 +41,13 @@ impl Agent {
         }
     }
 
+    /// Ends the session, if there's one: the next request opens a new one.
+    pub fn reconnect(&mut self) {
+        if let Self::Remote { session, .. } = self {
+            *session = None;
+        }
+    }
+
     /// The agent's answer to `request`; its failure as an error.
     pub fn ask(&mut self, request: Request) -> anyhow::Result<Reply> {
         let reply = match self {
@@ -60,6 +70,15 @@ impl Agent {
             reply => Ok(reply),
         }
     }
+}
+
+/// A new run's ID: when it began, and by which splot.
+pub fn run_id() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
+
+    format!("{millis}-{}", std::process::id())
 }
 
 /// What the agent reported as an error: its message, and its causes as the

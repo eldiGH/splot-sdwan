@@ -15,7 +15,7 @@ use log::info;
 use crate::process;
 
 /// The uci file of the network interfaces, the WireGuard ones among them.
-const NETWORK: &str = "network";
+pub(super) const NETWORK: &str = "network";
 
 /// How a WireGuard interface picks up changed peers.
 ///
@@ -90,6 +90,15 @@ impl Reload {
                 .then_some(wireguard_interface),
             peer_update,
         })
+    }
+
+    /// The same reload, without bringing splot's WireGuard interface up: for
+    /// when it's gone.
+    pub fn without_interface(self) -> Self {
+        Self {
+            wireguard_interface: None,
+            ..self
+        }
     }
 
     /// The commands, in order.

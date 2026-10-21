@@ -79,6 +79,15 @@ splot runs on the operator's machine and reaches a node over ssh (`--ssh <destin
 - **One agent per CPU, in splot:** aarch64, armv7 (with a floating-point unit), riscv64, x86_64, static, under 1 MB each (it runs from a router's RAM). The node says its CPU first (`uname -m`, OpenWrt's `DISTRIB_ARCH`); a CPU splot has none for is refused, and `--agent <file>` sends one built by hand. MIPS later (Rust's tier 3).
 - **The session** (`agent/session.rs`): the node runs a short sh bootstrap; splot sends the agent's size and bytes, waits for `ready` (busybox's `head -c` reads past what it's asked for, so nothing else may follow the bytes yet), then talks to the agent a JSON line each way. The first request is `Hello` with the protocol's version, whose shape never changes; an agent of another version refuses. An agent cut short in transit doesn't run.
 
+### Applying safely: a run, confirmed or put back
+
+A change splot applies is a run (`Request::Apply { rendered, run }`): before it writes anything, the agent keeps what the node has (the uci files that change; on Linux the wg-quick file and whether its unit ran and was enabled) in `/tmp/splot/run/`, and starts a watchdog: the agent itself, started again, detached, which puts all of it back at the deadline unless the run is confirmed. splot confirms only after reaching the node again with a new session (`--confirm-within`, default 2 minutes); a change that cuts splot off from the node is undone by the node itself.
+
+- **Decided once:** whoever renames the run's `armed` marker first decides it: the confirm, or the rollback (asked for, or the watchdog at the deadline). A confirm that comes too late is told so.
+- **One run at a time:** the run's directory is the lock. A run that fails while it applies (a batch uci rejects, a failed commit or reload) is put back on the spot.
+- **What's healthy** (decided): splot reaches the node again, and every node peer that answered before the apply answers after. The peer checks are the next step.
+- **Not yet:** a rollback that survives a reboot (the run lives in RAM), and one run across all nodes, all or nothing (each node's ssh destination will be in its `platform` block).
+
 ### Linux: WireGuard with wg-quick
 
 splot owns `/etc/wireguard/spl_mesh.conf` and runs it through systemd's `wg-quick@spl_mesh`; a Linux node needs systemd.

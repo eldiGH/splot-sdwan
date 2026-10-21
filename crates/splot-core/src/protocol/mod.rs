@@ -17,7 +17,7 @@ use crate::{
 
 /// The protocol's version: splot and an agent talk only when theirs are the
 /// same. A change to a request or a reply bumps it.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 /// What splot asks of the agent.
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,9 +41,27 @@ pub enum Request {
         peer: HostRef,
         key: WgPresharedKey,
     },
-    /// Make the node hold `rendered`; for a dry run, say what that would
-    /// change, changing nothing: `Applied`, or `DryRun`.
-    Apply { rendered: Rendered, dry_run: bool },
+    /// What making the node hold `rendered` would change, changing nothing:
+    /// `DryRun`.
+    DryRun { rendered: Rendered },
+    /// Make the node hold `rendered`, under `run`: the node keeps what it had
+    /// and rolls back to it by itself unless the run is confirmed in time.
+    /// `Applied`; nothing changed, no run.
+    Apply { rendered: Rendered, run: Run },
+    /// Keep what the run applied: `Confirmed`. Too late once the node has
+    /// rolled back.
+    Confirm { run: String },
+    /// Put back what the node had before the run: `RolledBack`.
+    Rollback { run: String },
+}
+
+/// A change splot applies on a node: the node puts back what it had unless
+/// splot confirms it within `confirm_within` seconds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Run {
+    /// Which run it is: a node answers for its own run only.
+    pub id: String,
+    pub confirm_within: u32,
 }
 
 /// What the agent answers.
@@ -63,8 +81,11 @@ pub enum Reply {
         created: bool,
     },
     Stored,
-    /// What changed; nothing when the node held the config already.
+    /// What changed; nothing when the node held the config already (and then
+    /// there's no run to confirm).
     Applied(Vec<String>),
+    Confirmed,
+    RolledBack,
     /// What apply would change, as the dry run shows it.
     DryRun(String),
     /// Why the agent didn't do what it was asked.
@@ -192,13 +213,21 @@ mod tests {
             Request::Os,
             Request::Init { os: Os::Linux },
             store_psk(),
-            Request::Apply {
+            Request::DryRun {
                 rendered: openwrt(),
-                dry_run: true,
             },
             Request::Apply {
                 rendered: linux(),
-                dry_run: false,
+                run: Run {
+                    id: "1729500000-42".to_owned(),
+                    confirm_within: 120,
+                },
+            },
+            Request::Confirm {
+                run: "1729500000-42".to_owned(),
+            },
+            Request::Rollback {
+                run: "1729500000-42".to_owned(),
             },
         ];
         for request in requests {
@@ -235,6 +264,8 @@ mod tests {
                 created: true,
             },
             Reply::Stored,
+            Reply::Confirmed,
+            Reply::RolledBack,
             Reply::Applied(vec!["network".to_owned()]),
             Reply::DryRun("# Nothing to change.\n".to_owned()),
             Reply::Failed(Failure(vec!["it failed".to_owned(), "because".to_owned()])),

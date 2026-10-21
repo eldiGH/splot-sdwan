@@ -8,7 +8,12 @@ mod reload;
 mod slot;
 mod uci;
 
-use splot_core::{protocol::openwrt::Rendered, uci::section::Value};
+use std::path::PathBuf;
+
+use splot_core::{
+    protocol::{Run, openwrt::Rendered},
+    uci::section::Value,
+};
 
 use crate::{key_store::KeyStore, node, secret};
 pub use apply::{Error, find_duplicate_sections};
@@ -68,9 +73,15 @@ pub fn dry_run(rendered: &Rendered) -> Result<String, Error> {
     apply::print(&confirmed(rendered)?)
 }
 
-/// Makes `rendered` live on this peer. Returns the files that changed.
-pub fn apply(rendered: &Rendered) -> Result<Vec<String>, Error> {
-    apply::run(&confirmed(rendered)?)
+/// Makes `rendered` live on this peer, under `run`. Returns the files that
+/// changed.
+pub fn apply(rendered: &Rendered, run: &Run) -> Result<Vec<String>, Error> {
+    apply::run(&confirmed(rendered)?, run)
+}
+
+/// Puts back the uci files a run changed (see `apply::restore`).
+pub(crate) fn restore(files: &[(PathBuf, Option<String>)]) -> Result<(), Error> {
+    apply::restore(files)
 }
 
 #[cfg(test)]

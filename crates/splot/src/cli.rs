@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::{
     agent::{self, Agent},
+    consts,
     types::{identifier::Identifier, platform::Os},
 };
 
@@ -73,6 +74,16 @@ pub enum Command {
         /// Show what apply would change, changing nothing
         #[arg(long)]
         dry_run: bool,
+        /// Seconds the node waits for splot to reach it again and confirm the
+        /// change: it puts back what it had otherwise
+        #[arg(
+            long,
+            value_name = "SECONDS",
+            default_value_t = consts::DEFAULT_CONFIRM_WITHIN,
+            value_parser = clap::value_parser!(u32).range(10..),
+            conflicts_with = "dry_run"
+        )]
+        confirm_within: u32,
     },
 
     /// Validate the config and report all errors and warnings

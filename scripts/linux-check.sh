@@ -42,6 +42,8 @@ run() { podman exec "$CONTAINER" bash -c "$1"; }
 # What splot printed, with its exit status when it failed. Without the config's
 # warnings: Barn leaves its firewall to the operator.
 splot() { run "$S $1 2>&1 | grep -v '^warning: '; exit \${PIPESTATUS[0]}" || echo "(exit $?)"; }
+# What apply says once it has reached the node again and confirmed the change.
+CONFIRMED="Confirmed: splot reached Barn again, and it keeps the change."
 
 if [ ! -d /sys/module/wireguard ]; then
 	echo "The host's wireguard kernel module isn't loaded; run: sudo modprobe wireguard" >&2
@@ -141,14 +143,15 @@ else
 fi
 
 output=$(splot "apply --node Barn")
-if [ "$output" = "Applied and reloaded: $CONF, $UNIT started and enabled" ] &&
+if [ "$output" = "Applied and reloaded: $CONF, $UNIT started and enabled"$'\n'"$CONFIRMED" ] &&
 	[ "$(run "stat -c %a $CONF")" = 600 ] &&
 	run "grep -qxF 'PrivateKey = $private_key' $CONF" &&
 	! run "grep -q '<' $CONF" &&
-	run "systemctl is-active --quiet $UNIT && systemctl is-enabled --quiet $UNIT"; then
-	pass "apply: $CONF written (0600, keys in), $UNIT started and enabled"
+	run "systemctl is-active --quiet $UNIT && systemctl is-enabled --quiet $UNIT" &&
+	! run '[ -e /tmp/splot/run ]' && run 'grep -q confirmed /tmp/splot/last'; then
+	pass "apply: $CONF written (0600, keys in), $UNIT started and enabled; confirmed, no run left"
 else
-	fail "apply: $CONF written (0600, keys in), $UNIT started and enabled" "$output"
+	fail "apply: $CONF written (0600, keys in), $UNIT started and enabled; confirmed, no run left" "$output"
 fi
 
 # Every peer, the address, and each pair's stored PSK.
@@ -195,7 +198,7 @@ run "sed -i 's/endpoint: $CABIN_ENDPOINT/endpoint: 203.0.113.21/' /root/splot.ym
 dry=$(splot "apply --node Barn --dry-run")
 output=$(splot "apply --node Barn")
 if printf '%s' "$dry" | grep -q "^#   systemctl reload $UNIT$" &&
-	[ "$output" = "Applied and reloaded: $CONF, $UNIT reloaded" ] &&
+	[ "$output" = "Applied and reloaded: $CONF, $UNIT reloaded"$'\n'"$CONFIRMED" ] &&
 	[ "$index" = "$(ifindex)" ] &&
 	run 'wg show spl_mesh endpoints' | grep -q '203\.0\.113\.21:51820'; then
 	pass "peer change: reloaded, live, the interface kept"
@@ -210,7 +213,7 @@ dry=$(splot "apply --node Barn --dry-run")
 output=$(splot "apply --node Barn")
 again=$(splot "apply --node Barn")
 if printf '%s' "$dry" | grep -qF "#   systemctl restart $UNIT  (routes to add: 192.168.5.0/24)" &&
-	[ "$output" = "Applied and reloaded: $CONF, $UNIT restarted (routes to add: 192.168.5.0/24)" ] &&
+	[ "$output" = "Applied and reloaded: $CONF, $UNIT restarted (routes to add: 192.168.5.0/24)"$'\n'"$CONFIRMED" ] &&
 	[ "$(routes)" = "192.168.1.0/24 192.168.2.0/24 192.168.3.0/24 192.168.5.0/24" ] &&
 	[ "$again" = "Nothing changed." ]; then
 	pass "route change: restarted, saying why; the new route live; then nothing to do"
@@ -227,7 +230,7 @@ dry=$(splot "apply --node Barn --dry-run")
 output=$(splot "apply --node Barn")
 if ! printf '%s' "$dry" | grep -qF "$(run 'cat /root/cabin.psk')" &&
 	printf '%s' "$dry" | grep -q "^#   systemctl reload $UNIT$" &&
-	[ "$output" = "Applied and reloaded: $CONF, $UNIT reloaded" ] &&
+	[ "$output" = "Applied and reloaded: $CONF, $UNIT reloaded"$'\n'"$CONFIRMED" ] &&
 	run 'wg show spl_mesh preshared-keys | grep -qF "$(cat /root/cabin.psk)"'; then
 	pass "PSK change: masked in the dry run, live after a reload"
 else
@@ -237,7 +240,7 @@ fi
 
 run "systemctl stop $UNIT"
 output=$(splot "apply --node Barn")
-if [ "$output" = "Applied and reloaded: $UNIT started and enabled" ] &&
+if [ "$output" = "Applied and reloaded: $UNIT started and enabled"$'\n'"$CONFIRMED" ] &&
 	run "systemctl is-active --quiet $UNIT"; then
 	pass "stopped: apply starts it again"
 else
@@ -246,7 +249,7 @@ fi
 
 run "systemctl disable --quiet $UNIT"
 output=$(splot "apply --node Barn")
-if [ "$output" = "Applied and reloaded: $UNIT enabled" ] &&
+if [ "$output" = "Applied and reloaded: $UNIT enabled"$'\n'"$CONFIRMED" ] &&
 	run "systemctl is-enabled --quiet $UNIT"; then
 	pass "disabled: apply enables it, so it comes back after a reboot"
 else

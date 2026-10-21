@@ -26,6 +26,10 @@ pub const DEFAULT_KEEPALIVE_INTERVAL: u16 = 25;
 /// does unless one end turns it off.
 pub const DEFAULT_PSK: bool = true;
 
+/// Seconds a node waits for splot to reach it again and confirm a change it
+/// applied, before it puts back what it had (`apply --confirm-within`).
+pub const DEFAULT_CONFIRM_WITHIN: u32 = 120;
+
 // What an `os: openwrt` node runs for a concern its `platform` leaves out: what
 // OpenWrt ships. A Linux node has no such defaults: it names every concern's.
 
