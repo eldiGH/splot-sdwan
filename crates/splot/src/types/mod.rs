@@ -72,7 +72,6 @@ mod tests {
         is_error::<super::platform::ParseSettingError>();
         is_error::<splot_core::os::ParseOsError>();
         is_error::<crate::model::validator::types::ValidationError>();
-        is_error::<splot_agent::process::Error>();
     }
 
     #[test]

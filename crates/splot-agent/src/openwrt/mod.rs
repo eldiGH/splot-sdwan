@@ -3,10 +3,10 @@
 
 mod apply;
 mod diff;
-pub mod key_store;
+pub(crate) mod key_store;
 mod reload;
 mod slot;
-pub mod uci;
+mod uci;
 
 use splot_core::{protocol::openwrt::Rendered, uci::section::Value};
 

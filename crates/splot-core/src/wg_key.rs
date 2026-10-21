@@ -107,6 +107,8 @@ impl fmt::Display for WgPublicKey {
 /// key of one of its pairs. The same format as a public key, checked on parse.
 /// Never shown: `Debug` prints `<redacted>` and there's no `Display`; only
 /// `expose` gives the key, for the places that write it where WireGuard reads it.
+/// A preshared key can be sent, to the node that keeps it; a private key can't
+/// (no serde): it never leaves its node.
 pub struct SecretKey<K> {
     key: String,
     kind: PhantomData<K>,
@@ -151,6 +153,22 @@ impl<K> Clone for SecretKey<K> {
 impl<K> fmt::Debug for SecretKey<K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("<redacted>")
+    }
+}
+
+/// Sent once: from `splot psk set` to the node that keeps it.
+impl Serialize for WgPresharedKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.key)
+    }
+}
+
+/// Checked as it arrives, like a key read anywhere else.
+impl<'de> Deserialize<'de> for WgPresharedKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
     }
 }
 

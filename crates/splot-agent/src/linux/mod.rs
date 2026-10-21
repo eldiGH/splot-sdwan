@@ -3,7 +3,7 @@
 
 mod apply;
 mod file;
-pub mod key_store;
+pub(crate) mod key_store;
 
 use splot_core::protocol::linux::{Rendered, WgQuickConfig};
 

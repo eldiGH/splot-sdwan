@@ -231,7 +231,7 @@ A WireGuard pair can also share a preshared key (PSK). It adds nothing against t
 - **Parse, don't validate:** config values are checked types from `src/types/`, parsed where they enter; the model (`Network`) exists only through `model::validate`, so whatever reads it can rely on the checks.
 - **Defaults the config takes** (a key left out) are constants in `src/consts.rs`; serde's default functions return them.
 - **Errors** derive `thiserror::Error`; their messages are pinned by snapshot tests (`every_parse_error_message`, `every_error_message`). No panics in production code except `expect`s that can't fail.
-- **Secrets** (`WgPrivateKey`, `WgPresharedKey`) are never shown: no `Display`, a redacted `Debug`, the text only through `expose()` where WireGuard needs it.
+- **Secrets** (`WgPrivateKey`, `WgPresharedKey`) are never shown: no `Display`, a redacted `Debug`, the text only through `expose()` where WireGuard needs it. A preshared key can be sent (serde), once: to the node that keeps it (`psk set`). A private key has no serde, so it can't be put in a message: it never leaves its node.
 - **Messages to the user say "peer"** for the machine splot runs on, not "router": it runs on Linux hosts too.
 - **Modules are private** unless something outside needs them, so dead code shows up as a warning.
 

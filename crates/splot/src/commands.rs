@@ -4,19 +4,12 @@ use std::net::Ipv4Addr;
 
 use anyhow::{Context, bail};
 
-use splot_agent::{
-    key_store::{KeyStore, KeyStoreError},
-    linux::key_store::FileKeyStore,
-    node,
-    openwrt::key_store::UciKeyStore,
-    wg,
-};
 use splot_core::protocol::{Failure, Reply, Request};
 
 use crate::{
     backend,
     model::Network,
-    plan::{self, NodePlan, wireguard::WireGuardPlan},
+    plan::{self, NodePlan},
     types::{
         identifier::Identifier,
         platform::{
@@ -62,11 +55,17 @@ fn peer_os(
     }
 }
 
-/// The OS the config says `node` runs, once this peer is checked to run it too.
-fn checked_os(network: &Network, node: &Identifier) -> anyhow::Result<Os> {
-    let config = network.node(node).map(|node| node.platform().os());
+/// What the agent on this peer answers to `request`; its failure as an error.
+fn ask(request: Request) -> anyhow::Result<Reply> {
+    match splot_agent::handle(request) {
+        Reply::Failed(failure) => Err(agent_error(failure)),
+        reply => Ok(reply),
+    }
+}
 
-    peer_os(node, config, None, node::detect_os())
+/// The agent's answer wasn't one to what splot asked.
+fn unexpected(reply: Reply) -> anyhow::Error {
+    anyhow::anyhow!("the agent answered what splot didn't ask: {reply:?}")
 }
 
 /// `init`: gives this peer its WireGuard key, unless it has one (a key is
@@ -76,12 +75,11 @@ fn checked_os(network: &Network, node: &Identifier) -> anyhow::Result<Os> {
 /// no key of splot's.
 pub fn init(network: &Network, node: &Identifier, os: Option<Os>) -> anyhow::Result<()> {
     let known = network.node(node);
-    let os = peer_os(
-        node,
-        known.map(|known| known.platform().os()),
-        os,
-        node::detect_os(),
-    )?;
+    let detected = match ask(Request::Os)? {
+        Reply::Os(detected) => detected,
+        reply => return Err(unexpected(reply)),
+    };
+    let os = peer_os(node, known.map(|known| known.platform().os()), os, detected)?;
 
     if known.is_some_and(|known| known.platform().wireguard().is_none()) {
         println!(
@@ -90,24 +88,13 @@ pub fn init(network: &Network, node: &Identifier, os: Option<Os>) -> anyhow::Res
         return Ok(());
     }
 
-    match os {
-        Os::OpenWrt => init_with::<UciKeyStore>(network, node, os),
-        Os::Linux => init_with::<FileKeyStore>(network, node, os),
-    }
-}
-
-/// `init` with the key store `S`, on a peer that runs `os`.
-fn init_with<S: KeyStore>(network: &Network, node: &Identifier, os: Os) -> anyhow::Result<()> {
-    let (store, created) = match S::load() {
-        Ok(store) => (store, false),
-        Err(KeyStoreError::NotInitialised) => {
-            S::create_private_key()?;
-            (S::load()?, true)
-        }
-        Err(err) => return Err(err.into()),
+    let (public_key, created) = match ask(Request::Init { os })? {
+        Reply::Initialised {
+            public_key,
+            created,
+        } => (public_key, created),
+        reply => return Err(unexpected(reply)),
     };
-    let public_key =
-        wg::get_pubkey(store.private_key()).context("failed to derive this peer's public key")?;
 
     if created {
         println!("Generated this peer's WireGuard key.");
@@ -217,21 +204,25 @@ fn new_node_entry(
 pub fn apply(network: &Network, node: &Identifier, dry_run: bool) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
     check_applicable(network, node)?;
-    let os = network
-        .node(node)
-        .expect("a node the config has a plan for is in the config")
-        .platform()
-        .os();
 
-    let rendered = backend::render(&plan, os);
-    match splot_agent::handle(Request::Apply { rendered, dry_run }) {
+    let rendered = backend::render(&plan, node_os(network, node));
+    match ask(Request::Apply { rendered, dry_run })? {
         Reply::Applied(changed) if changed.is_empty() => println!("Nothing changed."),
         Reply::Applied(changed) => println!("Applied and reloaded: {}", changed.join(", ")),
         Reply::DryRun(text) => print!("{text}"),
-        Reply::Failed(failure) => return Err(agent_error(failure)),
+        reply => return Err(unexpected(reply)),
     }
 
     Ok(())
+}
+
+/// The OS the config says `node` runs: for a node it has a plan for.
+fn node_os(network: &Network, node: &Identifier) -> Os {
+    network
+        .node(node)
+        .expect("a node the config has a plan for is in the config")
+        .platform()
+        .os()
 }
 
 /// What the agent reported as an error: its message, and its causes as the
@@ -247,31 +238,17 @@ fn agent_error(Failure(messages): Failure) -> anyhow::Error {
 }
 
 /// `psk set`: stores the preshared key of the pair of `node` (this peer) with
-/// `peer`, read from stdin, once it's checked this peer is `node`.
+/// `peer`, read from stdin. The agent checks this peer is `node` before it
+/// stores it.
 pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
-    let os = checked_os(network, node)?;
+    let os = node_os(network, node);
     let Some(wireguard) = &plan.wireguard else {
         bail!(
             "splot leaves {}'s WireGuard alone (wireguard: none): it sets up no peers there, so it keeps no preshared keys",
             plan.node
         );
     };
-
-    match os {
-        Os::OpenWrt => psk_set_with::<UciKeyStore>(&plan, wireguard, peer),
-        Os::Linux => psk_set_with::<FileKeyStore>(&plan, wireguard, peer),
-    }
-}
-
-/// `psk set` with the key store `S`.
-fn psk_set_with<S: KeyStore>(
-    plan: &NodePlan,
-    wireguard: &WireGuardPlan,
-    peer: &str,
-) -> anyhow::Result<()> {
-    let key_store = S::load()?;
-    key_store.check_node(&plan.node, &plan.public_key)?;
 
     let Some(peer) = wireguard.peer(peer) else {
         let peers: Vec<String> = wireguard
@@ -301,7 +278,17 @@ fn psk_set_with<S: KeyStore>(
         .trim()
         .parse()
         .context("that's not a preshared key (as `wg genpsk` prints one)")?;
-    S::store_psk(&peer.host, &key)?;
+
+    match ask(Request::StorePsk {
+        node: plan.node.clone(),
+        public_key: plan.public_key.clone(),
+        os,
+        peer: peer.host.clone(),
+        key,
+    })? {
+        Reply::Stored => {}
+        reply => return Err(unexpected(reply)),
+    }
 
     println!(
         "Stored the preshared key of {}'s pair with {}.",
