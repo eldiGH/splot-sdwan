@@ -22,11 +22,35 @@ use splot_core::{
     wg_key::{WgPresharedKey, WgPublicKey},
 };
 
+use std::io::{self, BufRead, Write};
+
 use key_store::{KeyStore, KeyStoreError};
 use linux::key_store::FileKeyStore;
 use openwrt::key_store::UciKeyStore;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
+
+/// Answers each request in `input` on `output`, until `input` ends: a request
+/// a line, its reply a line, each one JSON value. A line that isn't a request
+/// is answered with a failure saying so.
+pub fn serve(input: impl BufRead, mut output: impl Write) -> io::Result<()> {
+    for line in input.lines() {
+        let reply = match serde_json::from_str(&line?) {
+            Ok(request) => handle(request),
+            Err(error) => Reply::Failed(Failure::of(&NotARequest(error))),
+        };
+        let reply = serde_json::to_string(&reply).map_err(io::Error::other)?;
+        writeln!(output, "{reply}")?;
+        output.flush()?;
+    }
+
+    Ok(())
+}
+
+/// A line the agent was sent that isn't a request it knows.
+#[derive(Debug, thiserror::Error)]
+#[error("the agent got what isn't a request it knows - is it as new as splot?")]
+struct NotARequest(#[source] serde_json::Error);
 
 /// Does what `request` asks, on this peer.
 pub fn handle(request: Request) -> Reply {
@@ -124,6 +148,44 @@ mod tests {
     use splot_core::protocol::{linux, openwrt};
 
     use super::*;
+
+    /// What `serve` answers to `input`, a reply a line.
+    fn served(input: &str) -> Vec<Reply> {
+        let mut output = Vec::new();
+        serve(input.as_bytes(), &mut output).unwrap();
+
+        String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn each_request_on_its_line_gets_its_reply_on_one() {
+        let request = serde_json::to_string(&Request::Os).unwrap();
+        assert_eq!(
+            served(&format!("{request}\n{request}\n")),
+            [Reply::Os(node::detect_os()), Reply::Os(node::detect_os())]
+        );
+        assert!(served("").is_empty());
+    }
+
+    #[test]
+    fn a_line_that_isnt_a_request_is_answered_with_why() {
+        let request = serde_json::to_string(&Request::Os).unwrap();
+        let replies = served(&format!("{{\"Reboot\":null}}\n{request}\n"));
+
+        let Reply::Failed(Failure(messages)) = &replies[0] else {
+            panic!("{replies:?}");
+        };
+        assert_eq!(
+            messages[0],
+            "the agent got what isn't a request it knows - is it as new as splot?"
+        );
+        // The next one is answered all the same.
+        assert_eq!(replies[1], Reply::Os(node::detect_os()));
+    }
 
     #[test]
     fn every_error_is_a_std_error() {

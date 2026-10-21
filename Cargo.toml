@@ -1,3 +1,13 @@
 [workspace]
 members = ["crates/*"]
 resolver = "3"
+
+# The agent, as splot copies it to a node: small, since a router may be short
+# of RAM and the agent runs from it (`/tmp`). `scripts/dist.sh` builds with it.
+[profile.agent]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

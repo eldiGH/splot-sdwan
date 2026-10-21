@@ -132,6 +132,11 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 - Every error type derives `thiserror::Error` (so each is a `std::error::Error`; a test lists them and stops compiling when one isn't). The parse errors of `src/types/` reach the user through serde, which shows only `Display`, so their messages include the inner reason, and that reason isn't also marked as their `source` (a chain would say it twice); a variant that only forwards an inner error is `transparent`. Snapshots pin every parse error's and every validation error's message. `ValidationWarning` keeps a hand-written `Display`: a warning isn't an error.
 - Logging via `log`/`env_logger` (`info` progress per manager, `debug` for details).
 
+### The agent binary (`splot-agent`'s `main.rs`, `scripts/dist.sh`)
+
+- `splot-agent` answers requests on stdin, one JSON value a line, each with its reply on a line of stdout (`serve`), until stdin ends. A line that isn't a request it knows is answered with a failure saying so ("is it as new as splot?"), and the next is answered all the same.
+- `scripts/dist.sh` builds it for every CPU splot supports (`aarch64`, `armv7` hard float, `riscv64`, `x86_64`) into `target/agents/<cpu>`: the `agent` profile (size-optimised, LTO, `panic = abort`, stripped), static musl, linked by Rust's own `rust-lld` (no cross toolchains; riscv64 needs `+crt-static`, the others are static by default). It checks each stays under 1 MB (it runs from a router's RAM) and, where qemu-user is installed, that it answers a request. 570–705 KB each today. splot doesn't carry them yet.
+
 ### Running programs (`splot-agent`'s `process.rs`)
 
 - Every program splot drives (`uci`, `wg`, `ubus`, `reload_config`) runs through one helper, `process::run`: it pipes the program's input and output, writes the input from a thread while the output is read (written first, it would block for good on a program that prints before it has read all of it: `uci batch` printing an error per line of a large batch), and tells a program that couldn't start from one that failed while running. A program that stops reading its input and then fails reports its own exit and output; one that stops reading yet claims success is an error, since what it read can't be trusted. Each caller keeps its own error type and messages.
