@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 DEFAULT_VERSIONS=(24.10.2 25.12.2)
 VERSIONS=("${@:-${DEFAULT_VERSIONS[@]}}")
 TARGET=x86_64-unknown-linux-musl
-BINARY=target/$TARGET/release/splot-sdwan
+BINARY=target/$TARGET/release/splot
 
 # Cabin's endpoint in splot.example.yml, a name, and the address the container
 # resolves it to. The name is changed to an address to test a live peer update.

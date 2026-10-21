@@ -326,7 +326,10 @@ AllowedIPs = 10.100.49.10/32
         // plan routes a node's networks, not a client's own IP. They agree only
         // because a client's IP is always inside the mesh: checked here for every
         // node of the example, so a change to either shows up.
-        let example = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/splot.example.yml"));
+        let example = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../splot.example.yml"
+        ));
         let network = checked(example);
         let mut routes_seen = 0;
 

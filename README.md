@@ -112,11 +112,11 @@ Requires Rust (edition 2024), and on the node: OpenWrt with `uci` and WireGuard 
 ```sh
 cargo build --release
 # on the router, with splot.yml in the working directory:
-./splot-sdwan init --node Cabin  # give the router its WireGuard key; print what the config needs
-./splot-sdwan check              # validate the config, report errors and warnings
-./splot-sdwan apply --node Cabin --dry-run  # print the uci commands (with placeholders for the keys)
-./splot-sdwan apply --node Cabin            # validate, generate, and apply via uci
-./splot-sdwan psk set --node Cabin Home < home.psk  # store Cabin's preshared key with Home
+./splot init --node Cabin  # give the router its WireGuard key; print what the config needs
+./splot check              # validate the config, report errors and warnings
+./splot apply --node Cabin --dry-run  # print the uci commands (with placeholders for the keys)
+./splot apply --node Cabin            # validate, generate, and apply via uci
+./splot psk set --node Cabin Home < home.psk  # store Cabin's preshared key with Home
 ```
 
 `-c/--config <FILE>` overrides the config path (default: `splot.yml`).

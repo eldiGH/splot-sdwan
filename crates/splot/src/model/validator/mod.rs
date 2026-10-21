@@ -98,7 +98,7 @@ mod tests {
         // diagnostics, so it can't silently rot as the schema evolves.
         let r = report(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/splot.example.yml"
+            "/../../splot.example.yml"
         )));
         assert!(
             r.errors.is_empty(),

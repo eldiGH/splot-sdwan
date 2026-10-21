@@ -2,6 +2,8 @@
 
 Snapshot of what splot currently does. Treat this as a complement to [ROADMAP.md](ROADMAP.md) (what's planned) and [CONFIG.md](CONFIG.md) (full config reference).
 
+The code is a Cargo workspace: `crates/splot` is splot, the binary `splot`. Source paths below (`src/...`) are within it.
+
 ---
 
 ## Done and working

@@ -227,6 +227,7 @@ A WireGuard pair can also share a preshared key (PSK). It adds nothing against t
 
 ## Code conventions
 
+- **A Cargo workspace:** each crate lives in `crates/<name>/`; `crates/splot` is splot itself (the binary `splot`). A source path in this file (`src/types/`) is within its crate; `scripts/` and the docs are at the repository's root.
 - **Parse, don't validate:** config values are checked types from `src/types/`, parsed where they enter; the model (`Network`) exists only through `model::validate`, so whatever reads it can rely on the checks.
 - **Defaults the config takes** (a key left out) are constants in `src/consts.rs`; serde's default functions return them.
 - **Errors** derive `thiserror::Error`; their messages are pinned by snapshot tests (`every_parse_error_message`, `every_error_message`). No panics in production code except `expect`s that can't fail.

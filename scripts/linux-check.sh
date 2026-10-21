@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TARGET=x86_64-unknown-linux-musl
-BINARY=target/$TARGET/release/splot-sdwan
+BINARY=target/$TARGET/release/splot
 IMAGE=localhost/splot-linux:trixie
 CONTAINER=splot-linux
 

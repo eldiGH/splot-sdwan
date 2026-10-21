@@ -97,7 +97,7 @@ mod tests {
     fn example_plan_snapshot() {
         let network = checked(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/splot.example.yml"
+            "/../../splot.example.yml"
         )));
 
         for node in network.nodes() {
@@ -168,7 +168,7 @@ none: left alone
     fn no_plan_for_a_node_the_network_lacks() {
         let network = checked(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/splot.example.yml"
+            "/../../splot.example.yml"
         )));
         assert!(plan(&network, &"Attic".parse().unwrap()).is_none());
     }

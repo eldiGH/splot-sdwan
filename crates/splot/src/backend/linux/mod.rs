@@ -113,7 +113,7 @@ mod tests {
         // with its secrets as placeholders: what the dry run shows.
         let network = test_support::checked(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/splot.example.yml"
+            "/../../splot.example.yml"
         )));
         let backend = LinuxBackend::new(None);
         let mut rendered = 0;

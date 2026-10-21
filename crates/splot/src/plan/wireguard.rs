@@ -276,7 +276,10 @@ clients:
     fn a_node_others_can_dial_sends_no_keepalive() {
         // Whatever it offers (the example's Home offers ssh); and a node never
         // keeps a roaming client's NAT open.
-        let example = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/splot.example.yml"));
+        let example = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../splot.example.yml"
+        ));
         for yaml in [FIXTURE, example] {
             let network = checked(yaml);
             for own in network.nodes().filter(|node| node.endpoint().is_some()) {
@@ -474,7 +477,10 @@ clients:",
         // One address, one path: WireGuard sends to the peer with the longest
         // matching prefix and doesn't check whether that peer is alive, so two
         // peers must never claim the same address.
-        let example = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/splot.example.yml"));
+        let example = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../splot.example.yml"
+        ));
         for yaml in [FIXTURE, example] {
             let network = checked(yaml);
             for own_node in network.nodes() {

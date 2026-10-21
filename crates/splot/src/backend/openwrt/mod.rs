@@ -187,7 +187,7 @@ mod tests {
     fn example() -> Network {
         test_support::checked(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/splot.example.yml"
+            "/../../splot.example.yml"
         )))
     }
 

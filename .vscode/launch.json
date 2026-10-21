@@ -5,20 +5,20 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug executable 'splot-sdwan'",
+      "name": "Debug executable 'splot'",
       "type": "lldb",
       "request": "launch",
       "cargo": {
-        "args": ["run", "--bin=splot-sdwan"]
+        "args": ["run", "--bin=splot"]
       },
       "args": []
     },
     {
-      "name": "Debug unit tests in executable 'splot-sdwan'",
+      "name": "Debug unit tests in executable 'splot'",
       "type": "lldb",
       "request": "launch",
       "cargo": {
-        "args": ["test", "--bin=splot-sdwan"]
+        "args": ["test", "--bin=splot"]
       }
     }
   ]
