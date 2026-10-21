@@ -12,8 +12,10 @@ use std::{
 
 use log::info;
 
-use super::network;
 use crate::process;
+
+/// The uci file of the network interfaces, the WireGuard ones among them.
+const NETWORK: &str = "network";
 
 /// How a WireGuard interface picks up changed peers.
 ///
@@ -73,7 +75,7 @@ pub struct Reload {
 impl Reload {
     /// `None` when no file changed.
     pub fn new(
-        changed_files: &[&str],
+        changed_files: &[String],
         wireguard_interface: String,
         peer_update: PeerUpdate,
     ) -> Option<Self> {
@@ -83,7 +85,8 @@ impl Reload {
 
         Some(Self {
             wireguard_interface: changed_files
-                .contains(&network::FILE)
+                .iter()
+                .any(|file| file == NETWORK)
                 .then_some(wireguard_interface),
             peer_update,
         })
@@ -284,7 +287,7 @@ mod tests {
 
     #[test]
     fn firewall_change_reloads_without_touching_the_tunnels() {
-        let reload = Reload::new(&["firewall"], mesh(), PeerUpdate::Restart).unwrap();
+        let reload = Reload::new(&["firewall".to_owned()], mesh(), PeerUpdate::Restart).unwrap();
         assert_eq!(rendered(&reload), ["reload_config"]);
     }
 
@@ -292,7 +295,12 @@ mod tests {
     fn network_change_renews_the_wireguard_interface() {
         // netifd re-reads the config first (procd would only do it a second
         // later): a renew can't reach an interface netifd doesn't know yet.
-        let reload = Reload::new(&["network", "dhcp"], mesh(), PeerUpdate::Renew).unwrap();
+        let reload = Reload::new(
+            &["network".to_owned(), "dhcp".to_owned()],
+            mesh(),
+            PeerUpdate::Renew,
+        )
+        .unwrap();
         assert_eq!(
             rendered(&reload),
             [
@@ -306,7 +314,7 @@ mod tests {
     #[test]
     fn network_change_without_renew_restarts_the_wireguard_interface() {
         // What `ifup` does, minus its exit code 0 for an unknown interface.
-        let reload = Reload::new(&["network"], mesh(), PeerUpdate::Restart).unwrap();
+        let reload = Reload::new(&["network".to_owned()], mesh(), PeerUpdate::Restart).unwrap();
         assert_eq!(
             rendered(&reload),
             [

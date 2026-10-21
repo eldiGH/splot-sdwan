@@ -3,7 +3,7 @@
 
 use std::{fmt, marker::PhantomData, str::FromStr};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const KEY_LEN: usize = 44;
 
@@ -63,8 +63,8 @@ pub fn check_key_format(key: &str) -> Result<(), KeyFormatError> {
 
 /// A WireGuard public key, validated on parse. Being plain base64 it is also safe
 /// to place inside quotes in generated config.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
-#[serde(try_from = "String")]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct WgPublicKey(String);
 
 impl WgPublicKey {
@@ -88,6 +88,12 @@ impl TryFrom<String> for WgPublicKey {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         check_key_format(&value)?;
         Ok(Self(value))
+    }
+}
+
+impl From<WgPublicKey> for String {
+    fn from(key: WgPublicKey) -> Self {
+        key.0
     }
 }
 

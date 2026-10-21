@@ -2,12 +2,14 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::identifier::Identifier;
 
 /// Which host it is, by the name an `allowFrom` refers to it with. A zone device
 /// and a hub client share their node's namespace (`Cabin.camera` either way), so
 /// both are `Local`; which of the two it is shows in where its address lives.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum HostRef {
     Node(Identifier),
     Local { node: Identifier, name: Identifier },

@@ -87,7 +87,7 @@ impl UciSectionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::openwrt::uci::UciBatchCommand;
+    use splot_core::uci::UciBatchCommand;
 
     fn render(cmd: &UciBatchCommand) -> String {
         cmd.to_string()

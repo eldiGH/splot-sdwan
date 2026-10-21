@@ -4,13 +4,17 @@ use std::net::Ipv4Addr;
 
 use anyhow::{Context, bail};
 
+use splot_agent::{
+    key_store::{KeyStore, KeyStoreError},
+    linux::key_store::FileKeyStore,
+    node,
+    openwrt::key_store::UciKeyStore,
+    wg,
+};
+use splot_core::protocol::{Failure, Reply, Request};
+
 use crate::{
-    backend::{
-        self, Backend,
-        key_store::{KeyStore, KeyStoreError},
-        linux::{LinuxBackend, key_store::FileKeyStore},
-        openwrt::{OpenWrtBackend, key_store::UciKeyStore},
-    },
+    backend,
     model::Network,
     plan::{self, NodePlan, wireguard::WireGuardPlan},
     types::{
@@ -20,7 +24,6 @@ use crate::{
         },
         wg_key::{WgPresharedKey, WgPublicKey},
     },
-    wg,
 };
 
 /// The listen port suggested to a new node: WireGuard's usual one.
@@ -63,7 +66,7 @@ fn peer_os(
 fn checked_os(network: &Network, node: &Identifier) -> anyhow::Result<Os> {
     let config = network.node(node).map(|node| node.platform().os());
 
-    peer_os(node, config, None, backend::detect_os())
+    peer_os(node, config, None, node::detect_os())
 }
 
 /// `init`: gives this peer its WireGuard key, unless it has one (a key is
@@ -77,7 +80,7 @@ pub fn init(network: &Network, node: &Identifier, os: Option<Os>) -> anyhow::Res
         node,
         known.map(|known| known.platform().os()),
         os,
-        backend::detect_os(),
+        node::detect_os(),
     )?;
 
     if known.is_some_and(|known| known.platform().wireguard().is_none()) {
@@ -209,45 +212,38 @@ fn new_node_entry(
 }
 
 /// `apply`: makes this peer's config what the plan for `node` says, or shows
-/// what that would change (`dry_run`). The backend first checks this peer is
-/// `node`.
+/// what that would change (`dry_run`). splot renders it; the agent checks this
+/// peer is `node` and applies it.
 pub fn apply(network: &Network, node: &Identifier, dry_run: bool) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
-    let os = checked_os(network, node)?;
     check_applicable(network, node)?;
+    let os = network
+        .node(node)
+        .expect("a node the config has a plan for is in the config")
+        .platform()
+        .os();
 
-    match os {
-        Os::OpenWrt => apply_with(OpenWrtBackend::new(key_store(&plan)?), &plan, dry_run),
-        Os::Linux => apply_with(LinuxBackend::new(key_store(&plan)?), &plan, dry_run),
-    }
-}
-
-/// The node's key store, where splot runs its WireGuard: it keeps a key nowhere
-/// else.
-fn key_store<S: KeyStore>(plan: &NodePlan) -> Result<Option<S>, KeyStoreError> {
-    plan.wireguard.is_some().then(S::load).transpose()
-}
-
-/// `apply` with `backend`, the one for the node's OS.
-fn apply_with<B: Backend>(backend: B, plan: &NodePlan, dry_run: bool) -> anyhow::Result<()>
-where
-    B::Error: std::error::Error + Send + Sync + 'static,
-{
-    let rendered = backend.render(plan);
-
-    if dry_run {
-        backend.dry_run(&rendered)?;
-    } else {
-        let changed = backend.apply(&rendered)?;
-
-        if changed.is_empty() {
-            println!("Nothing changed.");
-        } else {
-            println!("Applied and reloaded: {}", changed.join(", "));
-        }
+    let rendered = backend::render(&plan, os);
+    match splot_agent::handle(Request::Apply { rendered, dry_run }) {
+        Reply::Applied(changed) if changed.is_empty() => println!("Nothing changed."),
+        Reply::Applied(changed) => println!("Applied and reloaded: {}", changed.join(", ")),
+        Reply::DryRun(text) => print!("{text}"),
+        Reply::Failed(failure) => return Err(agent_error(failure)),
     }
 
     Ok(())
+}
+
+/// What the agent reported as an error: its message, and its causes as the
+/// error's chain, the way they'd show had the error happened here.
+fn agent_error(Failure(messages): Failure) -> anyhow::Error {
+    let mut messages = messages.into_iter().rev();
+    let mut error = anyhow::anyhow!("{}", messages.next().unwrap_or_default());
+    for message in messages {
+        error = error.context(message);
+    }
+
+    error
 }
 
 /// `psk set`: stores the preshared key of the pair of `node` (this peer) with
@@ -586,6 +582,22 @@ nodes:
         assert_eq!(
             applicable("Pond").unwrap_err(),
             "splot can't manage Pond's firewall (nftables) or dhcp (dnsmasq) on Linux yet: set them to `none` to apply the rest"
+        );
+    }
+
+    #[test]
+    fn an_agents_failure_reads_as_its_error_with_its_causes() {
+        let error = agent_error(Failure(vec![
+            "can't read the key store".to_owned(),
+            "uci failed".to_owned(),
+            "Entry not found".to_owned(),
+        ]));
+
+        assert_eq!(error.to_string(), "can't read the key store");
+        let chain: Vec<String> = error.chain().map(ToString::to_string).collect();
+        assert_eq!(
+            chain,
+            ["can't read the key store", "uci failed", "Entry not found"]
         );
     }
 

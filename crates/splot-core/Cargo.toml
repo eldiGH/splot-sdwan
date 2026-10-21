@@ -8,4 +8,5 @@ serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
 
 [dev-dependencies]
+serde_json = "1.0.154"
 serde_norway = "0.9.42"

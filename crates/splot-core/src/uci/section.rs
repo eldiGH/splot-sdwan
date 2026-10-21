@@ -1,16 +1,18 @@
 //! A uci section: its name, its type and its options.
 
+use serde::{Deserialize, Serialize};
+
 use super::UciBatchCommand;
 
 /// An option's value: one value, or a list.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Value {
     Single(String),
     List(Vec<String>),
 }
 
 /// A uci section: its name, its type and its options, in order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Section {
     pub name: String,
     pub section_type: String,

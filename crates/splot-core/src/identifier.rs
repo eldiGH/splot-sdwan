@@ -1,6 +1,6 @@
 use std::{borrow::Borrow, fmt, str::FromStr};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::consts;
 
@@ -48,8 +48,8 @@ fn validate_identifier(identifier: &str) -> Result<(), ParseIdentifierError> {
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, PartialOrd, Ord)]
-#[serde(try_from = "String")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
+#[serde(try_from = "String", into = "String")]
 pub struct Identifier(String);
 
 impl FromStr for Identifier {

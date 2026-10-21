@@ -3,73 +3,15 @@
 
 use std::collections::BTreeSet;
 
-use crate::{
-    backend::{
-        key_store::KeyStore,
-        secret::{self, MissingPsks, Secret},
-    },
-    plan::wireguard::{Endpoint, Peer, WireGuardPlan},
-    types::{
-        identifier::Identifier,
-        ip::{Ipv4Interface, Ipv4Network},
-    },
+use splot_core::{
+    protocol::linux::{Line, WgQuickConfig},
+    secret::Secret,
 };
 
-/// A line of the file: as it is, or a key whose value is a secret.
-#[derive(Debug, Clone)]
-enum Line {
-    Text(String),
-    Secret { key: &'static str, secret: Secret },
-}
-
-/// The file, and what wg-quick sets up from it besides WireGuard itself when it
-/// brings the interface up: its address and its routes. `wg syncconf` changes
-/// neither, so apply restarts the interface when what's live differs.
-#[derive(Debug, Clone)]
-pub(super) struct WgQuickConfig {
-    lines: Vec<Line>,
-    pub(super) address: Ipv4Interface,
-    pub(super) routes: BTreeSet<Ipv4Network>,
-}
-
-impl WgQuickConfig {
-    /// The file with each secret's placeholder: what the dry run shows.
-    pub(super) fn masked(&self) -> String {
-        self.text(self.secrets().map(Secret::placeholder))
-    }
-
-    /// The file with the secrets from `store`: what apply writes. Refuses when a
-    /// pair's preshared key isn't stored.
-    pub(super) fn filled(&self, store: &impl KeyStore) -> Result<String, MissingPsks> {
-        Ok(self.text(secret::values(self.secrets(), store)?))
-    }
-
-    fn secrets(&self) -> impl Iterator<Item = &Secret> {
-        self.lines.iter().filter_map(|line| match line {
-            Line::Secret { secret, .. } => Some(secret),
-            Line::Text(_) => None,
-        })
-    }
-
-    /// The lines with `values` for the secrets, in order.
-    fn text<'a>(&self, values: impl IntoIterator<Item = &'a str>) -> String {
-        let mut values = values.into_iter();
-        let mut text = String::new();
-
-        for line in &self.lines {
-            match line {
-                Line::Text(line) => text.push_str(line),
-                Line::Secret { key, .. } => {
-                    let value = values.next().expect("a value for every secret");
-                    text.push_str(&format!("{key} = {value}"));
-                }
-            }
-            text.push('\n');
-        }
-
-        text
-    }
-}
+use crate::{
+    plan::wireguard::{Endpoint, Peer, WireGuardPlan},
+    types::{identifier::Identifier, ip::Ipv4Network},
+};
 
 /// The routes wg-quick adds when it brings the interface up: one for each
 /// peer's allowed IP that no route through the interface covers yet. The
@@ -98,7 +40,7 @@ fn peer_lines(peer: &Peer) -> Vec<Line> {
     ];
     if peer.psk {
         lines.push(Line::Secret {
-            key: "PresharedKey",
+            key: "PresharedKey".to_owned(),
             secret: Secret::Psk(peer.host.clone()),
         });
     }
@@ -126,7 +68,7 @@ pub(super) fn render(node: &Identifier, plan: &WireGuardPlan) -> WgQuickConfig {
         text(format!("Address = {}", plan.address)),
         text(format!("ListenPort = {}", plan.listen_port)),
         Line::Secret {
-            key: "PrivateKey",
+            key: "PrivateKey".to_owned(),
             secret: Secret::PrivateKey,
         },
     ];
@@ -137,17 +79,15 @@ pub(super) fn render(node: &Identifier, plan: &WireGuardPlan) -> WgQuickConfig {
 
     WgQuickConfig {
         lines,
-        address: plan.address,
-        routes: routes(plan),
+        address: plan.address.to_string(),
+        routes: routes(plan).iter().map(ToString::to_string).collect(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        backend::linux::key_store::FileKeyStore, model::host::HostRef, plan, test_support::checked,
-    };
+    use crate::{plan, test_support::checked};
 
     // Home has a hub with a client that turns PSKs off; Cabin is reached by name
     // and has a zone; Lake can't be dialled. Phone is a global client.
@@ -194,21 +134,9 @@ clients:
     meshIp: 10.100.1.10
 ";
 
-    const PRIVATE_KEY: &str = "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRA=";
-    const CABIN_PSK: &str = "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSA=";
-    const LAKE_PSK: &str = "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTA=";
-    const PHONE_PSK: &str = "UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUA=";
-
     fn config_for(yaml: &str, node: &str) -> WgQuickConfig {
         let plan = plan::plan(&checked(yaml), &node.parse().unwrap()).unwrap();
         render(&plan.node, plan.wireguard.as_ref().unwrap())
-    }
-
-    fn store(psks: &[(&str, &str)]) -> FileKeyStore {
-        psks.iter().fold(
-            FileKeyStore::for_tests(PRIVATE_KEY),
-            |store, (peer, key)| store.with_psk(&HostRef::Node(peer.parse().unwrap()), key),
-        )
     }
 
     #[test]
@@ -270,52 +198,11 @@ AllowedIPs = 10.100.49.10/32
     }
 
     #[test]
-    fn apply_fills_in_the_secrets_and_the_rendered_file_holds_none() {
-        let config = config_for(FIXTURE, "Home");
-        let filled = config
-            .filled(
-                &store(&[("Cabin", CABIN_PSK), ("Lake", LAKE_PSK)])
-                    .with_psk(&HostRef::Client("Phone".parse().unwrap()), PHONE_PSK),
-            )
-            .unwrap();
-
-        assert!(filled.contains(&format!("\nPrivateKey = {PRIVATE_KEY}\n")));
-        for psk in [CABIN_PSK, LAKE_PSK, PHONE_PSK] {
-            assert_eq!(filled.matches(psk).count(), 1, "{psk}");
-        }
-        // Each in its peer's section.
-        assert!(filled.contains(&format!(
-            "# Lake\n[Peer]\nPublicKey = DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=\nPresharedKey = {LAKE_PSK}\n"
-        )));
-        // Nothing else moved: the filled file is the masked one with the secrets in.
-        let masked = config.masked();
-        assert_eq!(filled.lines().count(), masked.lines().count());
-        assert!(!filled.contains('<'));
-
-        for secret in [PRIVATE_KEY, CABIN_PSK, LAKE_PSK, PHONE_PSK] {
-            assert!(!masked.contains(secret));
-        }
-    }
-
-    #[test]
-    fn apply_refuses_while_a_pairs_psk_is_missing() {
-        let MissingPsks(missing) = config_for(FIXTURE, "Home")
-            .filled(&store(&[("Lake", LAKE_PSK)]))
-            .unwrap_err();
-        assert_eq!(missing, ["Cabin", "Phone"]);
-    }
-
-    #[test]
     fn wg_quick_routes_the_networks_behind_the_other_nodes() {
         // The mesh's own addresses (mesh IPs, hubs, global clients) are on the
         // interface's network already.
-        let routes = |node: &str| -> Vec<String> {
-            config_for(FIXTURE, node)
-                .routes
-                .iter()
-                .map(ToString::to_string)
-                .collect()
-        };
+        let routes =
+            |node: &str| -> Vec<String> { config_for(FIXTURE, node).routes.into_iter().collect() };
         assert_eq!(routes("Home"), ["192.168.2.0/24"]);
         assert!(routes("Cabin").is_empty());
     }

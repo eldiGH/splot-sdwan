@@ -4,11 +4,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::{
-    section::{Section, Value},
-    uci::UciBatchCommand,
+use splot_core::{
+    consts,
+    uci::section::{Section, Value},
 };
-use crate::consts;
+
+use super::uci::UciBatchCommand;
 
 /// One difference between a file's current splot sections and the rendered ones.
 /// It points at the sections it's about: the rendered one where there is one, the
@@ -217,7 +218,7 @@ pub(super) fn commands(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::openwrt::export;
+    use splot_core::uci::export;
 
     /// One file's sections, written the way `uci export` prints them.
     const CURRENT: &str = "

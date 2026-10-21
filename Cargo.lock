@@ -472,6 +472,18 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
+ "splot-agent",
+ "splot-core",
+ "thiserror",
+]
+
+[[package]]
+name = "splot-agent"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
  "splot-core",
  "thiserror",
 ]
@@ -481,6 +493,7 @@ name = "splot-core"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "serde_norway",
  "thiserror",
 ]

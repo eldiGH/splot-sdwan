@@ -2,10 +2,10 @@
 
 use std::{fmt, str::FromStr};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The operating system a node runs.
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Os {
     OpenWrt,

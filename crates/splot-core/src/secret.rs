@@ -1,9 +1,11 @@
 //! The secrets a rendered config needs: what's rendered holds a placeholder in
 //! each one's place, and the node fills the secrets in from its key store.
 
+use serde::{Deserialize, Serialize};
+
 use crate::host::HostRef;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Secret {
     /// The node's private key.
     PrivateKey,

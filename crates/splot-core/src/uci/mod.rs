@@ -4,6 +4,7 @@
 pub mod export;
 pub mod naming;
 pub mod section;
+pub mod slot;
 
 #[derive(Debug, Clone)]
 pub enum UciBatchCommand {

@@ -1,12 +1,11 @@
 use log::{debug, info};
+use splot_core::{secret::Secret, uci::slot::Slot};
 
 use super::{
     naming::{self, UciSectionName},
     section::{Section, UciSection, UciSectionBuilder},
-    slot::Slot,
 };
 use crate::{
-    backend::secret::Secret,
     consts,
     plan::wireguard::{Endpoint, Peer, WireGuardPlan},
 };
@@ -110,9 +109,9 @@ fn interface_sections(plan: &WireGuardPlan) -> (Vec<Section>, Vec<Slot>) {
 
     let mut sections = vec![interface.to_section()];
     let mut secrets = vec![Slot {
-        file: FILE,
+        file: FILE.to_owned(),
         section: interface.section_name().to_string(),
-        option: PRIVATE_KEY,
+        option: PRIVATE_KEY.to_owned(),
         secret: Secret::PrivateKey,
     }];
 
@@ -123,9 +122,9 @@ fn interface_sections(plan: &WireGuardPlan) -> (Vec<Section>, Vec<Slot>) {
         };
         if peer.psk {
             secrets.push(Slot {
-                file: FILE,
+                file: FILE.to_owned(),
                 section: section.section_name().to_string(),
-                option: PRESHARED_KEY,
+                option: PRESHARED_KEY.to_owned(),
                 secret: psk(peer),
             });
         }
@@ -154,7 +153,9 @@ pub(super) fn render(wireguard: &WireGuardPlan) -> (Vec<Section>, Vec<Slot>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{backend::openwrt::uci::UciBatchCommand, plan, test_support::checked};
+    use splot_core::uci::UciBatchCommand;
+
+    use crate::{plan, test_support::checked};
 
     // Home has a hub with a client; Cabin's hub is empty.
     const FIXTURE: &str = "

@@ -1,9 +1,8 @@
 use std::process::Command;
 
-use crate::{
-    process,
-    types::wg_key::{KeyFormatError, WgPrivateKey, WgPublicKey},
-};
+use splot_core::wg_key::{KeyFormatError, WgPrivateKey, WgPublicKey};
+
+use crate::process;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

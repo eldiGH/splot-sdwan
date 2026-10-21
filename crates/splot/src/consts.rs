@@ -3,7 +3,7 @@ use crate::types::{
     platform::{DhcpProgram, DnsProgram, FirewallProgram, WireGuardProgram},
 };
 
-pub use splot_core::consts::{MESH_INTERFACE_NAME, SPLOT_SECTION_PREFIX};
+pub use splot_core::consts::MESH_INTERFACE_NAME;
 pub const SPLOT_NAME_PREFIX: &str = "[SPLOT] ";
 /// `{Node}.hub` refers to the node's hub network.
 pub const HUB_NAME: &str = "hub";

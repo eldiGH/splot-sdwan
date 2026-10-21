@@ -8,10 +8,13 @@ use std::{
 };
 
 use super::file;
+use splot_core::{
+    host::HostRef,
+    wg_key::{WgPresharedKey, WgPrivateKey},
+};
+
 use crate::{
-    backend::key_store::{KeyStore, KeyStoreError},
-    model::host::HostRef,
-    types::wg_key::{WgPresharedKey, WgPrivateKey},
+    key_store::{KeyStore, KeyStoreError},
     wg,
 };
 

@@ -1,26 +1,9 @@
-//! Where the secrets go in the uci config: what's rendered records each one's
-//! place (its slot), and apply fills the secrets in there, while the dry run
-//! shows the placeholders again. Only the recorded places are filled in or
-//! masked, so neither depends on what a value looks like.
+//! The dry run shows the secrets apply fills in as their placeholders again:
+//! at their slots alone, so that doesn't depend on what a value looks like.
+
+use splot_core::uci::slot::Slot;
 
 use super::uci::UciBatchCommand;
-use crate::backend::secret::Secret;
-
-/// Where a secret goes: one option of one section.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Slot {
-    pub(super) file: &'static str,
-    pub(super) section: String,
-    pub(super) option: &'static str,
-    pub(super) secret: Secret,
-}
-
-impl Slot {
-    /// Its option's uci path, the way `set` names it.
-    fn path(&self) -> String {
-        format!("{}.{}.{}", self.file, self.section, self.option)
-    }
-}
 
 /// `command` as the dry run shows it: a `set` of a slot shows the secret's
 /// placeholder.
@@ -36,13 +19,15 @@ pub(super) fn masked(command: UciBatchCommand, slots: &[Slot]) -> UciBatchComman
 
 #[cfg(test)]
 mod tests {
+    use splot_core::secret::Secret;
+
     use super::*;
 
     fn private_key_slot() -> Slot {
         Slot {
-            file: "network",
+            file: "network".to_owned(),
             section: "spl_mesh".to_owned(),
-            option: "private_key",
+            option: "private_key".to_owned(),
             secret: Secret::PrivateKey,
         }
     }

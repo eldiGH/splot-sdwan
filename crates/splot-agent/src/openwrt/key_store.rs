@@ -7,17 +7,20 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{
-    export,
-    naming::UciSectionName,
-    section::{Section, Value},
-    uci::{self, UciBatchCommand},
+use splot_core::{
+    host::HostRef,
+    uci::{
+        export,
+        naming::UciSectionName,
+        section::{Section, Value},
+    },
+    wg_key::{WgPresharedKey, WgPrivateKey},
 };
+
+use super::uci::{self, UciBatchCommand};
 use crate::{
-    backend::key_store::{KeyStore, KeyStoreError},
     env,
-    model::host::HostRef,
-    types::wg_key::{WgPresharedKey, WgPrivateKey},
+    key_store::{KeyStore, KeyStoreError},
     wg,
 };
 

@@ -15,11 +15,10 @@ use std::{
 
 use serde::{Deserialize, de::DeserializeOwned};
 
-use super::{INTERFACE, file, wg_quick::WgQuickConfig};
-use crate::{
-    backend::{NotConfirmed, secret::MissingPsks},
-    process,
-};
+use splot_core::protocol::linux::WgQuickConfig;
+
+use super::{INTERFACE, file};
+use crate::{node::NotConfirmed, process, secret::MissingPsks};
 
 /// The file wg-quick reads for the interface.
 pub(super) const PATH: &str = "/etc/wireguard/spl_mesh.conf";
@@ -360,67 +359,43 @@ pub(super) fn run_config(config: &WgQuickConfig, text: &str) -> Result<Vec<Strin
     Ok(changed)
 }
 
-/// Prints what `run_config` would do: the file, masked, if it changes, and
-/// the systemd steps after it.
-pub(super) fn print(config: &WgQuickConfig, text: &str) -> Result<(), Error> {
+/// What `run_config` would do, as the dry run shows it: the file, masked, if
+/// it changes, and the systemd steps after it.
+pub(super) fn print(config: &WgQuickConfig, text: &str) -> Result<String, Error> {
     let (file_changed, steps) = changes(config, text)?;
 
     if !file_changed && steps.is_empty() {
-        println!("# Nothing to change.");
-        return Ok(());
+        return Ok("# Nothing to change.\n".to_owned());
     }
 
+    let mut shown = String::new();
     if file_changed {
-        println!("# {PATH} becomes:");
-        print!("{}", config.masked());
+        shown.push_str(&format!("# {PATH} becomes:\n"));
+        shown.push_str(&config.masked());
     }
     if !steps.is_empty() {
-        println!("# Then splot runs:");
+        shown.push_str("# Then splot runs:\n");
         for step in &steps {
-            println!("#   {step}");
+            shown.push_str(&format!("#   {step}\n"));
         }
     }
 
-    Ok(())
+    Ok(shown)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{backend::linux::wg_quick, plan, test_support::checked};
-
-    const FIXTURE: &str = "
-meshNetwork: 10.100.0.0/16
-nodes:
-  Home:
-    platform:
-      os: linux
-      wireguard: wg-quick
-      firewall: none
-      dhcp: none
-      dns: none
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    listenPort: 51820
-    meshIp: 10.100.0.1
-  Cabin:
-    platform:
-      os: openwrt
-    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
-    endpoint: 5.6.7.8
-    listenPort: 51820
-    meshIp: 10.100.0.2
-    zones:
-      lan:
-        address: 192.168.2.1/24
-      iot:
-        address: 192.168.3.1/24
-";
 
     /// Home's config: address 10.100.0.1/16, routes to Cabin's two zones.
     fn config() -> WgQuickConfig {
-        let plan = plan::plan(&checked(FIXTURE), &"Home".parse().unwrap()).unwrap();
-        wg_quick::render(&plan.node, plan.wireguard.as_ref().unwrap())
+        WgQuickConfig {
+            lines: Vec::new(),
+            address: "10.100.0.1/16".to_owned(),
+            routes: ["192.168.2.0/24", "192.168.3.0/24"]
+                .map(str::to_owned)
+                .into(),
+        }
     }
 
     /// The unit running, enabled, with the interface as wg-quick set it up.

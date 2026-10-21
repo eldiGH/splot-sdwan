@@ -4,14 +4,13 @@
 
 use std::error::Error;
 
-use crate::{
-    model::host::HostRef,
-    types::{
-        identifier::Identifier,
-        wg_key::{KeyFormatError, WgPresharedKey, WgPrivateKey, WgPublicKey},
-    },
-    wg,
+use splot_core::{
+    host::HostRef,
+    identifier::Identifier,
+    wg_key::{KeyFormatError, WgPresharedKey, WgPrivateKey, WgPublicKey},
 };
+
+use crate::wg;
 
 /// A node's key store. Only `splot init` creates the private key; apply reads
 /// it, and the preshared keys, to fill them into the config it writes.

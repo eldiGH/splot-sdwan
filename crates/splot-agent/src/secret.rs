@@ -2,13 +2,13 @@
 //! each one's place: apply fills the secrets in from the node's key store, and
 //! the dry run shows the placeholders. Each backend records where they go.
 
-use super::key_store::KeyStore;
+use splot_core::secret::Secret;
 
-pub use splot_core::secret::Secret;
+use crate::key_store::KeyStore;
 
 /// The value of each of `secrets` in `store`, in order. Refuses when a pair's
 /// preshared key isn't stored, naming every such peer.
-pub(super) fn values<'a, 'b>(
+pub(crate) fn values<'a, 'b>(
     secrets: impl IntoIterator<Item = &'b Secret>,
     store: &'a impl KeyStore,
 ) -> Result<Vec<&'a str>, MissingPsks> {
@@ -44,7 +44,9 @@ pub struct MissingPsks(pub Vec<String>);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{backend::openwrt::key_store::UciKeyStore, model::host::HostRef};
+    use splot_core::host::HostRef;
+
+    use crate::openwrt::key_store::UciKeyStore;
 
     const PRIVATE_KEY: &str = "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRA=";
     const CABIN_PSK: &str = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
