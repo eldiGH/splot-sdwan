@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Checks what splot generates against real OpenWrt: boots an OpenWrt container
-# per version, runs `splot apply` there with splot.example.yml (as node Home),
-# and asks OpenWrt's own tools whether the result works.
+# per version, runs splot here, reaching the router over ssh as node Home of
+# splot.example.yml, and asks OpenWrt's own tools whether the result works.
 #
 #   scripts/openwrt-check.sh [VERSION...]     default: the versions in use
 #
-# Needs podman, the Rust target x86_64-unknown-linux-musl, and the wireguard
-# kernel module on the host (`sudo modprobe wireguard`): containers share the
-# host's kernel. SPLOT_CHECK_KEEP=1 keeps the containers for a look around
-# (`podman exec -it splot-openwrt-<version> sh`).
+# Needs podman, ssh, the Rust target x86_64-unknown-linux-musl, and the
+# wireguard kernel module on the host (`sudo modprobe wireguard`): containers
+# share the host's kernel. SPLOT_CHECK_KEEP=1 keeps the containers for a look
+# around (`podman exec -it splot-openwrt-<version> sh`).
 # Commands in single quotes run in the container; their $ expands there.
 # shellcheck disable=SC2016
 set -euo pipefail
@@ -39,14 +39,46 @@ if [ ! -d /sys/module/wireguard ]; then
 	exit 2
 fi
 
-echo "Building splot for $TARGET"
-cargo build --quiet --release --target "$TARGET"
+# splot carries the agent for the routers here (x86_64), as scripts/dist.sh
+# builds it, and nothing else.
+echo "Building splot for $TARGET, carrying the agent for it"
+cargo build --quiet --package splot-agent --profile agent --target "$TARGET"
+rm -rf target/check-agents
+mkdir -p target/check-agents
+cp "target/$TARGET/agent/splot-agent" target/check-agents/x86_64
+SPLOT_AGENTS="$PWD/target/check-agents" cargo build --quiet --package splot --release --target "$TARGET"
+
+# splot reaches the router as `router`: a host of an ssh config of the check's
+# own, with a key of its own, through an `ssh` first on splot's PATH.
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/bin"
+ssh-keygen -q -t ed25519 -N '' -C splot-check -f "$work/key"
+printf '#!/bin/sh\nexec %s -F %s "$@"\n' "$(command -v ssh)" "$work/ssh_config" >"$work/bin/ssh"
+chmod +x "$work/bin/ssh"
+cp splot.example.yml "$work/splot.example.yml"
+
+# splot, as the operator runs it: here, reaching the router over ssh.
+splot() { PATH="$work/bin:$PATH" "$BINARY" "$@" --ssh router; }
+# Whether splot, run with the arguments after $1, says what $1 matches; it may
+# fail doing so. Its output is read whole: `splot | grep -q` would read as
+# failing under pipefail whenever splot does.
+says() {
+	local pattern=$1 output
+	shift
+	output=$(splot "$@" 2>&1) || true
+	grep -q -- "$pattern" <<<"$output"
+}
 
 check_version() {
 	local version=$1
 	local image=localhost/splot-openwrt:$version
 	local container=splot-openwrt-$version
 	run() { podman exec "$container" sh -c "$1"; }
+	# A preshared key, as `wg genpsk` makes one on the router. Given to splot
+	# with <<<, not a pipe: splot may refuse before it reads its input, and the
+	# pipe's writer failing would then read as splot failing (pipefail).
+	psk() { run 'wg genpsk'; }
 
 	echo
 	echo "== OpenWrt $version"
@@ -54,7 +86,9 @@ check_version() {
 	podman rm --force --ignore --time 0 "$container" >/dev/null
 	# --privileged: rootless, so the extra capabilities apply inside the
 	# container's own user namespace only. eth1: the WAN set up by prepare.sh.
-	podman run --detach --name "$container" --privileged --network pasta:-I,eth1 "$image" >/dev/null
+	# Its ssh port is published on a free port of this machine's loopback.
+	podman run --detach --name "$container" --privileged --network pasta:-I,eth1 \
+		--publish 127.0.0.1::22 "$image" >/dev/null
 
 	local booted=
 	for _ in $(seq 60); do
@@ -69,17 +103,42 @@ check_version() {
 		return
 	fi
 
+	# The check's key may log in as root (dropbear), on the published port.
+	podman cp "$work/key.pub" "$container:/etc/dropbear/authorized_keys"
+	run 'chmod 600 /etc/dropbear/authorized_keys'
+	cat >"$work/ssh_config" <<EOF
+Host router
+	HostName 127.0.0.1
+	Port $(podman port "$container" 22/tcp | sed 's/.*://')
+	User root
+	IdentityFile $work/key
+	IdentitiesOnly yes
+	StrictHostKeyChecking no
+	UserKnownHostsFile /dev/null
+	LogLevel ERROR
+EOF
+	local reached=
+	for _ in $(seq 30); do
+		if PATH="$work/bin:$PATH" ssh router true 2>/dev/null; then
+			reached=1
+			break
+		fi
+		sleep 1
+	done
+	if [ -z "$reached" ]; then
+		fail "ssh: the router lets the check in within 30 s" "$(run 'logread | grep -i dropbear | tail -10' 2>&1)"
+		return
+	fi
+
 	# The example's endpoint name resolves through /etc/hosts: there's no public
 	# DNS for it, and a name that doesn't resolve keeps the mesh interface down.
-	podman cp "$BINARY" "$container:/usr/bin/splot"
-	podman cp splot.example.yml "$container:/tmp/splot.example.yml"
 	run "echo '$CABIN_ADDRESS $CABIN_ENDPOINT' >>/etc/hosts"
 
 	local log_lines output
 	# Only init writes the router's key: until it has run, the dry run says so
 	# and creates nothing.
-	output=$(run 'splot --config /tmp/splot.example.yml apply --node Home --dry-run 2>&1') || true
-	if printf '%s' "$output" | grep -q 'run `splot init' && ! run '[ -e /etc/config/splot ]'; then
+	output=$(splot --config "$work/splot.example.yml" apply --node Home --dry-run 2>&1) || true
+	if grep -q 'run `splot init' <<<"$output" && ! run '[ -e /etc/config/splot ]'; then
 		pass "before init, the dry run asks for it and writes nothing"
 	else
 		fail "before init, the dry run asks for it and writes nothing" "$output"
@@ -89,20 +148,20 @@ check_version() {
 	# placeholder key). With this router's key put in, Home is initialised; as
 	# Cabin, the key is someone else's (an error); with the placeholder back, the
 	# key is in the config nowhere (an error too, now that it isn't new).
-	local first initialised wrong stale
-	first=$(run 'splot --config /tmp/splot.example.yml init --node Home 2>&1') || true
-	run 'pubkey=$(uci get splot.config.private_key | wg pubkey)
-		sed "s|ReplaceHomePublicKeyA*=|$pubkey|" /tmp/splot.example.yml >/tmp/splot.yml'
-	initialised=$(run 'splot --config /tmp/splot.yml init --node Home 2>&1') || true
-	wrong=$(run 'splot --config /tmp/splot.yml init --node Cabin 2>&1; echo "exit $?"') || true
-	stale=$(run 'splot --config /tmp/splot.example.yml init --node Home 2>&1; echo "exit $?"') || true
-	if printf '%s' "$first" | grep -q "Generated this peer's WireGuard key" &&
-		printf '%s' "$first" | grep -qF "$(run 'uci get splot.config.private_key | wg pubkey')" &&
-		printf '%s' "$initialised" | grep -q "Home is already initialised" &&
-		printf '%s' "$wrong" | grep -q "the one at nodes.Home.publicKey, so this peer isn't Cabin" &&
-		printf '%s' "$wrong" | grep -q "exit 1" &&
-		printf '%s' "$stale" | grep -q "isn't in the config" &&
-		printf '%s' "$stale" | grep -q "exit 1"; then
+	local first initialised wrong stale pubkey
+	first=$(splot --config "$work/splot.example.yml" init --node Home 2>&1) || true
+	pubkey=$(run 'uci get splot.config.private_key | wg pubkey')
+	sed "s|ReplaceHomePublicKeyA*=|$pubkey|" "$work/splot.example.yml" >"$work/splot.yml"
+	initialised=$(splot --config "$work/splot.yml" init --node Home 2>&1) || true
+	wrong=$(splot --config "$work/splot.yml" init --node Cabin 2>&1; echo "exit $?") || true
+	stale=$(splot --config "$work/splot.example.yml" init --node Home 2>&1; echo "exit $?") || true
+	if grep -q "Generated this peer's WireGuard key" <<<"$first" &&
+		grep -qF "$pubkey" <<<"$first" &&
+		grep -q "Home is already initialised" <<<"$initialised" &&
+		grep -q "the one at nodes.Home.publicKey, so this peer isn't Cabin" <<<"$wrong" &&
+		grep -q "exit 1" <<<"$wrong" &&
+		grep -q "isn't in the config" <<<"$stale" &&
+		grep -q "exit 1" <<<"$stale"; then
 		pass "init: creates the key once; Home initialised; another node's key and an unknown key refused"
 	else
 		fail "init: creates the key once; Home initialised; another node's key and an unknown key refused" \
@@ -112,12 +171,15 @@ check_version() {
 	# A command acts as the node --node names once it has checked this peer is
 	# that node: as Cabin, or as a node the config doesn't have, it refuses and
 	# writes nothing.
-	output=$(run '
-		splot --config /tmp/splot.yml apply --node Cabin --dry-run 2>&1 | grep -q "isn.t the one the config has for Cabin" || echo "apply as Cabin;"
-		wg genpsk | splot --config /tmp/splot.yml psk set --node Cabin Home 2>&1 | grep -q "isn.t the one the config has for Cabin" || echo "psk set as Cabin;"
-		splot --config /tmp/splot.yml apply --node Pond --dry-run 2>&1 | grep -q "no node Pond in the config; its nodes are Barn, Cabin, Home, Lake" || echo "apply as Pond;"
-		uci show splot | grep -q spl_psk_ && echo "stored a PSK anyway;"
-		[ -n "$(uci changes)" ] && echo "staged changes;"') || true
+	output=
+	says "isn.t the one the config has for Cabin" --config "$work/splot.yml" apply --node Cabin --dry-run ||
+		output="$output apply as Cabin;"
+	says "isn.t the one the config has for Cabin" --config "$work/splot.yml" psk set --node Cabin Home <<<"$(psk)" ||
+		output="$output psk set as Cabin;"
+	says "no node Pond in the config; its nodes are Barn, Cabin, Home, Lake" \
+		--config "$work/splot.yml" apply --node Pond --dry-run || output="$output apply as Pond;"
+	if grep -q spl_psk_ <<<"$(run 'uci show splot')"; then output="$output stored a PSK anyway;"; fi
+	if [ -n "$(run 'uci changes')" ]; then output="$output staged changes;"; fi
 	if [ -z "$output" ]; then
 		pass "as another node or one the config doesn't have, commands refuse"
 	else
@@ -127,9 +189,9 @@ check_version() {
 	# Every pair uses a preshared key unless an end turns it off (the example's
 	# lte-cam does). Until they're stored, apply refuses, names the peers and
 	# touches nothing.
-	if output=$(run 'splot --config /tmp/splot.yml apply --node Home' 2>&1); then
+	if output=$(splot --config "$work/splot.yml" apply --node Home 2>&1); then
 		fail "apply refuses while PSKs are missing" "$output"
-	elif printf '%s' "$output" | grep -q 'no preshared key stored for Barn, Cabin, Lake, Phone:' &&
+	elif grep -q 'no preshared key stored for Barn, Cabin, Lake, Phone:' <<<"$output" &&
 		[ "$(run 'uci show network | grep -c spl_')" = 0 ]; then
 		pass "apply refuses while PSKs are missing"
 	else
@@ -137,11 +199,14 @@ check_version() {
 	fi
 	# psk set stores nothing for a name that isn't Home's peer, a pair with psk
 	# turned off, or input that isn't a key.
-	output=$(run '
-		wg genpsk | splot --config /tmp/splot.yml psk set --node Home Cabin.camera 2>&1 | grep -q "isn.t a peer of Home" || echo "not a peer;"
-		wg genpsk | splot --config /tmp/splot.yml psk set --node Home Home.lte-cam 2>&1 | grep -q "uses no preshared key" || echo "psk: false;"
-		echo "not a key" | splot --config /tmp/splot.yml psk set --node Home Cabin 2>&1 | grep -q "not a preshared key" || echo "not a key;"
-		uci show splot | grep -q spl_psk_ && echo "stored one anyway;"') || true
+	output=
+	says "isn.t a peer of Home" --config "$work/splot.yml" psk set --node Home Cabin.camera <<<"$(psk)" ||
+		output="$output not a peer;"
+	says "uses no preshared key" --config "$work/splot.yml" psk set --node Home Home.lte-cam <<<"$(psk)" ||
+		output="$output psk: false;"
+	says "not a preshared key" --config "$work/splot.yml" psk set --node Home Cabin <<<"not a key" ||
+		output="$output not a key;"
+	if grep -q spl_psk_ <<<"$(run 'uci show splot')"; then output="$output stored one anyway;"; fi
 	if [ -z "$output" ]; then
 		pass "psk set refuses a non-peer, a pair without a PSK, and a non-key"
 	else
@@ -150,12 +215,15 @@ check_version() {
 	# One key per pair. The peers' ends aren't in this container. The key store
 	# holds the private key and the PSKs, so only root may read it: init creates
 	# it that way, and storing a PSK tightens one an older splot left readable.
-	local store_created store_after
+	local store_created store_after peer
 	store_created=$(run 'ls -l /etc/config/splot | cut -c1-10')
 	run 'chmod 644 /etc/config/splot'
-	run 'for peer in Barn Cabin Lake Phone; do
-		wg genpsk | splot --config /tmp/splot.yml psk set --node Home $peer >/dev/null || exit 1
-	done'
+	for peer in Barn Cabin Lake Phone; do
+		if ! output=$(splot --config "$work/splot.yml" psk set --node Home "$peer" <<<"$(psk)" 2>&1); then
+			fail "psk set: Home's pair with $peer" "$output"
+			return
+		fi
+	done
 	store_after=$(run 'ls -l /etc/config/splot | cut -c1-10')
 	if [ "$store_created" = "-rw-------" ] && [ "$store_after" = "-rw-------" ]; then
 		pass "key store readable by root only (created so; tightened again from 644)"
@@ -163,11 +231,24 @@ check_version() {
 		fail "key store readable by root only" "created: $store_created, after psk set: $store_after"
 	fi
 
-	log_lines=$(run 'logread | wc -l')
-	if output=$(run 'splot --config /tmp/splot.yml apply --node Home' 2>&1); then
-		pass "splot apply: $(printf '%s' "$output" | tail -1)"
+	# What comes back to this machine holds no key from the router's key store:
+	# the dry run shows each as its placeholder.
+	output=$(splot --config "$work/splot.yml" apply --node Home --dry-run 2>&1) || true
+	local key leaked=
+	for key in $(run 'uci show splot' | cut -s -d"'" -f2); do
+		grep -qF -- "$key" <<<"$output" && leaked="$leaked ${key:0:4}…;"
+	done
+	if [ -z "$leaked" ] && grep -q "private_key='<private key>'" <<<"$output"; then
+		pass "the dry run, here, holds no key of the router's: placeholders only"
 	else
-		fail "splot apply" "$output"
+		fail "the dry run, here, holds no key of the router's: placeholders only" "leaked:$leaked"$'\n'"$output"
+	fi
+
+	log_lines=$(run 'logread | wc -l')
+	if output=$(splot --config "$work/splot.yml" apply --node Home 2>&1); then
+		pass "splot apply over ssh: $(tail -1 <<<"$output")"
+	else
+		fail "splot apply over ssh" "$output"
 		return
 	fi
 	# procd runs the reloads that reload_config triggers a second later.
@@ -273,7 +354,7 @@ check_version() {
 	local before after
 	# Applying an unchanged config stages nothing, so uci rewrites no file.
 	# stdout only: the log goes to stderr.
-	output=$(run 'splot --config /tmp/splot.yml apply --node Home --dry-run 2>/dev/null') || true
+	output=$(splot --config "$work/splot.yml" apply --node Home --dry-run 2>/dev/null) || true
 	if [ "$output" = "# Nothing to change." ]; then
 		pass "dry run of an unchanged node stages nothing"
 	else
@@ -284,7 +365,7 @@ check_version() {
 	# here has no stat.)
 	local files='/etc/config/network /etc/config/firewall /etc/config/dhcp'
 	before=$(run "ls -i $files; md5sum $files")
-	output=$(run 'splot --config /tmp/splot.yml apply --node Home' 2>&1) || true
+	output=$(splot --config "$work/splot.yml" apply --node Home 2>&1) || true
 	after=$(run "ls -i $files; md5sum $files")
 	if [ "$(printf '%s' "$output" | tail -1)" = "Nothing changed." ] && [ "$before" = "$after" ]; then
 		pass "second apply changes nothing, files untouched"
@@ -296,16 +377,16 @@ check_version() {
 	local renew
 	renew=$(run 'ubus call network get_proto_handlers | jsonfilter -e @.wireguard.renew_available')
 	before=$(run 'cat /sys/class/net/spl_mesh/ifindex 2>/dev/null') || true
-	run "sed -i 's/$CABIN_ENDPOINT/203.0.113.21/' /tmp/splot.yml"
+	sed -i "s/$CABIN_ENDPOINT/203.0.113.21/" "$work/splot.yml"
 	# Only that peer's endpoint is staged, then the network file is committed.
-	output=$(run 'splot --config /tmp/splot.yml apply --node Home --dry-run 2>/dev/null' | grep -v '^#') || true
+	output=$(splot --config "$work/splot.yml" apply --node Home --dry-run 2>/dev/null | grep -v '^#') || true
 	expected="set network.spl_wireguard_spl_mesh_Cabin.endpoint_host='203.0.113.21'"$'\n'"commit network"
 	if [ "$output" = "$expected" ]; then
 		pass "peer change stages only that peer"
 	else
 		fail "peer change stages only that peer" "$output"
 	fi
-	if ! output=$(run 'splot --config /tmp/splot.yml apply --node Home' 2>&1); then
+	if ! output=$(splot --config "$work/splot.yml" apply --node Home 2>&1); then
 		fail "peer update: apply" "$output"
 	else
 		sleep 3
@@ -326,15 +407,15 @@ check_version() {
 
 	# A PSK change: Cabin's pair gets a new key. Only that option is staged, the
 	# dry run shows its placeholder, and WireGuard gets the new key.
-	run 'wg genpsk | splot --config /tmp/splot.yml psk set --node Home Cabin >/dev/null'
-	output=$(run 'splot --config /tmp/splot.yml apply --node Home --dry-run 2>/dev/null' | grep -v '^#') || true
+	splot --config "$work/splot.yml" psk set --node Home Cabin <<<"$(psk)" >/dev/null
+	output=$(splot --config "$work/splot.yml" apply --node Home --dry-run 2>/dev/null | grep -v '^#') || true
 	expected="set network.spl_wireguard_spl_mesh_Cabin.preshared_key='<preshared key>'"$'\n'"commit network"
 	if [ "$output" = "$expected" ]; then
 		pass "PSK change stages only that key, shown as its placeholder"
 	else
 		fail "PSK change stages only that key, shown as its placeholder" "$output"
 	fi
-	if ! output=$(run 'splot --config /tmp/splot.yml apply --node Home' 2>&1); then
+	if ! output=$(splot --config "$work/splot.yml" apply --node Home 2>&1); then
 		fail "PSK update: apply" "$output"
 	else
 		sleep 3
@@ -349,14 +430,14 @@ check_version() {
 	# renders neither file, so it stages, deletes, commits and reloads nothing
 	# there, though the config changes what both would hold (the ssh port, the
 	# printer's MAC). Its sections from before stay as they were.
-	run "awk '!done && /^      os: openwrt\$/ { print; print \"      firewall: none\"; print \"      dhcp: none\"; done = 1; next } 1' \
-		/tmp/splot.yml | sed 's/port: 22\$/port: 2222/; s/aa:bb:cc:00:00:02/aa:bb:cc:00:00:12/' >/tmp/splot-none.yml"
+	awk '!done && /^      os: openwrt$/ { print; print "      firewall: none"; print "      dhcp: none"; done = 1; next } 1' \
+		"$work/splot.yml" | sed 's/port: 22$/port: 2222/; s/aa:bb:cc:00:00:02/aa:bb:cc:00:00:12/' >"$work/splot-none.yml"
 	local left_alone='/etc/config/firewall /etc/config/dhcp'
 	before=$(run "ls -i $left_alone; md5sum $left_alone")
 	local sections dry_run
 	sections=$(run "uci show firewall | grep -c '^firewall\.spl_[^.]*='; uci show dhcp | grep -c '^dhcp\.spl_[^.]*='" | paste -sd' ')
-	dry_run=$(run 'splot --config /tmp/splot-none.yml apply --node Home --dry-run 2>/dev/null') || true
-	output=$(run 'splot --config /tmp/splot-none.yml apply --node Home' 2>&1) || true
+	dry_run=$(splot --config "$work/splot-none.yml" apply --node Home --dry-run 2>/dev/null) || true
+	output=$(splot --config "$work/splot-none.yml" apply --node Home 2>&1) || true
 	after=$(run "ls -i $left_alone; md5sum $left_alone")
 	if [ "$dry_run" = "# Nothing to change." ] && [ "$(printf '%s' "$output" | tail -1)" = "Nothing changed." ] &&
 		[ "$before" = "$after" ] && ! printf '%s' "$sections" | grep -qw 0; then
@@ -369,23 +450,30 @@ check_version() {
 	# known by its own WireGuard. As Cabin, no interface here has Cabin's key:
 	# apply refuses and writes nothing. As Home, spl_mesh has Home's key: apply
 	# runs, and leaves the network file alone. init has nothing to create.
-	run "awk '/^      os: openwrt\$/ && n++ < 2 { print; print \"      wireguard: none\"; next }
-		/^    hub:\$/ { skip = 1 } skip && /^\$/ { skip = 0 } !skip' /tmp/splot.yml >/tmp/splot-own-wg.yml"
+	awk '/^      os: openwrt$/ && n++ < 2 { print; print "      wireguard: none"; next }
+		/^    hub:$/ { skip = 1 } skip && /^$/ { skip = 0 } !skip' "$work/splot.yml" >"$work/splot-own-wg.yml"
 	local all_files='/etc/config/network /etc/config/firewall /etc/config/dhcp'
 	local network_before refused_before refused_after
 	network_before=$(run 'ls -i /etc/config/network; md5sum /etc/config/network')
 	refused_before=$(run "ls -i $all_files; md5sum $all_files")
-	output=$(run '
-		splot --config /tmp/splot-own-wg.yml apply --node Cabin 2>&1 | grep -q "none of this peer.s WireGuard interfaces has the key the config has for Cabin" || echo "as Cabin: not refused;"') || true
+	output=$(says "none of this peer.s WireGuard interfaces has the key the config has for Cabin" \
+		--config "$work/splot-own-wg.yml" apply --node Cabin || echo "as Cabin: not refused;")
 	refused_after=$(run "ls -i $all_files; md5sum $all_files")
-	output="$output$(run '
-		splot --config /tmp/splot-own-wg.yml apply --node Home >/dev/null 2>&1 || echo "as Home: refused;"
-		splot --config /tmp/splot-own-wg.yml init --node Home 2>&1 | grep -q "nothing to initialise" || echo "init;"')" || true
+	splot --config "$work/splot-own-wg.yml" apply --node Home >/dev/null 2>&1 || output="$output as Home: refused;"
+	says "nothing to initialise" --config "$work/splot-own-wg.yml" init --node Home || output="$output init;"
 	if [ -z "$output" ] && [ "$refused_before" = "$refused_after" ] &&
 		[ "$network_before" = "$(run 'ls -i /etc/config/network; md5sum /etc/config/network')" ]; then
 		pass "WireGuard left alone: the node is known by its own interface's key (as Cabin refused, as Home applied, network untouched)"
 	else
 		fail "WireGuard left alone: the node is known by its own interface's key" "$output"
+	fi
+
+	# The node removed the agent each time the session ended.
+	output=$(run 'ls /tmp/splot-agent.* 2>/dev/null') || true
+	if [ -z "$output" ]; then
+		pass "no agent left in the router's /tmp"
+	else
+		fail "no agent left in the router's /tmp" "$output"
 	fi
 
 	if [ "${SPLOT_CHECK_KEEP:-}" = 1 ]; then

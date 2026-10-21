@@ -43,3 +43,15 @@ uci set network.wan.device=eth1
 uci set network.wan.proto=dhcp
 uci commit network
 EOF
+
+# splot reaches the router over ssh (dropbear), on the port podman publishes,
+# which arrives on the WAN: let it in there, as an operator's own rule.
+cat >/etc/uci-defaults/99-splot-test-ssh <<'EOF'
+uci add firewall rule
+uci set firewall.@rule[-1].name='Allow-SSH-for-splot-check'
+uci set firewall.@rule[-1].src='wan'
+uci set firewall.@rule[-1].proto='tcp'
+uci set firewall.@rule[-1].dest_port='22'
+uci set firewall.@rule[-1].target='ACCEPT'
+uci commit firewall
+EOF
