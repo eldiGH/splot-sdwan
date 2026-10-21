@@ -135,7 +135,13 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 ### The agent binary (`splot-agent`'s `main.rs`, `scripts/dist.sh`)
 
 - `splot-agent` answers requests on stdin, one JSON value a line, each with its reply on a line of stdout (`serve`), until stdin ends. A line that isn't a request it knows is answered with a failure saying so ("is it as new as splot?"), and the next is answered all the same.
-- `scripts/dist.sh` builds it for every CPU splot supports (`aarch64`, `armv7` hard float, `riscv64`, `x86_64`) into `target/agents/<cpu>`: the `agent` profile (size-optimised, LTO, `panic = abort`, stripped), static musl, linked by Rust's own `rust-lld` (no cross toolchains; riscv64 needs `+crt-static`, the others are static by default). It checks each stays under 1 MB (it runs from a router's RAM) and, where qemu-user is installed, that it answers a request. 570–705 KB each today. splot doesn't carry them yet.
+- `scripts/dist.sh` builds it for every CPU splot supports (`aarch64`, `armv7` hard float, `riscv64`, `x86_64`) into `target/agents/<cpu>`: the `agent` profile (size-optimised, LTO, `panic = abort`, stripped), static musl, linked by Rust's own `rust-lld` (no cross toolchains; riscv64 needs `+crt-static`, the others are static by default). It checks each stays under 1 MB (it runs from a router's RAM) and, where qemu-user is installed, that it answers a request. 570–705 KB each today. It then builds splot (static, x86_64) with `SPLOT_AGENTS` naming them, which `build.rs` embeds, and checks every agent is inside it byte for byte (the linker drops what nothing uses): `target/dist/splot`, about 7 MB. `splot --version` lists the CPUs it carries agents for.
+
+### Reaching a node over ssh (`src/agent/`)
+
+- `apply`, `init` and `psk set` take `--ssh <destination>` and `--agent <file>` (only with `--ssh`). `Agent::Local` calls the agent's code in-process; `Agent::Remote` opens a `Session` at the first request.
+- The session runs `ssh -T -- <destination> <bootstrap>`, with ssh's stderr on the terminal (password prompts, host keys, why it failed). The bootstrap says the node's CPU; splot picks the agent (`embedded::for_node`: `uname -m` and OpenWrt's `DISTRIB_ARCH`, armv7 only with a floating-point unit), sends its size and bytes into a 0700 `mktemp` file in `/tmp`, waits for `ready`, and sends `Hello { protocol }` before anything else. The file is removed when the agent ends (its input ends with the session); one that arrived shorter than announced doesn't run. ssh's exit 255 reads as "ssh couldn't reach it".
+- Tested by running the same bootstrap with a local `sh` and a fake agent (a shell script): the copy in `/tmp`, its mode, its removal, a refused protocol, how a session ends, a cut-short upload.
 
 ### Running programs (`splot-agent`'s `process.rs`)
 

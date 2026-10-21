@@ -15,9 +15,17 @@ use crate::{
     wg_key::{WgPresharedKey, WgPublicKey},
 };
 
+/// The protocol's version: splot and an agent talk only when theirs are the
+/// same. A change to a request or a reply bumps it.
+pub const PROTOCOL: u32 = 1;
+
 /// What splot asks of the agent.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {
+    /// The first request over a session, saying splot's protocol: `Hello` with
+    /// the agent's, which refuses another. Its shape never changes, so an agent
+    /// of any version reads it.
+    Hello { protocol: u32 },
     /// Which OS the node runs: `Os`.
     Os,
     /// Give the node its WireGuard key, in the key store of `os`, unless it has
@@ -41,6 +49,10 @@ pub enum Request {
 /// What the agent answers.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Reply {
+    /// The agent's protocol, the same as splot's.
+    Hello {
+        protocol: u32,
+    },
     /// The OS the node runs, as far as the agent can tell: OpenWrt by its
     /// release file, any other Linux as Linux, none for anything else.
     Os(Option<Os>),
@@ -176,6 +188,7 @@ mod tests {
     #[test]
     fn a_request_arrives_as_it_was_sent() {
         let requests = [
+            Request::Hello { protocol: PROTOCOL },
             Request::Os,
             Request::Init { os: Os::Linux },
             store_psk(),
@@ -212,6 +225,7 @@ mod tests {
     #[test]
     fn a_reply_arrives_as_it_was_sent() {
         for reply in [
+            Reply::Hello { protocol: PROTOCOL },
             Reply::Os(Some(Os::OpenWrt)),
             Reply::Os(None),
             Reply::Initialised {

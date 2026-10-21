@@ -18,7 +18,7 @@ use splot_core::{
     host::HostRef,
     identifier::Identifier,
     os::Os,
-    protocol::{Failure, Rendered, Reply, Request},
+    protocol::{Failure, PROTOCOL, Rendered, Reply, Request},
     wg_key::{WgPresharedKey, WgPublicKey},
 };
 
@@ -55,6 +55,7 @@ struct NotARequest(#[source] serde_json::Error);
 /// Does what `request` asks, on this peer.
 pub fn handle(request: Request) -> Reply {
     let result = match request {
+        Request::Hello { protocol } => hello(protocol),
         Request::Os => Ok(Reply::Os(node::detect_os())),
         Request::Init { os } => init(os),
         Request::StorePsk {
@@ -68,6 +69,24 @@ pub fn handle(request: Request) -> Reply {
     };
 
     result.unwrap_or_else(|error| Reply::Failed(Failure::of(error.as_ref())))
+}
+
+/// splot speaks another protocol than this agent.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "this agent speaks protocol {PROTOCOL}, and splot {splot}: use the agent that comes with this splot"
+)]
+struct OtherProtocol {
+    splot: u32,
+}
+
+/// Answers splot's hello with this agent's protocol, when it's splot's.
+fn hello(protocol: u32) -> Result<Reply, Error> {
+    if protocol == PROTOCOL {
+        Ok(Reply::Hello { protocol })
+    } else {
+        Err(OtherProtocol { splot: protocol }.into())
+    }
 }
 
 /// Gives this peer its WireGuard key in the key store of `os`, unless it has
@@ -185,6 +204,23 @@ mod tests {
         );
         // The next one is answered all the same.
         assert_eq!(replies[1], Reply::Os(node::detect_os()));
+    }
+
+    #[test]
+    fn the_agent_talks_to_a_splot_of_its_own_protocol_only() {
+        assert_eq!(
+            handle(Request::Hello { protocol: PROTOCOL }),
+            Reply::Hello { protocol: PROTOCOL }
+        );
+        assert_eq!(
+            handle(Request::Hello {
+                protocol: PROTOCOL + 1
+            }),
+            Reply::Failed(Failure(vec![format!(
+                "this agent speaks protocol {PROTOCOL}, and splot {}: use the agent that comes with this splot",
+                PROTOCOL + 1
+            )]))
+        );
     }
 
     #[test]

@@ -4,9 +4,10 @@ use std::net::Ipv4Addr;
 
 use anyhow::{Context, bail};
 
-use splot_core::protocol::{Failure, Reply, Request};
+use splot_core::protocol::{Reply, Request};
 
 use crate::{
+    agent::{self, Agent},
     backend,
     model::Network,
     plan::{self, NodePlan},
@@ -55,29 +56,21 @@ fn peer_os(
     }
 }
 
-/// What the agent on this peer answers to `request`; its failure as an error.
-fn ask(request: Request) -> anyhow::Result<Reply> {
-    match splot_agent::handle(request) {
-        Reply::Failed(failure) => Err(agent_error(failure)),
-        reply => Ok(reply),
-    }
-}
-
-/// The agent's answer wasn't one to what splot asked.
-fn unexpected(reply: Reply) -> anyhow::Error {
-    anyhow::anyhow!("the agent answered what splot didn't ask: {reply:?}")
-}
-
 /// `init`: gives this peer its WireGuard key, unless it has one (a key is
 /// never replaced), and says what the config needs for `node`: nothing, its new
 /// key, or a whole entry to paste. The key goes in the key store of the OS the
 /// peer runs (see `peer_os`). A node whose WireGuard splot leaves alone needs
 /// no key of splot's.
-pub fn init(network: &Network, node: &Identifier, os: Option<Os>) -> anyhow::Result<()> {
+pub fn init(
+    network: &Network,
+    node: &Identifier,
+    os: Option<Os>,
+    agent: &mut Agent,
+) -> anyhow::Result<()> {
     let known = network.node(node);
-    let detected = match ask(Request::Os)? {
+    let detected = match agent.ask(Request::Os)? {
         Reply::Os(detected) => detected,
-        reply => return Err(unexpected(reply)),
+        reply => return Err(agent::unexpected(reply)),
     };
     let os = peer_os(node, known.map(|known| known.platform().os()), os, detected)?;
 
@@ -88,12 +81,12 @@ pub fn init(network: &Network, node: &Identifier, os: Option<Os>) -> anyhow::Res
         return Ok(());
     }
 
-    let (public_key, created) = match ask(Request::Init { os })? {
+    let (public_key, created) = match agent.ask(Request::Init { os })? {
         Reply::Initialised {
             public_key,
             created,
         } => (public_key, created),
-        reply => return Err(unexpected(reply)),
+        reply => return Err(agent::unexpected(reply)),
     };
 
     if created {
@@ -201,16 +194,21 @@ fn new_node_entry(
 /// `apply`: makes this peer's config what the plan for `node` says, or shows
 /// what that would change (`dry_run`). splot renders it; the agent checks this
 /// peer is `node` and applies it.
-pub fn apply(network: &Network, node: &Identifier, dry_run: bool) -> anyhow::Result<()> {
+pub fn apply(
+    network: &Network,
+    node: &Identifier,
+    dry_run: bool,
+    agent: &mut Agent,
+) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
     check_applicable(network, node)?;
 
     let rendered = backend::render(&plan, node_os(network, node));
-    match ask(Request::Apply { rendered, dry_run })? {
+    match agent.ask(Request::Apply { rendered, dry_run })? {
         Reply::Applied(changed) if changed.is_empty() => println!("Nothing changed."),
         Reply::Applied(changed) => println!("Applied and reloaded: {}", changed.join(", ")),
         Reply::DryRun(text) => print!("{text}"),
-        reply => return Err(unexpected(reply)),
+        reply => return Err(agent::unexpected(reply)),
     }
 
     Ok(())
@@ -225,22 +223,15 @@ fn node_os(network: &Network, node: &Identifier) -> Os {
         .os()
 }
 
-/// What the agent reported as an error: its message, and its causes as the
-/// error's chain, the way they'd show had the error happened here.
-fn agent_error(Failure(messages): Failure) -> anyhow::Error {
-    let mut messages = messages.into_iter().rev();
-    let mut error = anyhow::anyhow!("{}", messages.next().unwrap_or_default());
-    for message in messages {
-        error = error.context(message);
-    }
-
-    error
-}
-
 /// `psk set`: stores the preshared key of the pair of `node` (this peer) with
 /// `peer`, read from stdin. The agent checks this peer is `node` before it
 /// stores it.
-pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Result<()> {
+pub fn psk_set(
+    network: &Network,
+    node: &Identifier,
+    peer: &str,
+    agent: &mut Agent,
+) -> anyhow::Result<()> {
     let plan = node_plan(network, node)?;
     let os = node_os(network, node);
     let Some(wireguard) = &plan.wireguard else {
@@ -279,7 +270,7 @@ pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Resu
         .parse()
         .context("that's not a preshared key (as `wg genpsk` prints one)")?;
 
-    match ask(Request::StorePsk {
+    match agent.ask(Request::StorePsk {
         node: plan.node.clone(),
         public_key: plan.public_key.clone(),
         os,
@@ -287,7 +278,7 @@ pub fn psk_set(network: &Network, node: &Identifier, peer: &str) -> anyhow::Resu
         key,
     })? {
         Reply::Stored => {}
-        reply => return Err(unexpected(reply)),
+        reply => return Err(agent::unexpected(reply)),
     }
 
     println!(
@@ -569,22 +560,6 @@ nodes:
         assert_eq!(
             applicable("Pond").unwrap_err(),
             "splot can't manage Pond's firewall (nftables) or dhcp (dnsmasq) on Linux yet: set them to `none` to apply the rest"
-        );
-    }
-
-    #[test]
-    fn an_agents_failure_reads_as_its_error_with_its_causes() {
-        let error = agent_error(Failure(vec![
-            "can't read the key store".to_owned(),
-            "uci failed".to_owned(),
-            "Entry not found".to_owned(),
-        ]));
-
-        assert_eq!(error.to_string(), "can't read the key store");
-        let chain: Vec<String> = error.chain().map(ToString::to_string).collect();
-        assert_eq!(
-            chain,
-            ["can't read the key store", "uci failed", "Entry not found"]
         );
     }
 

@@ -107,19 +107,21 @@ Full reference: [CONFIG.md](CONFIG.md).
 
 ## Running
 
-Requires Rust (edition 2024), and on the node: OpenWrt with `uci` and WireGuard tools (`wg`), or Linux with systemd, wireguard-tools (`wg`, `wg-quick`) and iproute2. On Linux splot manages only the WireGuard so far ([CONFIG.md → Linux](CONFIG.md#linux)).
+Requires Rust (edition 2024) to build, and on the node: OpenWrt with `uci` and WireGuard tools (`wg`), or Linux with systemd, wireguard-tools (`wg`, `wg-quick`) and iproute2. On Linux splot manages only the WireGuard so far ([CONFIG.md → Linux](CONFIG.md#linux)).
+
+splot runs on your machine and reaches each node over ssh (`--ssh`, anything `ssh` takes: `root@router`, a host of your `~/.ssh/config`). It sends the node a small agent for its CPU, which does the work there and is gone afterwards: nothing is installed on the node, and its keys never leave it. Without `--ssh`, splot acts on the machine it runs on.
 
 ```sh
-cargo build --release
-# on the router, with splot.yml in the working directory:
-./splot init --node Cabin  # give the router its WireGuard key; print what the config needs
+scripts/dist.sh            # build target/dist/splot, carrying the agents (needs the Rust targets it names)
+cd target/dist             # with splot.yml in the working directory:
 ./splot check              # validate the config, report errors and warnings
-./splot apply --node Cabin --dry-run  # print the uci commands (with placeholders for the keys)
-./splot apply --node Cabin            # validate, generate, and apply via uci
-./splot psk set --node Cabin Home < home.psk  # store Cabin's preshared key with Home
+./splot init --node Cabin --ssh root@cabin   # give the router its WireGuard key; print what the config needs
+./splot apply --node Cabin --ssh root@cabin --dry-run  # show what apply would change (placeholders for the keys)
+./splot apply --node Cabin --ssh root@cabin            # make Cabin hold what the config says
+./splot psk set --node Cabin Home --ssh root@cabin < home.psk  # store Cabin's preshared key with Home
 ```
 
-`-c/--config <FILE>` overrides the config path (default: `splot.yml`).
+`-c/--config <FILE>` overrides the config path (default: `splot.yml`). splot carries agents for aarch64, armv7 (with a floating-point unit), riscv64 and x86_64 (`splot --version` lists them); for another CPU, build the agent yourself and pass it with `--agent <FILE>`.
 
 Start a new router with `splot init --node <Name>`. It generates the router's WireGuard key, only if it has none (a key is never replaced), and stores it in the router's key store, readable by root only: `/etc/config/splot` on OpenWrt, `/etc/splot/keys` on Linux. Which one is the OS the config gives the node; for a node the config doesn't have yet, the one `--os openwrt|linux` names, or else the one the peer runs (OpenWrt has `/etc/openwrt_release`; any other Linux is Linux). Every command that acts as a node refuses on a peer that isn't what the config or `--os` says. Then it holds the router's key against the config: the node is already initialised when the config has this key for it; for a node the config doesn't have yet, it prints its entry ready to paste under `nodes:`, with the public key and the lowest free mesh IP; for a key it just generated, it prints the key to set for the node. It refuses (exits non-zero) when the key is another node's or client's, naming where the config has it (a wrong `--node`), and when a key the router already had is nowhere in the config. `init` is the only command that writes the key: every other one, `--dry-run` included, asks for `init` on a router that has none. A node whose WireGuard you set up yourself (`wireguard: none`) needs no `init`: splot keeps no key there, and checks the node by its own WireGuard's key instead.
 

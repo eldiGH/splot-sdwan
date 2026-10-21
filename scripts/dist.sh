@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Builds splot's agent for every CPU it supports, small enough to run from a
-# router's RAM. splot will carry them, and copy each node the one it needs.
+# Builds splot for release: its agent for every CPU it supports, small enough
+# to run from a router's RAM, then splot itself (static, x86_64) carrying them,
+# so it's one file that sends each node it reaches over ssh the agent it needs.
 #
-#   scripts/dist.sh        → target/agents/<cpu>
+#   scripts/dist.sh        → target/dist/splot (and target/agents/<cpu>)
 #
 # Needs the Rust targets below: rustup target add <target>. The agent is pure
 # Rust, statically linked against the musl Rust ships, so Rust's own linker
@@ -50,3 +51,17 @@ for agent in "${AGENTS[@]}"; do
 		exit 1
 	fi
 done
+
+SPLOT_AGENTS="$PWD/target/agents" \
+	cargo build --quiet --package splot --release --target x86_64-unknown-linux-musl
+mkdir -p target/dist
+cp target/x86_64-unknown-linux-musl/release/splot target/dist/splot
+# Every agent is inside, byte for byte: the linker drops what nothing uses.
+python3 -c '
+import sys
+splot = open(sys.argv[1], "rb").read()
+missing = [path for path in sys.argv[2:] if open(path, "rb").read() not in splot]
+sys.exit("Not inside splot: " + ", ".join(missing) if missing else 0)
+' target/dist/splot target/agents/*
+echo "splot:     $(stat -c %s target/dist/splot) bytes, target/dist/splot"
+target/dist/splot --version

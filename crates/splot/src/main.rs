@@ -7,6 +7,7 @@ use crate::{
 };
 use anyhow::{Context, bail};
 
+mod agent;
 mod backend;
 mod cli;
 mod commands;
@@ -37,12 +38,18 @@ fn main() -> anyhow::Result<()> {
     };
 
     match command {
-        Command::Init { node, os } => commands::init(&network, node, *os),
-        Command::Apply { node, dry_run } => commands::apply(&network, node, *dry_run),
+        Command::Init { node, os, reach } => {
+            commands::init(&network, node, *os, &mut reach.agent())
+        }
+        Command::Apply {
+            node,
+            dry_run,
+            reach,
+        } => commands::apply(&network, node, *dry_run, &mut reach.agent()),
         Command::Check => Ok(()),
         Command::Psk {
-            command: PskCommand::Set { node, peer },
-        } => commands::psk_set(&network, node, peer),
+            command: PskCommand::Set { node, peer, reach },
+        } => commands::psk_set(&network, node, peer, &mut reach.agent()),
     }
 }
 

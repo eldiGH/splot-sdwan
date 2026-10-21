@@ -1,10 +1,13 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
-use crate::types::{identifier::Identifier, platform::Os};
+use crate::{
+    agent::{self, Agent},
+    types::{identifier::Identifier, platform::Os},
+};
 
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version = agent::VERSION.as_str(), about, long_about = None)]
 pub struct Cli {
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
@@ -25,6 +28,25 @@ impl Cli {
     }
 }
 
+/// Where the node a command acts on is.
+#[derive(Args)]
+pub struct Reach {
+    /// Reach the node over ssh at DESTINATION, anything ssh takes (`root@router`,
+    /// a host of ~/.ssh/config). Without it, splot acts on the machine it runs on
+    #[arg(long, value_name = "DESTINATION")]
+    ssh: Option<String>,
+    /// Send the node this agent instead of the one splot carries for its CPU
+    #[arg(long, value_name = "FILE", requires = "ssh")]
+    agent: Option<PathBuf>,
+}
+
+impl Reach {
+    /// The agent on the node this reaches.
+    pub fn agent(&self) -> Agent {
+        Agent::new(self.ssh.clone(), self.agent.clone())
+    }
+}
+
 #[derive(Subcommand)]
 pub enum Command {
     /// Give this peer its WireGuard key (only if it has none) and say what the
@@ -37,17 +59,19 @@ pub enum Command {
         /// have yet: it decides where the key is kept. Detected when left out
         #[arg(long)]
         os: Option<Os>,
+        #[command(flatten)]
+        reach: Reach,
     },
 
-    /// Apply the config to this peer using uci
+    /// Make the node hold what the config says it should
     Apply {
         /// The node this peer is, as the config names it
         #[arg(long)]
         node: Identifier,
-        #[arg(
-            long,
-            help = "Print the uci commands that would run without executing them"
-        )]
+        #[command(flatten)]
+        reach: Reach,
+        /// Show what apply would change, changing nothing
+        #[arg(long)]
         dry_run: bool,
     },
 
@@ -71,6 +95,8 @@ pub enum PskCommand {
         node: Identifier,
         /// The peer, as the config names it: `Cabin`, `Phone`, `Home.camera`
         peer: String,
+        #[command(flatten)]
+        reach: Reach,
     },
 }
 
@@ -111,7 +137,7 @@ mod tests {
         let cli = parse(&["splot", "apply", "--node", "Home"]);
         assert!(matches!(
             cli.command(),
-            Some(Command::Apply { node, dry_run: false }) if node.as_ref() == "Home"
+            Some(Command::Apply { node, dry_run: false, .. }) if node.as_ref() == "Home"
         ));
     }
 
@@ -131,7 +157,7 @@ mod tests {
         let cli = parse(&["splot", "init", "--node", "Cabin"]);
         assert!(matches!(
             cli.command(),
-            Some(Command::Init { node, os: None }) if node.as_ref() == "Cabin"
+            Some(Command::Init { node, os: None, .. }) if node.as_ref() == "Cabin"
         ));
         // Without one, or with one that isn't a name, it's a usage error.
         assert!(Cli::try_parse_from(["splot", "init"]).is_err());
@@ -157,9 +183,36 @@ mod tests {
         assert!(matches!(
             cli.command(),
             Some(Command::Psk {
-                command: PskCommand::Set { node, peer }
+                command: PskCommand::Set { node, peer, .. }
             }) if node.as_ref() == "Cabin" && peer == "Home.camera"
         ));
+    }
+
+    #[test]
+    fn a_command_on_a_node_may_reach_it_over_ssh_and_send_it_an_agent() {
+        for args in [
+            &["splot", "apply", "--node", "Home", "--ssh", "root@router"][..],
+            &[
+                "splot", "init", "--node", "Home", "--ssh", "router", "--agent", "./agent",
+            ],
+            &[
+                "splot", "psk", "set", "--node", "Home", "Cabin", "--ssh", "router",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_ok(), "{args:?}");
+        }
+        let cli = parse(&["splot", "apply", "--node", "Home", "--ssh", "root@router"]);
+        let Some(Command::Apply { reach, .. }) = cli.command() else {
+            panic!("not apply");
+        };
+        assert_eq!(reach.ssh.as_deref(), Some("root@router"));
+        assert_eq!(reach.agent, None);
+
+        // An agent is sent over ssh only.
+        assert!(
+            Cli::try_parse_from(["splot", "apply", "--node", "Home", "--agent", "./agent"])
+                .is_err()
+        );
     }
 
     #[test]

@@ -1,0 +1,101 @@
+//! The agent splot asks to act on a node: the one in splot itself, for the
+//! machine splot runs on, or one splot sends a node over ssh.
+
+mod embedded;
+mod session;
+
+use std::path::PathBuf;
+
+use splot_core::protocol::{Failure, Reply, Request};
+
+pub use embedded::VERSION;
+use session::Session;
+
+/// Where the agent splot asks is.
+pub enum Agent {
+    /// In splot: it acts on the machine splot runs on.
+    Local,
+    /// On the node at `destination`, reached over ssh: it gets `agent`, or the
+    /// one splot carries for its CPU. The session opens at the first request.
+    Remote {
+        destination: String,
+        agent: Option<PathBuf>,
+        session: Option<Session>,
+    },
+}
+
+impl Agent {
+    /// The agent on the node at `ssh`, given `agent` if any; without `ssh`, the
+    /// one in splot.
+    pub fn new(ssh: Option<String>, agent: Option<PathBuf>) -> Self {
+        match ssh {
+            None => Self::Local,
+            Some(destination) => Self::Remote {
+                destination,
+                agent,
+                session: None,
+            },
+        }
+    }
+
+    /// The agent's answer to `request`; its failure as an error.
+    pub fn ask(&mut self, request: Request) -> anyhow::Result<Reply> {
+        let reply = match self {
+            Self::Local => splot_agent::handle(request),
+            Self::Remote {
+                destination,
+                agent,
+                session,
+            } => {
+                let session = match session {
+                    Some(session) => session,
+                    None => session.insert(Session::open(destination, agent.as_deref())?),
+                };
+                session.ask(&request)?
+            }
+        };
+
+        match reply {
+            Reply::Failed(failure) => Err(error(failure)),
+            reply => Ok(reply),
+        }
+    }
+}
+
+/// What the agent reported as an error: its message, and its causes as the
+/// error's chain, the way they'd show had the error happened here.
+fn error(Failure(messages): Failure) -> anyhow::Error {
+    let mut messages = messages.into_iter().rev();
+    let mut error = anyhow::anyhow!("{}", messages.next().unwrap_or_default());
+    for message in messages {
+        error = error.context(message);
+    }
+
+    error
+}
+
+/// The agent's answer wasn't one to what splot asked.
+pub fn unexpected(reply: Reply) -> anyhow::Error {
+    anyhow::anyhow!("the agent answered what splot didn't ask: {reply:?}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_agents_failure_reads_as_its_error_with_its_causes() {
+        let error = error(Failure(vec![
+            "can't read the key store".to_owned(),
+            "uci failed".to_owned(),
+            "Entry not found".to_owned(),
+        ]));
+
+        assert_eq!(error.to_string(), "can't read the key store");
+        let chain: Vec<String> = error.chain().map(ToString::to_string).collect();
+        assert_eq!(
+            chain,
+            ["can't read the key store", "uci failed", "Entry not found"]
+        );
+    }
+}

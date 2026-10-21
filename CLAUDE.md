@@ -71,6 +71,14 @@ Each node's `platform` says which OS it runs (`os: openwrt` or `linux`, required
 - **No partially working state:** what splot renders for a concern it manages is complete for what it covers, and never points at something a `none` concern would have created. With `wireguard: none` and the firewall managed, for one, there's no mesh zone and no port forward to a host reached over the mesh (the forward would name the mesh zone).
 - **What a platform can't do yet is refused, not half applied:** on Linux splot manages only WireGuard so far, so `apply` refuses a Linux node whose `firewall` or `dhcp` names a program until splot manages it there (`splot check` validates the node either way).
 
+### Reaching a node: an agent per run
+
+splot runs on the operator's machine and reaches a node over ssh (`--ssh <destination>`, given to the system `ssh` as it is, so `~/.ssh/config` and the operator's ssh agent apply). It sends the node `splot-agent`, which does everything there, runs it from `/tmp`, and the node removes it when it ends. Nothing is installed on the node: a router's flash stays as it is, and `sysupgrade` has nothing to wipe. Without `--ssh`, splot calls the agent's code in-process, on the machine it runs on.
+
+- **The cut is the rendered config:** splot validates, plans and renders; the agent checks it runs the OS the config says and is the node, fills the secrets in from the node's key store, and applies. No secret leaves the node: a private key can't even be put in a message (no serde), and a preshared key travels once, to the node that keeps it.
+- **One agent per CPU, in splot:** aarch64, armv7 (with a floating-point unit), riscv64, x86_64, static, under 1 MB each (it runs from a router's RAM). The node says its CPU first (`uname -m`, OpenWrt's `DISTRIB_ARCH`); a CPU splot has none for is refused, and `--agent <file>` sends one built by hand. MIPS later (Rust's tier 3).
+- **The session** (`agent/session.rs`): the node runs a short sh bootstrap; splot sends the agent's size and bytes, waits for `ready` (busybox's `head -c` reads past what it's asked for, so nothing else may follow the bytes yet), then talks to the agent a JSON line each way. The first request is `Hello` with the protocol's version, whose shape never changes; an agent of another version refuses. An agent cut short in transit doesn't run.
+
 ### Linux: WireGuard with wg-quick
 
 splot owns `/etc/wireguard/spl_mesh.conf` and runs it through systemd's `wg-quick@spl_mesh`; a Linux node needs systemd.
