@@ -4,7 +4,7 @@
 pub mod linux;
 pub mod openwrt;
 
-use std::error::Error;
+use std::{error::Error, net::Ipv4Addr};
 
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,7 @@ use crate::{
 
 /// The protocol's version: splot and an agent talk only when theirs are the
 /// same. A change to a request or a reply bumps it.
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 
 /// What splot asks of the agent.
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,6 +48,9 @@ pub enum Request {
     /// and rolls back to it by itself unless the run is confirmed in time.
     /// `Applied`; nothing changed, no run.
     Apply { rendered: Rendered, run: Run },
+    /// Whether the node's peers that answered before the run still do:
+    /// `Checked`.
+    Check { run: String },
     /// Keep what the run applied: `Confirmed`. Too late once the node has
     /// rolled back.
     Confirm { run: String },
@@ -62,6 +65,16 @@ pub struct Run {
     /// Which run it is: a node answers for its own run only.
     pub id: String,
     pub confirm_within: u32,
+    /// The node's peers to check: those that answer before the run must
+    /// answer after it.
+    pub probes: Vec<Probe>,
+}
+
+/// A peer the node pings to see its tunnel works: its name, and its mesh IP.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Probe {
+    pub peer: String,
+    pub address: Ipv4Addr,
 }
 
 /// What the agent answers.
@@ -84,6 +97,12 @@ pub enum Reply {
     /// What changed; nothing when the node held the config already (and then
     /// there's no run to confirm).
     Applied(Vec<String>),
+    /// Of the peers that answered before the run, those that still do, and
+    /// those that don't.
+    Checked {
+        still: Vec<String>,
+        lost: Vec<String>,
+    },
     Confirmed,
     RolledBack,
     /// What apply would change, as the dry run shows it.
@@ -221,7 +240,14 @@ mod tests {
                 run: Run {
                     id: "1729500000-42".to_owned(),
                     confirm_within: 120,
+                    probes: vec![Probe {
+                        peer: "Cabin".to_owned(),
+                        address: Ipv4Addr::new(10, 100, 0, 2),
+                    }],
                 },
+            },
+            Request::Check {
+                run: "1729500000-42".to_owned(),
             },
             Request::Confirm {
                 run: "1729500000-42".to_owned(),
@@ -264,6 +290,10 @@ mod tests {
                 created: true,
             },
             Reply::Stored,
+            Reply::Checked {
+                still: vec!["Cabin".to_owned()],
+                lost: vec!["Lake".to_owned()],
+            },
             Reply::Confirmed,
             Reply::RolledBack,
             Reply::Applied(vec!["network".to_owned()]),

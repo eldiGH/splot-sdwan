@@ -8,6 +8,7 @@ mod key_store;
 mod linux;
 mod node;
 pub mod openwrt;
+mod probe;
 mod process;
 mod run;
 mod secret;
@@ -68,6 +69,9 @@ pub fn handle(request: Request) -> Reply {
         } => store_psk(&node, &public_key, os, &peer, &key),
         Request::DryRun { rendered } => dry_run(&rendered),
         Request::Apply { rendered, run } => apply(&rendered, &run),
+        Request::Check { run } => run::check(&run)
+            .map(|(still, lost)| Reply::Checked { still, lost })
+            .map_err(Error::from),
         Request::Confirm { run } => run::confirm(&run)
             .map(|()| Reply::Confirmed)
             .map_err(Error::from),
@@ -263,6 +267,7 @@ mod tests {
         is_error::<crate::openwrt::Error>();
         is_error::<crate::linux::Error>();
         is_error::<run::Error>();
+        is_error::<probe::NoPing>();
     }
 
     #[test]
@@ -299,6 +304,7 @@ mod tests {
         let run = Run {
             id: "r1".to_owned(),
             confirm_within: 120,
+            probes: Vec::new(),
         };
         for request in [
             Request::DryRun {

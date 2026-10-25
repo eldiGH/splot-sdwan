@@ -7,7 +7,7 @@
 //! itself, so what's live is always wg-quick's own.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fmt, fs, io, iter,
     path::Path,
     process::{Command, Output},
@@ -23,6 +23,7 @@ use crate::{
     process,
     run::{self, Backup},
     secret::MissingPsks,
+    wg,
 };
 
 /// The file wg-quick reads for the interface.
@@ -36,6 +37,8 @@ pub enum Error {
     NotConfirmed(#[from] NotConfirmed),
     #[error(transparent)]
     RunState(#[from] run::Error),
+    #[error("can't drop the WireGuard session of a peer whose preshared key changed")]
+    FreshSession(#[source] crate::wg::Error),
     #[error("applying failed, so this peer put back what it had")]
     PutBack(#[source] Box<Error>),
     #[error(
@@ -372,18 +375,29 @@ pub(super) fn run_config(
         return Ok(Vec::new());
     }
 
+    let before = current()?;
+    // A reload keeps the sessions it has: a peer whose preshared key changed
+    // gets a fresh one. A start or a restart has none to keep.
+    let fresh = if steps.contains(&Step::Reload) {
+        psk_changed(before.as_deref().unwrap_or_default(), text)
+    } else {
+        Vec::new()
+    };
     let backup = Backup::Linux {
-        file: current()?,
+        file: before,
         active: live.active,
         enabled: live.enabled,
     };
-    run::begin(&run.id, run.confirm_within, backup)?;
+    run::begin(run, backup)?;
 
     let mut changed = Vec::new();
     let applied = (|| {
         if file_changed {
             file::write_private(Path::new(PATH), text).map_err(Error::Write)?;
             changed.push(PATH.to_owned());
+        }
+        for key in &fresh {
+            wg::remove_peer(INTERFACE, key).map_err(Error::FreshSession)?;
         }
         for step in &steps {
             step.run()?;
@@ -400,6 +414,46 @@ pub(super) fn run_config(
     }
 
     Ok(changed)
+}
+
+/// Each peer's public key in a wg-quick file, and its pair's preshared key.
+fn psks(file: &str) -> BTreeMap<&str, Option<&str>> {
+    let mut psks = BTreeMap::new();
+    let mut peer: Option<&str> = None;
+
+    for line in file.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            peer = None;
+        } else if let Some((key, value)) = line.split_once('=') {
+            match key.trim() {
+                "PublicKey" => {
+                    peer = Some(value.trim());
+                    psks.entry(value.trim()).or_insert(None);
+                }
+                "PresharedKey" => {
+                    if let Some(peer) = peer {
+                        psks.insert(peer, Some(value.trim()));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    psks
+}
+
+/// The public keys of the peers in both files whose preshared key differs
+/// (set, changed or removed): WireGuard keeps a session it has until its next
+/// rekey, so these need a fresh one for the new key to be the one checked.
+fn psk_changed(before: &str, after: &str) -> Vec<String> {
+    let before = psks(before);
+    psks(after)
+        .into_iter()
+        .filter(|(peer, psk)| before.get(peer).is_some_and(|old| old != psk))
+        .map(|(peer, _)| peer.to_owned())
+        .collect()
 }
 
 /// Puts back the wg-quick file a run changed as it was (`file`: none for one
@@ -486,6 +540,49 @@ mod tests {
             .iter()
             .map(ToString::to_string)
             .collect()
+    }
+
+    #[test]
+    fn a_peer_whose_preshared_key_changed_gets_a_fresh_session() {
+        let file = |cabin: &str, lake: &str| {
+            format!(
+                "[Interface]
+PrivateKey = RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRA=
+
+# Cabin
+[Peer]
+PublicKey = CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+{cabin}AllowedIPs = 10.100.0.2/32
+
+# Lake
+[Peer]
+PublicKey = LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLA=
+{lake}AllowedIPs = 10.100.0.3/32
+"
+            )
+        };
+        let psk = |key: char| format!("PresharedKey = {}A=\n", key.to_string().repeat(42));
+        let cabin = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
+        let lake = "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLA=";
+
+        // Changed; set; removed: each one. The other peer's stays.
+        assert_eq!(
+            psk_changed(&file(&psk('S'), &psk('T')), &file(&psk('U'), &psk('T'))),
+            [cabin]
+        );
+        assert_eq!(
+            psk_changed(&file("", &psk('T')), &file(&psk('U'), &psk('T'))),
+            [cabin]
+        );
+        assert_eq!(
+            psk_changed(&file(&psk('S'), &psk('T')), &file(&psk('S'), "")),
+            [lake]
+        );
+        // The same file; a new peer (no session to keep); no file before.
+        assert!(psk_changed(&file(&psk('S'), &psk('T')), &file(&psk('S'), &psk('T'))).is_empty());
+        let without_lake = &file(&psk('S'), "")[..file(&psk('S'), "").find("# Lake").unwrap()];
+        assert!(psk_changed(without_lake, &file(&psk('S'), &psk('T'))).is_empty());
+        assert!(psk_changed("", &file(&psk('S'), &psk('T'))).is_empty());
     }
 
     #[test]

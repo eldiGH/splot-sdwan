@@ -107,7 +107,7 @@ Full reference: [CONFIG.md](CONFIG.md).
 
 ## Running
 
-Requires Rust (edition 2024) to build, and on the node: OpenWrt with `uci` and WireGuard tools (`wg`), or Linux with systemd, wireguard-tools (`wg`, `wg-quick`) and iproute2. On Linux splot manages only the WireGuard so far ([CONFIG.md → Linux](CONFIG.md#linux)).
+Requires Rust (edition 2024) to build, and on the node: OpenWrt with `uci` and WireGuard tools (`wg`), or Linux with systemd, wireguard-tools (`wg`, `wg-quick`), iproute2 and `ping` (iputils-ping: after a change, the node pings its peers to check its tunnels). On Linux splot manages only the WireGuard so far ([CONFIG.md → Linux](CONFIG.md#linux)).
 
 splot runs on your machine and reaches each node over ssh (`--ssh`, anything `ssh` takes: `root@router`, a host of your `~/.ssh/config`). It sends the node a small agent for its CPU, which does the work there and is gone afterwards: nothing is installed on the node, and its keys never leave it. Without `--ssh`, splot acts on the machine it runs on.
 

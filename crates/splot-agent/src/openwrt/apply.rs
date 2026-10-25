@@ -23,7 +23,10 @@ use super::{
     slot,
     uci::{self, UciBatchCommand},
 };
-use crate::run::{self, Backup};
+use crate::{
+    run::{self, Backup},
+    wg,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -35,6 +38,8 @@ pub enum Error {
     Backup(PathBuf, #[source] io::Error),
     #[error("can't put back {}", .0.display())]
     Restore(PathBuf, #[source] io::Error),
+    #[error("can't drop the WireGuard session of a peer whose preshared key changed")]
+    FreshSession(#[source] wg::Error),
     #[error("applying failed, so this peer put back what it had")]
     PutBack(#[source] Box<Error>),
     #[error(
@@ -146,22 +151,21 @@ pub(super) fn run(rendered: &Rendered, run: &Run) -> Result<Vec<String>, Error> 
             Ok((path, text))
         })
         .collect::<Result<_, Error>>()?;
-    run::begin(
-        &run.id,
-        run.confirm_within,
-        Backup::OpenWrt { files: backup },
-    )?;
+    run::begin(run, Backup::OpenWrt { files: backup })?;
 
-    let applied = changeset.apply().and_then(|()| {
-        match Reload::new(
-            &changeset.files,
-            naming::mesh_interface().to_string(),
-            peer_update,
-        ) {
-            Some(reload) => reload.run().map_err(Error::from),
-            None => Ok(()),
-        }
-    });
+    let applied = changeset
+        .apply()
+        .and_then(|()| fresh_sessions(&changeset.fresh))
+        .and_then(|()| {
+            match Reload::new(
+                &changeset.files,
+                naming::mesh_interface().to_string(),
+                peer_update,
+            ) {
+                Some(reload) => reload.run().map_err(Error::from),
+                None => Ok(()),
+            }
+        });
     if let Err(cause) = applied {
         let cause = Box::new(cause);
         return Err(match run::rollback(&run.id) {
@@ -171,6 +175,21 @@ pub(super) fn run(rendered: &Rendered, run: &Run) -> Result<Vec<String>, Error> 
     }
 
     Ok(changeset.files)
+}
+
+/// Drops the sessions of the peers whose public keys are `keys`, from splot's
+/// live WireGuard interface (when it's up: one that isn't has none).
+fn fresh_sessions(keys: &[String]) -> Result<(), Error> {
+    let interface = naming::mesh_interface().to_string();
+    if keys.is_empty() || !Path::new("/sys/class/net").join(&interface).exists() {
+        return Ok(());
+    }
+
+    for key in keys {
+        wg::remove_peer(&interface, key).map_err(Error::FreshSession)?;
+    }
+
+    Ok(())
 }
 
 /// What the file at `path` holds; none when there's no such file.
@@ -258,6 +277,7 @@ fn changeset(rendered: &Rendered) -> Result<Changeset, Error> {
 
     let mut files = Vec::new();
     let mut changes = Vec::new();
+    let mut fresh = Vec::new();
 
     for (file, sections) in &rendered.files {
         let current = match uci::export(file)? {
@@ -267,8 +287,10 @@ fn changeset(rendered: &Rendered) -> Result<Changeset, Error> {
             })?,
             None => Vec::new(),
         };
+        let diff = diff::diff(&current, sections);
+        fresh.extend(diff::psk_changed(&diff));
         // Spelled in uci here, while the sections the changes point at are alive.
-        let file_changes = diff::commands(file, &current, &diff::diff(&current, sections));
+        let file_changes = diff::commands(file, &current, &diff);
 
         if !file_changes.is_empty() {
             files.push(file.clone());
@@ -276,7 +298,11 @@ fn changeset(rendered: &Rendered) -> Result<Changeset, Error> {
         }
     }
 
-    Ok(Changeset { files, changes })
+    Ok(Changeset {
+        files,
+        changes,
+        fresh,
+    })
 }
 
 /// Everything `apply` sends to uci: the changes and the files they touch. The
@@ -285,6 +311,9 @@ fn changeset(rendered: &Rendered) -> Result<Changeset, Error> {
 struct Changeset {
     files: Vec<String>,
     changes: Vec<UciBatchCommand>,
+    /// The peers whose preshared key changes: their sessions go before the
+    /// reload, which brings them back with the new key.
+    fresh: Vec<String>,
 }
 
 impl Changeset {
@@ -377,6 +406,7 @@ mod tests {
                 UciBatchCommand::del("network.spl_old"),
                 set("dhcp.spl_host_a", "host"),
             ],
+            fresh: Vec::new(),
         };
         let rendered: Vec<String> = changeset.commands().map(|c| c.to_string()).collect();
         assert_eq!(

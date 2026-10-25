@@ -58,6 +58,13 @@ pub fn get_pubkey(private_key: &WgPrivateKey) -> Result<WgPublicKey, Error> {
         .map_err(Error::NotAKey)
 }
 
+/// Drops the peer whose public key is `public_key` from the live interface
+/// `interface`, its session with it: the next reload adds it back, with a fresh
+/// one.
+pub fn remove_peer(interface: &str, public_key: &str) -> Result<(), Error> {
+    run(&["set", interface, "peer", public_key, "remove"], None).map(drop)
+}
+
 /// The public keys of this peer's WireGuard interfaces, whoever set them up.
 /// Reads no private key.
 pub fn interface_public_keys() -> Result<Vec<WgPublicKey>, Error> {

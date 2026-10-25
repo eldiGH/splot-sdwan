@@ -35,6 +35,33 @@ pub(super) enum Change<'a> {
     Reorder(Vec<&'a Section>),
 }
 
+/// netifd's options of a WireGuard peer section: the peer's key, and the
+/// pair's preshared key.
+const PUBLIC_KEY: &str = "public_key";
+const PRESHARED_KEY: &str = "preshared_key";
+
+/// The public keys of the peers whose preshared key `changes` set, change or
+/// remove, in sections that stay (an added section is a new peer anyway).
+/// WireGuard keeps a session it has until its next rekey, so these need a
+/// fresh one for the new key to be the one checked.
+pub(super) fn psk_changed(changes: &[Change]) -> Vec<String> {
+    changes
+        .iter()
+        .filter_map(|change| match change {
+            Change::SetOption {
+                section, option, ..
+            }
+            | Change::RemoveOption {
+                section, option, ..
+            } if *option == PRESHARED_KEY => match value_of(section, PUBLIC_KEY) {
+                Some(Value::Single(key)) => Some(key.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
 fn is_splot(section: &Section) -> bool {
     section.name.starts_with(consts::SPLOT_SECTION_PREFIX)
 }
@@ -553,5 +580,48 @@ config redirect 'spl_redirect_Home_nas_https'
         );
         // An empty file.
         assert_eq!(last_position(&[], &[]), 0);
+    }
+
+    #[test]
+    fn a_peer_whose_preshared_key_changes_gets_a_fresh_session() {
+        // Cabin's key changes, Lake gets one, Barn's goes, Pond's stays; the
+        // camera is new (no session to keep).
+        let peer = |name: &str, key: char, psk: Option<char>| {
+            let psk = psk.map_or(String::new(), |psk| {
+                format!(
+                    "\toption preshared_key '{}A='\n",
+                    psk.to_string().repeat(42)
+                )
+            });
+            format!(
+                "config wireguard_spl_mesh 'spl_wireguard_spl_mesh_{name}'\n\toption public_key '{}A='\n{psk}\n",
+                key.to_string().repeat(42)
+            )
+        };
+        let current = sections(
+            &[
+                peer("Cabin", 'C', Some('S')),
+                peer("Lake", 'L', None),
+                peer("Barn", 'B', Some('T')),
+                peer("Pond", 'P', Some('U')),
+            ]
+            .concat(),
+        );
+        let desired = sections(
+            &[
+                peer("Cabin", 'C', Some('V')),
+                peer("Lake", 'L', Some('W')),
+                peer("Barn", 'B', None),
+                peer("Pond", 'P', Some('U')),
+                peer("camera", 'K', Some('X')),
+            ]
+            .concat(),
+        );
+
+        let key = |key: char| format!("{}A=", key.to_string().repeat(42));
+        assert_eq!(
+            psk_changed(&diff(&current, &desired)),
+            [key('C'), key('L'), key('B')]
+        );
     }
 }

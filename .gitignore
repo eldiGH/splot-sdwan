@@ -2,3 +2,5 @@
 .env
 /splot.yml
 /uci
+# insta's pending snapshots: review them, never commit them
+*.snap.new

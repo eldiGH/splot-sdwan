@@ -469,7 +469,7 @@ EOF
 	cut_after=$(run "md5sum $files")
 	last=$(run 'cat /tmp/splot/last 2>&1') || true
 	if [ "$status" -ne 0 ] &&
-		grep -q "couldn't confirm the change, so Home puts back what it had by itself, within 10 s" <<<"$output" &&
+		grep -q "so Home puts back what it had by itself, within 10 s of the apply" <<<"$output" &&
 		[ "$cut_applied" != "$cut_before" ] && [ "$cut_after" = "$cut_before" ] &&
 		grep -q "rolled back" <<<"$last" && ! run '[ -e /tmp/splot/run ]'; then
 		pass "cut off before the confirm: the router put back what it had at the deadline"

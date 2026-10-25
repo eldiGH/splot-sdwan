@@ -4,12 +4,12 @@ use std::net::Ipv4Addr;
 
 use anyhow::{Context, bail};
 
-use splot_core::protocol::{Reply, Request, Run};
+use splot_core::protocol::{Probe, Reply, Request, Run};
 
 use crate::{
     agent::{self, Agent},
     backend,
-    model::Network,
+    model::{Network, host::HostRef},
     plan::{self, NodePlan},
     types::{
         identifier::Identifier,
@@ -205,6 +205,7 @@ pub fn apply(
     let plan = node_plan(network, node)?;
     check_applicable(network, node)?;
     let rendered = backend::render(&plan, node_os(network, node));
+    let probes = probes(&plan);
 
     if dry_run {
         match agent.ask(Request::DryRun { rendered })? {
@@ -217,6 +218,7 @@ pub fn apply(
     let run = Run {
         id: agent::run_id(),
         confirm_within,
+        probes,
     };
     let changed = match agent.ask(Request::Apply {
         rendered,
@@ -231,9 +233,31 @@ pub fn apply(
     }
     println!("Applied and reloaded: {}", changed.join(", "));
 
-    // The node keeps it once splot reaches it again: with a session of its
-    // own, as after a reload that cut the one that applied it.
+    // The node keeps it once splot reaches it again (with a session of its
+    // own, as after a reload that cut the one that applied it) and its peers
+    // that answered before still do.
     agent.reconnect();
+    let checked = agent.ask(Request::Check {
+        run: run.id.clone(),
+    });
+    let lost = match checked {
+        Ok(Reply::Checked { still, lost }) => {
+            if !still.is_empty() {
+                println!("Checked: {} answer as before.", still.join(", "));
+            }
+            lost
+        }
+        Ok(reply) => return Err(agent::unexpected(reply)),
+        Err(err) => {
+            return Err(err.context(format!(
+                "splot couldn't check the change, so {node} puts back what it had by itself, within {confirm_within} s of the apply"
+            )));
+        }
+    };
+    if !lost.is_empty() {
+        return Err(roll_back(agent, node, &run.id, &lost));
+    }
+
     match agent.ask(Request::Confirm { run: run.id }) {
         Ok(Reply::Confirmed) => {
             println!("Confirmed: splot reached {node} again, and it keeps the change.");
@@ -243,6 +267,37 @@ pub fn apply(
         Err(err) => Err(err.context(format!(
             "splot couldn't confirm the change, so {node} puts back what it had by itself, within {confirm_within} s of the apply"
         ))),
+    }
+}
+
+/// What a node checks after a change: its node peers, each pinged at its mesh
+/// IP. The ones that answer before the change must answer after it.
+fn probes(plan: &NodePlan) -> Vec<Probe> {
+    plan.wireguard
+        .iter()
+        .flat_map(|wireguard| &wireguard.peers)
+        .filter(|peer| matches!(peer.host, HostRef::Node(_)))
+        .map(|peer| Probe {
+            peer: peer.host.to_string(),
+            address: peer.address,
+        })
+        .collect()
+}
+
+/// Puts back what `node` had before run `id`, whose change cut it off from the
+/// peers `lost`: the error saying so.
+fn roll_back(agent: &mut Agent, node: &Identifier, id: &str, lost: &[String]) -> anyhow::Error {
+    let broke = format!(
+        "the change cut {node} off from {}, so splot didn't keep it",
+        lost.join(", ")
+    );
+
+    match agent.ask(Request::Rollback { run: id.to_owned() }) {
+        Ok(Reply::RolledBack) => anyhow::anyhow!("{broke}: {node} put back what it had"),
+        Ok(reply) => agent::unexpected(reply).context(broke),
+        Err(err) => err.context(format!(
+            "{broke}, and putting back what it had failed: it does by itself at the run's deadline"
+        )),
     }
 }
 
@@ -593,6 +648,55 @@ nodes:
             applicable("Pond").unwrap_err(),
             "splot can't manage Pond's firewall (nftables) or dhcp (dnsmasq) on Linux yet: set them to `none` to apply the rest"
         );
+    }
+
+    #[test]
+    fn after_a_change_a_node_checks_the_other_nodes_at_their_mesh_ips() {
+        // Not a global client or a hub client: one that's off doesn't make the
+        // change wrong.
+        let network = checked(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    platform:
+      os: openwrt
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+  Cabin:
+    platform:
+      os: openwrt
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+  Lake:
+    platform:
+      os: openwrt
+    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+    listenPort: 51820
+    meshIp: 10.100.0.3
+clients:
+  Phone:
+    publicKey: EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEA=
+    meshIp: 10.100.1.10
+",
+        );
+        let probes = probes(&node_plan(&network, &"Home".parse().unwrap()).unwrap());
+
+        let probes: Vec<String> = probes
+            .iter()
+            .map(|probe| format!("{} {}", probe.peer, probe.address))
+            .collect();
+        assert_eq!(probes, ["Cabin 10.100.0.2", "Lake 10.100.0.3"]);
     }
 
     #[test]

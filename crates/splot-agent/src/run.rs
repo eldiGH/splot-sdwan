@@ -21,8 +21,9 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use splot_core::protocol::{Probe, Run};
 
-use crate::{linux, openwrt};
+use crate::{linux, openwrt, probe};
 
 /// Where the run lives: in RAM on a router, gone at a reboot. Beside it,
 /// `last` says how the last run ended, for whoever asks after it.
@@ -75,6 +76,8 @@ struct Info {
     /// Seconds since the epoch: when the node puts back what it had.
     deadline: u64,
     backup: Backup,
+    /// The node's peers that answered when the run began: they must after.
+    answered: Vec<Probe>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,6 +96,8 @@ pub enum Error {
     Unreadable(#[from] serde_json::Error),
     #[error("putting back what this peer had failed")]
     Restore(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    NoPing(#[from] probe::NoPing),
 }
 
 fn now() -> u64 {
@@ -101,11 +106,20 @@ fn now() -> u64 {
         .map_or(0, |since| since.as_secs())
 }
 
-/// Begins run `id`: keeps `backup`, and starts the process that puts it back
-/// unless the run is confirmed within `confirm_within` seconds. Only one run at
-/// a time: its directory is the lock.
-pub fn begin(id: &str, confirm_within: u32, backup: Backup) -> Result<(), Error> {
-    begin_in(Path::new(DIR), id, confirm_within, backup, spawn_watchdog)
+/// Begins `run`: notes which of its probes answer, keeps `backup`, and starts
+/// the process that puts it back unless the run is confirmed in time. Only one
+/// run at a time: its directory is the lock.
+pub fn begin(run: &Run, backup: Backup) -> Result<(), Error> {
+    let answered = probe::answering(&run.probes)?;
+
+    begin_in(
+        Path::new(DIR),
+        &run.id,
+        run.confirm_within,
+        backup,
+        answered,
+        spawn_watchdog,
+    )
 }
 
 fn begin_in(
@@ -113,6 +127,7 @@ fn begin_in(
     id: &str,
     confirm_within: u32,
     backup: Backup,
+    answered: Vec<Probe>,
     watch: impl FnOnce(&Path) -> io::Result<()>,
 ) -> Result<(), Error> {
     if let Some(parent) = dir.parent() {
@@ -134,6 +149,7 @@ fn begin_in(
         id: id.to_owned(),
         deadline: now() + u64::from(confirm_within),
         backup,
+        answered,
     };
     let armed = write_private(&dir.join(INFO), &serde_json::to_string(&info)?)
         .and_then(|()| write_private(&dir.join(ARMED), ""))
@@ -221,6 +237,27 @@ fn end(dir: &Path, id: &str, outcome: &str) {
     let _ = fs::remove_dir_all(dir);
 }
 
+/// The longest a check takes: what a tunnel may need to come back after a
+/// reload, and then some.
+const CHECK_FOR: u64 = 30;
+
+/// Of the peers that answered when run `id` began, those that still do, and
+/// those that don't, by name: each gets until the check's time (and the run's)
+/// is up.
+pub fn check(id: &str) -> Result<(Vec<String>, Vec<String>), Error> {
+    let dir = Path::new(DIR);
+    let info = this_run(dir, id)?;
+    if !dir.join(ARMED).exists() {
+        return Err(Error::TooLate { id: id.to_owned() });
+    }
+
+    // Some time left for the confirm after it.
+    let left = info.deadline.saturating_sub(now() + 2);
+    let within = Duration::from_secs(left.min(CHECK_FOR));
+
+    Ok(probe::check(&info.answered, within)?)
+}
+
 /// Keeps what run `id` applied.
 pub fn confirm(id: &str) -> Result<(), Error> {
     confirm_in(Path::new(DIR), id)
@@ -306,6 +343,13 @@ mod tests {
     use super::*;
     use crate::test_support::{TempDir, mode};
 
+    fn answered() -> Vec<Probe> {
+        vec![Probe {
+            peer: "Cabin".to_owned(),
+            address: "10.100.0.2".parse().unwrap(),
+        }]
+    }
+
     fn backup() -> Backup {
         Backup::Linux {
             file: Some("[Interface]\n".to_owned()),
@@ -317,7 +361,7 @@ mod tests {
     /// A run dir in `temp`, begun as `id`, no watchdog started.
     fn begun(temp: &TempDir, id: &str, within: u32) -> PathBuf {
         let dir = temp.0.join("splot/run");
-        begin_in(&dir, id, within, backup(), |_| Ok(())).unwrap();
+        begin_in(&dir, id, within, backup(), answered(), |_| Ok(())).unwrap();
         dir
     }
 
@@ -333,6 +377,7 @@ mod tests {
         let info = info(&dir).unwrap();
         assert_eq!(info.id, "r1");
         assert_eq!(info.backup, backup());
+        assert_eq!(info.answered, answered());
         assert!(info.deadline >= now() + 119 && info.deadline <= now() + 120);
     }
 
@@ -341,7 +386,7 @@ mod tests {
         let temp = TempDir::new("run-busy");
         let dir = begun(&temp, "r1", 120);
 
-        let err = begin_in(&dir, "r2", 120, backup(), |_| Ok(())).unwrap_err();
+        let err = begin_in(&dir, "r2", 120, backup(), answered(), |_| Ok(())).unwrap_err();
         assert!(
             matches!(&err, Error::Busy { other } if other == "r1"),
             "{err}"
@@ -355,7 +400,7 @@ mod tests {
         let temp = TempDir::new("run-no-watchdog");
         let dir = temp.0.join("splot/run");
 
-        let err = begin_in(&dir, "r1", 120, backup(), |_| {
+        let err = begin_in(&dir, "r1", 120, backup(), answered(), |_| {
             Err(io::Error::other("no fork"))
         })
         .unwrap_err();
