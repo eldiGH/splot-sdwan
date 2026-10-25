@@ -85,7 +85,7 @@ A change splot applies is a run (`Request::Apply { rendered, run }`): before it 
 
 - **Decided once:** whoever renames the run's `armed` marker first decides it: the confirm, or the rollback (asked for, or the watchdog at the deadline). A confirm that comes too late is told so.
 - **One run at a time:** the run's directory is the lock. A run that fails while it applies (a batch uci rejects, a failed commit or reload) is put back on the spot.
-- **What's healthy** (decided): splot reaches the node again, and every node peer that answered before the apply answers after. The peer checks are the next step.
+- **What's healthy** (decided): splot reaches the node again, and every node peer that answered before the apply answers after: a ping to its mesh IP (every peer may ping a node, see "Zones"), which also brings the tunnel up. A peer whose preshared key changed gets a fresh session first, so the check proves the new key: WireGuard would keep the old session until its next rekey. The peer checks are the next step.
 - **Not yet:** a rollback that survives a reboot (the run lives in RAM), and one run across all nodes, all or nothing (each node's ssh destination will be in its `platform` block).
 
 ### Linux: WireGuard with wg-quick
@@ -152,7 +152,7 @@ Resolution always produces a set of IPs or subnets — never zone names. Zone na
 
 Zones are first-class in the config (under each node's `zones` map). They represent the downstream networks the router serves; the operator configures them in OpenWRT, splot just references them.
 
-Beyond user-declared zones, splot also creates and manages one zone of its own: the mesh interface's (`spl_mesh`). Everything that arrives over WireGuard is in it — other nodes, global clients, and hub clients. It defaults to `input` and `forward` `DROP` (and `output ACCEPT`); access is granted only via explicit service rules.
+Beyond user-declared zones, splot also creates and manages one zone of its own: the mesh interface's (`spl_mesh`). Everything that arrives over WireGuard is in it — other nodes, global clients, and hub clients. It defaults to `input` and `forward` `DROP` (and `output ACCEPT`); access is granted only via explicit service rules. One exception, by default: every WireGuard peer of the node (other nodes, global clients, hub clients) may ping the node's own mesh IP, echo request only, from the peer's own address, to the router itself and never forwarded. It's how the health check of an apply probes the peers.
 
 Generated firewall rules are scoped per-zone in both `src` and `dest` — when an `allowFrom` set resolves to source IPs across multiple zones, splot emits one rule per source zone with that zone in `src` and only that zone's IPs in `src_ip`.
 

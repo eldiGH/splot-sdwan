@@ -1,18 +1,19 @@
 ---
-source: src/plan/mod.rs
+source: crates/splot/src/plan/mod.rs
 expression: plan.to_string()
 ---
 # Cabin: key ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=
 
 [wireguard]
 interface: listen 51820, address 10.100.0.2/16
-peer Barn: key ReplaceBarnPublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.4/32, 192.168.4.0/24], routed, endpoint 203.0.113.30:51820, psk
-peer Home: key ReplaceHomePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.1/32, 192.168.1.0/24, 10.100.10.0/24], routed, endpoint 203.0.113.10:51820, psk
-peer Lake: key ReplaceLakePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.3/32, 192.168.3.0/24], routed, psk
-peer Phone: key ReplacePhonePublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.100/32], psk
+peer Barn at 10.100.0.4: key ReplaceBarnPublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.4/32, 192.168.4.0/24], routed, endpoint 203.0.113.30:51820, psk
+peer Home at 10.100.0.1: key ReplaceHomePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.1/32, 192.168.1.0/24, 10.100.10.0/24], routed, endpoint 203.0.113.10:51820, psk
+peer Lake at 10.100.0.3: key ReplaceLakePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.3/32, 192.168.3.0/24], routed, psk
+peer Phone at 10.100.0.100: key ReplacePhonePublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.100/32], psk
 
 [firewall]
 mesh zone: input drop, output accept, forward drop
+ping 10.100.0.2 from [Barn 10.100.0.4, Home 10.100.0.1, Lake 10.100.0.3, Phone 10.100.0.100]
 accept in Cabin.camera rtsp: tcp/554 from [10.100.0.100/32, 192.168.1.50/32] to [192.168.2.30/32]
 
 [dhcp]

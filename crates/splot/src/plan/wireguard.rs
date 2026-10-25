@@ -1,6 +1,6 @@
 //! The node's WireGuard: its mesh interface and the peers on it.
 
-use std::{fmt, iter, num::NonZeroU16};
+use std::{fmt, iter, net::Ipv4Addr, num::NonZeroU16};
 
 use crate::{
     model::{
@@ -51,6 +51,9 @@ pub struct Peer {
     /// Who the peer is: another node, a global client, or one of this node's hub
     /// clients.
     pub host: HostRef,
+    /// Its own address on the mesh: a node's or a global client's mesh IP, a
+    /// hub client's IP. What it pings this node from.
+    pub address: Ipv4Addr,
     pub public_key: WgPublicKey,
     pub allowed_ips: Vec<Ipv4Network>,
     /// Whether this node routes the peer's allowed IPs through the tunnel: what
@@ -87,6 +90,7 @@ fn node_peers(network: &Network, own: &Node, keepalive: Option<NonZeroU16>) -> V
 
             Peer {
                 host: HostRef::Node(node.name().clone()),
+                address: node.mesh_address().ip(),
                 public_key: node.public_key().clone(),
                 allowed_ips: iter::once(Ipv4Network::host(node.mesh_address().ip()))
                     .chain(node.networks())
@@ -115,6 +119,7 @@ fn client_peers(network: &Network, own: &Node, on: impl Fn(&Place) -> bool) -> V
 
             Some(Peer {
                 host: host.id().clone(),
+                address: address.ip(),
                 public_key: wg_peer.public_key().clone(),
                 allowed_ips: vec![Ipv4Network::host(address.ip())],
                 routed: false,
@@ -170,8 +175,9 @@ impl fmt::Display for Peer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "peer {}: key {}, allowed {}",
+            "peer {} at {}: key {}, allowed {}",
             self.host,
+            self.address,
             self.public_key.as_str(),
             super::list(&self.allowed_ips)
         )?;

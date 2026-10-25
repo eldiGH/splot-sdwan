@@ -5,9 +5,10 @@ pub mod redirect;
 pub mod rules;
 pub mod zone_ref;
 
-use std::fmt;
+use std::{fmt, net::Ipv4Addr};
 
-use crate::model::{Network, node::Node};
+use super::wireguard::WireGuardPlan;
+use crate::model::{Network, host::HostRef, node::Node};
 use redirect::Redirect;
 use rules::Rule;
 use zone_ref::ZoneRef;
@@ -18,6 +19,8 @@ pub struct FirewallPlan {
     /// leaves the node's WireGuard alone: the mesh then arrives on the
     /// operator's own interface, in a zone of theirs.
     pub mesh_zone: Option<ZonePolicy>,
+    /// The node's WireGuard peers may ping it: none without a mesh zone.
+    pub ping: Option<Ping>,
     /// Ingress rules first, then egress.
     pub rules: Vec<Rule>,
     /// Without a mesh zone, none to a host reached over the mesh.
@@ -35,21 +38,46 @@ pub struct ZonePolicy {
     pub forward: Verdict,
 }
 
+/// Every WireGuard peer of the node may ping it: an echo request from the peer's
+/// own address to the node's mesh IP, to the node itself and nowhere else. The
+/// health check of an apply pings the peers.
+#[derive(Debug)]
+pub struct Ping {
+    /// The node's mesh IP.
+    pub to: Ipv4Addr,
+    /// Each peer, and its own address on the mesh.
+    pub from: Vec<(HostRef, Ipv4Addr)>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     Accept,
     Drop,
 }
 
-pub(super) fn plan(network: &Network, own: &Node) -> FirewallPlan {
+/// The firewall of `own`, whose WireGuard plan is `wireguard` (none where splot
+/// leaves its WireGuard alone).
+pub(super) fn plan(
+    network: &Network,
+    own: &Node,
+    wireguard: Option<&WireGuardPlan>,
+) -> FirewallPlan {
     let mut rules = rules::ingress_rules(network, own);
     rules.extend(rules::egress_rules(network, own));
 
     // Access is granted only by rules.
-    let mesh_zone = own.platform().wireguard().map(|_| ZonePolicy {
+    let mesh_zone = wireguard.map(|_| ZonePolicy {
         input: Verdict::Drop,
         output: Verdict::Accept,
         forward: Verdict::Drop,
+    });
+    let ping = wireguard.map(|wireguard| Ping {
+        to: wireguard.address.ip(),
+        from: wireguard
+            .peers
+            .iter()
+            .map(|peer| (peer.host.clone(), peer.address))
+            .collect(),
     });
     let mut redirects = redirect::redirects(network, own);
     if mesh_zone.is_none() {
@@ -58,6 +86,7 @@ pub(super) fn plan(network: &Network, own: &Node) -> FirewallPlan {
 
     FirewallPlan {
         mesh_zone,
+        ping,
         rules,
         redirects,
     }
@@ -84,6 +113,12 @@ impl fmt::Display for FirewallPlan {
                 "mesh zone: input {input}, output {output}, forward {forward}"
             )?,
             None => writeln!(f, "mesh zone: none (WireGuard left alone)")?,
+        }
+        if let Some(Ping { to, from }) = &self.ping {
+            let from = from
+                .iter()
+                .map(|(host, address)| format!("{host} {address}"));
+            writeln!(f, "ping {to} from {}", super::list(from))?;
         }
 
         for rule in &self.rules {
@@ -142,7 +177,12 @@ clients:
 
     fn home(yaml: &str) -> FirewallPlan {
         let network = checked(yaml);
-        plan(&network, network.node(&"Home".parse().unwrap()).unwrap())
+        let home = network.node(&"Home".parse().unwrap()).unwrap();
+        let wireguard = home
+            .platform()
+            .wireguard()
+            .map(|_| super::super::wireguard::plan(&network, home));
+        plan(&network, home, wireguard.as_ref())
     }
 
     fn forwards(plan: &FirewallPlan) -> Vec<String> {
@@ -150,6 +190,64 @@ clients:
             .iter()
             .map(|redirect| format!("{} {}", redirect.host, redirect.service))
             .collect()
+    }
+
+    #[test]
+    fn every_peer_may_ping_the_node_on_its_mesh_ip() {
+        // Another node, a global client and Home's own hub client, each from its
+        // own address. Not Cabin's hub client: it isn't Home's peer.
+        let Ping { to, from } = home(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    platform:
+      os: openwrt
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+  Cabin:
+    platform:
+      os: openwrt
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    hub:
+      network: 10.100.84.0/24
+      clients:
+        doorbell:
+          publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+          ip: 10.100.84.10
+clients:
+  Phone:
+    publicKey: EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEA=
+    meshIp: 10.100.1.10
+",
+        )
+        .ping
+        .unwrap();
+
+        assert_eq!(to.to_string(), "10.100.0.1");
+        let from: Vec<String> = from
+            .iter()
+            .map(|(host, address)| format!("{host} {address}"))
+            .collect();
+        assert_eq!(
+            from,
+            [
+                "Cabin 10.100.0.2",
+                "Phone 10.100.1.10",
+                "Home.camera 10.100.49.10"
+            ]
+        );
     }
 
     #[test]
@@ -175,6 +273,7 @@ clients:
             "      os: openwrt\n      wireguard: none\n",
         ));
         assert!(plan.mesh_zone.is_none());
+        assert!(plan.ping.is_none());
         assert_eq!(forwards(&plan), ["Home.printer ipp"]);
 
         let rules: Vec<String> = plan

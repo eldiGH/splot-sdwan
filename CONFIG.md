@@ -252,7 +252,7 @@ Every WireGuard pair (node and node, node and client) uses a preshared key (PSK)
 
 ## Service
 
-A network service that should be reachable from specific parts of the mesh, externally via WAN, or both.
+A network service that should be reachable from specific parts of the mesh, externally via WAN, or both. Nothing else is: where splot runs a node's firewall, what arrives over the mesh is dropped unless a service lets it through. One exception: every WireGuard peer of a node (other nodes, global clients, hub clients) may ping the node's own mesh IP, and only that (echo requests to the router itself, nothing forwarded). splot uses it to check a node's tunnels after it applies a change.
 
 ```yaml
 ssh:

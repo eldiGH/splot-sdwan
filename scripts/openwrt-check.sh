@@ -290,6 +290,15 @@ EOF
 		fail "fw4 reloaded: splot's rules are live"
 	fi
 
+	# Every peer may ping the router on its mesh IP: fw4 takes the rule, and
+	# it's live.
+	output=$(run 'fw4 check 2>&1') || true
+	if ! grep -q spl_rule_ping <<<"$output" && grep -q 'ping from its peers' <<<"$(run 'nft list ruleset')"; then
+		pass "fw4 takes the peers' ping rule, and it's live"
+	else
+		fail "fw4 takes the peers' ping rule, and it's live" "$output"
+	fi
+
 	if output=$(run 'for conf in /var/etc/dnsmasq.conf.*; do dnsmasq --test -C "$conf" 2>&1 || exit 1; done'); then
 		pass "dnsmasq --test on the generated config"
 	else

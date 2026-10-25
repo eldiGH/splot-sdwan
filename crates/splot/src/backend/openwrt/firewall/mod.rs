@@ -1,3 +1,4 @@
+mod ping;
 mod redirect;
 mod rules;
 mod zones;
@@ -31,7 +32,7 @@ fn target(verdict: Verdict) -> &'static str {
 }
 
 /// The plan's firewall section as the `firewall` file's sections: the mesh zone
-/// (if any), then the rules, then the redirects.
+/// and the peers' ping (if any), then the rules, then the redirects.
 pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
     info!("Generating firewall config");
     info!(
@@ -53,11 +54,16 @@ pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
         .mesh_zone
         .as_ref()
         .map(|policy| MeshZone(policy).to_section());
+    let ping = firewall.ping.as_ref().map(|ping| ping.to_section());
     let rules = firewall.rules.iter().map(|rule| rule.to_section());
     let redirects = firewall
         .redirects
         .iter()
         .map(|redirect| redirect.to_section());
 
-    zone.into_iter().chain(rules).chain(redirects).collect()
+    zone.into_iter()
+        .chain(ping)
+        .chain(rules)
+        .chain(redirects)
+        .collect()
 }

@@ -1,5 +1,5 @@
 ---
-source: src/backend/openwrt/mod.rs
+source: crates/splot/src/backend/openwrt/mod.rs
 expression: output
 ---
 # network
@@ -51,6 +51,19 @@ set firewall.spl_zone_mesh.input='DROP'
 set firewall.spl_zone_mesh.output='ACCEPT'
 set firewall.spl_zone_mesh.forward='DROP'
 add_list firewall.spl_zone_mesh.network='spl_mesh'
+set firewall.spl_rule_ping='rule'
+set firewall.spl_rule_ping.name='[SPLOT] ping from its peers'
+set firewall.spl_rule_ping.src='*'
+set firewall.spl_rule_ping.family='ipv4'
+set firewall.spl_rule_ping.proto='icmp'
+add_list firewall.spl_rule_ping.icmp_type='echo-request'
+add_list firewall.spl_rule_ping.src_ip='10.100.0.100'
+add_list firewall.spl_rule_ping.src_ip='10.100.0.2'
+add_list firewall.spl_rule_ping.src_ip='10.100.0.3'
+add_list firewall.spl_rule_ping.src_ip='10.100.0.4'
+add_list firewall.spl_rule_ping.src_ip='10.100.10.10'
+add_list firewall.spl_rule_ping.dest_ip='10.100.0.1'
+set firewall.spl_rule_ping.target='ACCEPT'
 set firewall.spl_rule_in_Home_ssh='rule'
 set firewall.spl_rule_in_Home_ssh.name='[SPLOT] in: Home ssh'
 set firewall.spl_rule_in_Home_ssh.src='*'

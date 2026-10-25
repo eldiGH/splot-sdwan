@@ -35,11 +35,16 @@ pub fn plan(network: &Network, node: &Identifier) -> Option<NodePlan> {
     let node = network.node(node)?;
     let platform = node.platform();
 
+    let wireguard = platform.wireguard().map(|_| wireguard::plan(network, node));
+    let firewall = platform
+        .firewall()
+        .map(|_| firewall::plan(network, node, wireguard.as_ref()));
+
     Some(NodePlan {
         node: node.name().clone(),
         public_key: node.public_key().clone(),
-        wireguard: platform.wireguard().map(|_| wireguard::plan(network, node)),
-        firewall: platform.firewall().map(|_| firewall::plan(network, node)),
+        wireguard,
+        firewall,
         dhcp: platform.dhcp().map(|_| dhcp::plan(network, node)),
     })
 }
@@ -143,7 +148,7 @@ nodes:
 
 [wireguard]
 interface: listen 51820, address 10.100.0.1/16
-peer Cabin: key CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=, allowed [10.100.0.2/32], routed, endpoint 5.6.7.8:51820, psk
+peer Cabin at 10.100.0.2: key CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=, allowed [10.100.0.2/32], routed, endpoint 5.6.7.8:51820, psk
 
 [firewall]
 none: left alone
