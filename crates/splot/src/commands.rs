@@ -243,7 +243,12 @@ pub fn apply(
     let lost = match checked {
         Ok(Reply::Checked { still, lost }) => {
             if !still.is_empty() {
-                println!("Checked: {} answer as before.", still.join(", "));
+                let verb = if still.len() == 1 {
+                    "answers"
+                } else {
+                    "answer"
+                };
+                println!("Checked: {} {verb} as before.", still.join(", "));
             }
             lost
         }
