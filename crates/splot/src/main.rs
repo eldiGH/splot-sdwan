@@ -39,9 +39,12 @@ fn main() -> anyhow::Result<()> {
         bail!("there are errors in your config file");
     };
 
+    // A node is reached where the command says, else at its platform.ssh.
+    let configured = |node| network.node(node).and_then(|node| node.platform().ssh());
+
     match command {
         Command::Init { node, os, reach } => {
-            commands::init(&network, node, *os, &mut reach.agent())
+            commands::init(&network, node, *os, &mut reach.agent(configured(node))?)
         }
         Command::Apply {
             node,
@@ -53,12 +56,12 @@ fn main() -> anyhow::Result<()> {
             node,
             *dry_run,
             *confirm_within,
-            &mut reach.agent(),
+            &mut reach.agent(configured(node))?,
         ),
         Command::Check => Ok(()),
         Command::Psk {
             command: PskCommand::Set { node, peer, reach },
-        } => commands::psk_set(&network, node, peer, &mut reach.agent()),
+        } => commands::psk_set(&network, node, peer, &mut reach.agent(configured(node))?),
     }
 }
 

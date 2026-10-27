@@ -189,7 +189,7 @@ fn check_node(
 
     let built = mesh.zip(platform).map(|(mesh, platform)| Node {
         name: node_name.clone(),
-        platform: *platform,
+        platform: platform.clone(),
         public_key: node.public_key.clone(),
         psk: node.psk,
         endpoint: node.endpoint.clone(),

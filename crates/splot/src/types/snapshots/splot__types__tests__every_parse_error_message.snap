@@ -1,5 +1,5 @@
 ---
-source: src/types/mod.rs
+source: crates/splot/src/types/mod.rs
 expression: "format!(\"{}\\nWanViaTargets: [Home, Home.lan] → {duplicate}\",\nmessages.join(\"\\n\"))"
 ---
 Ipv4Network: "10.0.0.1" → missing '/' in: '10.0.0.1'
@@ -44,4 +44,7 @@ Hostname: "10.0.0.300" → the last label is all digits
 EndpointHost: "a_b.net" → neither an IPv4 address nor a host name: invalid character '_' in "a_b" (only letters, digits and hyphens)
 Setting<FirewallProgram>: "iptables" → "iptables" isn't a firewall program splot knows: fw4, nftables, or none
 Os: "windows" → "windows" isn't an OS splot knows: openwrt, linux
+SshDestination: "" → empty
+SshDestination: "-oProxyCommand=sh" → starts with '-', which ssh would read as an option
+SshDestination: "root@router -p 2222" → contains ' ': no spaces or control characters
 WanViaTargets: [Home, Home.lan] → node 'Home' appears more than once — each node should appear at most once in wan.via

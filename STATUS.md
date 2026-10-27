@@ -23,6 +23,7 @@ Source paths below (`src/...`) are within `crates/splot` unless they name anothe
 - Typed MAC handling via `src/types/mac.rs`.
 - Typed node endpoints via `src/types/endpoint.rs` (`EndpointHost`): an IPv4 address or a DNS name (labels of letters, digits and hyphens, at most 63 characters each and 253 in all). A name whose last label is all digits is rejected: no top-level domain is, so it's a mistyped IP.
 - Typed node platforms via `src/types/platform.rs`: `os` (`openwrt`, `linux`) and, per concern, a `Setting` that is a program (`WireGuardProgram`: `netifd`, `wg-quick`; `FirewallProgram`: `fw4`, `nftables`; `DhcpProgram` and `DnsProgram`: `dnsmasq`) or `none`. Each program knows which OS splot can manage it on. A name splot doesn't know for that concern is a parse error listing the ones it knows.
+- Typed ssh destinations via `src/types/ssh.rs` (`SshDestination`): a node's `platform.ssh` and `--ssh`, kept as written for the system `ssh`; empty, a leading `-` (ssh would read an option) or a space or control character is refused.
 - Typed WireGuard public keys via `splot-core`'s `wg_key.rs` (`WgPublicKey`): 44 characters of canonical base64 ending in `=` — the same rule `wg` itself enforces.
 - Typed secret keys in the same file: `WgPrivateKey` and `WgPresharedKey`, two kinds of one `SecretKey<K>` (so each behaviour is written once, and one kind can't be passed for the other). Checked on parse like a public key; never shown: no `Display`, `Debug` prints `<redacted>`, and only `expose()` gives the text, where a key is written for WireGuard (the fill-in, the key store, `wg pubkey`'s input). They're parsed where they enter: the key store when it's read, `wg genkey`'s output, and the stdin of `splot psk set`.
 
@@ -149,7 +150,7 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 
 ### Reaching a node over ssh (`src/agent/`)
 
-- `apply`, `init` and `psk set` take `--ssh <destination>` and `--agent <file>` (only with `--ssh`). `Agent::Local` calls the agent's code in-process; `Agent::Remote` opens a `Session` at the first request.
+- `apply`, `init` and `psk set` reach the node at `--ssh <destination>`, else at its `platform.ssh` (`types::ssh::SshDestination`, checked the same way for both: no leading `-`, no spaces or control characters), else in-process; `--local` forces in-process (`cli::Reach::destination`). `--agent <file>` needs a destination from either. `Agent::Local` calls the agent's code in-process; `Agent::Remote` opens a `Session` at the first request.
 - The session runs `ssh -T -- <destination> <bootstrap>`, with ssh's stderr on the terminal (password prompts, host keys, why it failed). The bootstrap says the node's CPU; splot picks the agent (`embedded::for_node`: `uname -m` and OpenWrt's `DISTRIB_ARCH`, armv7 only with a floating-point unit), sends its size and bytes into a 0700 `mktemp` file in `/tmp`, waits for `ready`, and sends `Hello { protocol }` before anything else. The file is removed when the agent ends (its input ends with the session); one that arrived shorter than announced doesn't run. ssh's exit 255 reads as "ssh couldn't reach it".
 - Tested by running the same bootstrap with a local `sh` and a fake agent (a shell script): the copy in `/tmp`, its mode, its removal, a refused protocol, how a session ends, a cut-short upload.
 

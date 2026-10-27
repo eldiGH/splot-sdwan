@@ -72,6 +72,7 @@ fn check_platform(
         firewall: firewall?,
         dhcp: dhcp?,
         dns: dns?,
+        ssh: platform.ssh.clone(),
     })
 }
 
@@ -153,7 +154,7 @@ nodes:
                 .map(|e| e.to_string())
                 .collect::<Vec<_>>()
         );
-        platforms[&"Home".parse::<Identifier>().unwrap()]
+        platforms[&"Home".parse::<Identifier>().unwrap()].clone()
     }
 
     #[test]
@@ -166,6 +167,7 @@ nodes:
                 firewall: Some(FirewallProgram::Fw4),
                 dhcp: Some(DhcpProgram::Dnsmasq),
                 dns: Some(DnsProgram::Dnsmasq),
+                ssh: None,
             }
         );
         // Spelled out, the same.
@@ -195,6 +197,7 @@ nodes:
                 firewall: None,
                 dhcp: None,
                 dns: Some(DnsProgram::Dnsmasq),
+                ssh: None,
             }
         );
         assert_eq!(
@@ -209,6 +212,7 @@ nodes:
                 firewall: Some(FirewallProgram::Fw4),
                 dhcp: Some(DhcpProgram::Dnsmasq),
                 dns: None,
+                ssh: None,
             }
         );
     }
@@ -229,6 +233,7 @@ nodes:
                 firewall: None,
                 dhcp: Some(DhcpProgram::Dnsmasq),
                 dns: None,
+                ssh: None,
             }
         );
 
@@ -302,6 +307,27 @@ nodes:
         assert!(hub_error("      os: openwrt\n      wireguard: none"));
         assert!(!hub_error("      os: openwrt"));
         assert!(!hub_error("      os: openwrt\n      firewall: none"));
+    }
+
+    #[test]
+    fn a_node_may_say_where_splot_reaches_it_over_ssh() {
+        let ssh = |lines: &str| platform(lines).ssh().map(ToString::to_string);
+
+        assert_eq!(
+            ssh("      os: openwrt\n      ssh: root@192.168.1.1").as_deref(),
+            Some("root@192.168.1.1")
+        );
+        assert_eq!(ssh("      os: openwrt"), None);
+
+        let err = serde_norway::from_str::<Config>(&home(
+            "      os: openwrt\n      ssh: -oProxyCommand=sh",
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("starts with '-', which ssh would read as an option"),
+            "{err}"
+        );
     }
 
     #[test]

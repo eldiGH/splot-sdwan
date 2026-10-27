@@ -109,16 +109,16 @@ Full reference: [CONFIG.md](CONFIG.md).
 
 Requires Rust (edition 2024) to build, and on the node: OpenWrt with `uci` and WireGuard tools (`wg`), or Linux with systemd, wireguard-tools (`wg`, `wg-quick`), iproute2 and `ping` (iputils-ping: after a change, the node pings its peers to check its tunnels). On Linux splot manages only the WireGuard so far ([CONFIG.md → Linux](CONFIG.md#linux)).
 
-splot runs on your machine and reaches each node over ssh (`--ssh`, anything `ssh` takes: `root@router`, a host of your `~/.ssh/config`). It sends the node a small agent for its CPU, which does the work there and is gone afterwards: nothing is installed on the node, and its keys never leave it. Without `--ssh`, splot acts on the machine it runs on.
+splot runs on your machine and reaches each node over ssh, at the node's `platform.ssh` in the config (anything `ssh` takes: `root@router`, a host of your `~/.ssh/config`), or at `--ssh <destination>` for one command. It sends the node a small agent for its CPU, which does the work there and is gone afterwards: nothing is installed on the node, and its keys never leave it. With neither, or with `--local`, splot acts on the machine it runs on.
 
 ```sh
 scripts/dist.sh            # build target/dist/splot, carrying the agents (needs the Rust targets it names)
 cd target/dist             # with splot.yml in the working directory:
 ./splot check              # validate the config, report errors and warnings
-./splot init --node Cabin --ssh root@cabin   # give the router its WireGuard key; print what the config needs
-./splot apply --node Cabin --ssh root@cabin --dry-run  # show what apply would change (placeholders for the keys)
-./splot apply --node Cabin --ssh root@cabin            # make Cabin hold what the config says
-./splot psk set --node Cabin Home --ssh root@cabin < home.psk  # store Cabin's preshared key with Home
+./splot init --node Cabin --ssh root@cabin   # a new router, not in the config yet: give it its WireGuard key; print its entry
+./splot apply --node Cabin --dry-run   # show what apply would change (placeholders for the keys), at Cabin's platform.ssh
+./splot apply --node Cabin             # make Cabin hold what the config says
+./splot psk set --node Cabin Home < home.psk  # store Cabin's preshared key with Home
 ```
 
 `-c/--config <FILE>` overrides the config path (default: `splot.yml`). splot carries agents for aarch64, armv7 (with a floating-point unit), riscv64 and x86_64 (`splot --version` lists them); for another CPU, build the agent yourself and pass it with `--agent <FILE>`.

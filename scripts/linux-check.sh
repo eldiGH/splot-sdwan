@@ -40,8 +40,9 @@ fail() {
 }
 run() { podman exec "$CONTAINER" bash -c "$1"; }
 # What splot printed, with its exit status when it failed. Without the config's
-# warnings: Barn leaves its firewall to the operator.
-splot() { run "$S $1 2>&1 | grep -v '^warning: '; exit \${PIPESTATUS[0]}" || echo "(exit $?)"; }
+# warnings: Barn leaves its firewall to the operator. splot runs on the node
+# itself (--local), not at the platform.ssh the example gives it.
+splot() { run "$S $1 --local 2>&1 | grep -v '^warning: '; exit \${PIPESTATUS[0]}" || echo "(exit $?)"; }
 # What apply says once it has reached the node again and confirmed the change.
 CONFIRMED="Confirmed: splot reached Barn again, and it keeps the change."
 
@@ -82,7 +83,7 @@ podman cp splot.example.yml "$CONTAINER:/root/splot.example.yml"
 run 'sed "s/firewall: nftables/firewall: none/; s/dhcp: dnsmasq/dhcp: none/" /root/splot.example.yml >/root/splot.yml'
 
 # The example as it is asks splot for Barn's firewall and DHCP.
-output=$(run 'splot --config /root/splot.example.yml apply --node Barn --dry-run 2>&1' || true)
+output=$(run 'splot --config /root/splot.example.yml apply --node Barn --dry-run --local 2>&1' || true)
 if printf '%s' "$output" | grep -q "splot can't manage Barn's firewall (nftables) or dhcp (dnsmasq) on Linux yet"; then
 	pass "apply refuses a firewall and DHCP splot can't manage on Linux yet"
 else
@@ -127,7 +128,7 @@ else
 	fail "apply refuses while PSKs are missing, writing nothing" "$output"
 fi
 for peer in Cabin Home Lake Phone; do
-	run "wg genpsk | $S psk set --node Barn $peer >/dev/null"
+	run "wg genpsk | $S psk set --node Barn $peer --local >/dev/null"
 done
 
 output=$(splot "apply --node Barn --dry-run")
@@ -225,7 +226,7 @@ $(routes)"
 fi
 
 # A PSK changes: staged alone, masked in the dry run, live after a reload.
-run "wg genpsk >/root/cabin.psk && $S psk set --node Barn Cabin </root/cabin.psk >/dev/null"
+run "wg genpsk >/root/cabin.psk && $S psk set --node Barn Cabin --local </root/cabin.psk >/dev/null"
 dry=$(splot "apply --node Barn --dry-run")
 output=$(splot "apply --node Barn")
 if ! printf '%s' "$dry" | grep -qF "$(run 'cat /root/cabin.psk')" &&

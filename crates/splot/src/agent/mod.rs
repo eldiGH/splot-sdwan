@@ -11,6 +11,7 @@ use std::{
 
 use splot_core::protocol::{Failure, Reply, Request};
 
+use crate::types::ssh::SshDestination;
 pub use embedded::VERSION;
 use session::Session;
 
@@ -21,7 +22,7 @@ pub enum Agent {
     /// On the node at `destination`, reached over ssh: it gets `agent`, or the
     /// one splot carries for its CPU. The session opens at the first request.
     Remote {
-        destination: String,
+        destination: SshDestination,
         agent: Option<PathBuf>,
         session: Option<Session>,
     },
@@ -30,7 +31,7 @@ pub enum Agent {
 impl Agent {
     /// The agent on the node at `ssh`, given `agent` if any; without `ssh`, the
     /// one in splot.
-    pub fn new(ssh: Option<String>, agent: Option<PathBuf>) -> Self {
+    pub fn new(ssh: Option<SshDestination>, agent: Option<PathBuf>) -> Self {
         match ssh {
             None => Self::Local,
             Some(destination) => Self::Remote {
@@ -59,7 +60,7 @@ impl Agent {
             } => {
                 let session = match session {
                     Some(session) => session,
-                    None => session.insert(Session::open(destination, agent.as_deref())?),
+                    None => session.insert(Session::open(destination.as_str(), agent.as_deref())?),
                 };
                 session.ask(&request)?
             }

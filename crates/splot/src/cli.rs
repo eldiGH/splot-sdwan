@@ -1,10 +1,11 @@
+use anyhow::bail;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 use crate::{
     agent::{self, Agent},
     consts,
-    types::{identifier::Identifier, platform::Os},
+    types::{identifier::Identifier, platform::Os, ssh::SshDestination},
 };
 
 #[derive(Parser)]
@@ -33,18 +34,42 @@ impl Cli {
 #[derive(Args)]
 pub struct Reach {
     /// Reach the node over ssh at DESTINATION, anything ssh takes (`root@router`,
-    /// a host of ~/.ssh/config). Without it, splot acts on the machine it runs on
+    /// a host of ~/.ssh/config). Without it, at the node's platform.ssh; without
+    /// that, splot acts on the machine it runs on
     #[arg(long, value_name = "DESTINATION")]
-    ssh: Option<String>,
+    ssh: Option<SshDestination>,
+    /// Act on the machine splot runs on, even when the config gives the node a
+    /// platform.ssh
+    #[arg(long, conflicts_with = "ssh")]
+    local: bool,
     /// Send the node this agent instead of the one splot carries for its CPU
-    #[arg(long, value_name = "FILE", requires = "ssh")]
+    #[arg(long, value_name = "FILE", conflicts_with = "local")]
     agent: Option<PathBuf>,
 }
 
 impl Reach {
-    /// The agent on the node this reaches.
-    pub fn agent(&self) -> Agent {
-        Agent::new(self.ssh.clone(), self.agent.clone())
+    /// Where the node is: at `--ssh`, else at `configured` (its platform.ssh);
+    /// none for the machine splot runs on.
+    fn destination<'a>(
+        &'a self,
+        configured: Option<&'a SshDestination>,
+    ) -> Option<&'a SshDestination> {
+        if self.local {
+            return None;
+        }
+        self.ssh.as_ref().or(configured)
+    }
+
+    /// The agent on the node this reaches, `configured` its platform.ssh.
+    pub fn agent(&self, configured: Option<&SshDestination>) -> anyhow::Result<Agent> {
+        let destination = self.destination(configured);
+        if destination.is_none() && self.agent.is_some() {
+            bail!(
+                "--agent is sent to the node over ssh, and the config gives it no platform.ssh: give --ssh"
+            );
+        }
+
+        Ok(Agent::new(destination.cloned(), self.agent.clone()))
     }
 }
 
@@ -212,18 +237,89 @@ mod tests {
         ] {
             assert!(Cli::try_parse_from(args).is_ok(), "{args:?}");
         }
-        let cli = parse(&["splot", "apply", "--node", "Home", "--ssh", "root@router"]);
-        let Some(Command::Apply { reach, .. }) = cli.command() else {
-            panic!("not apply");
-        };
-        assert_eq!(reach.ssh.as_deref(), Some("root@router"));
+        let reach = reach(&["--ssh", "root@router"]);
+        assert_eq!(
+            reach.ssh.as_ref().map(SshDestination::as_str),
+            Some("root@router")
+        );
         assert_eq!(reach.agent, None);
 
-        // An agent is sent over ssh only.
+        // Never an option of ssh's.
         assert!(
-            Cli::try_parse_from(["splot", "apply", "--node", "Home", "--agent", "./agent"])
-                .is_err()
+            Cli::try_parse_from([
+                "splot",
+                "apply",
+                "--node",
+                "Home",
+                "--ssh=-oProxyCommand=sh"
+            ])
+            .is_err()
         );
+    }
+
+    /// The `Reach` of `apply --node Home` with `args`.
+    fn reach(args: &[&str]) -> Reach {
+        let cli = parse(&[&["splot", "apply", "--node", "Home"], args].concat());
+        let Some(Command::Apply { reach, .. }) = cli.command else {
+            panic!("not apply");
+        };
+        reach
+    }
+
+    #[test]
+    fn a_node_is_reached_at_ssh_else_at_its_platform_ssh_else_here() {
+        let configured: SshDestination = "root@192.168.1.1".parse().unwrap();
+        let destination = |args: &[&str], configured: Option<&SshDestination>| {
+            reach(args).destination(configured).map(ToString::to_string)
+        };
+
+        assert_eq!(
+            destination(&["--ssh", "router"], Some(&configured)).as_deref(),
+            Some("router")
+        );
+        assert_eq!(
+            destination(&[], Some(&configured)).as_deref(),
+            Some("root@192.168.1.1")
+        );
+        assert_eq!(destination(&[], None), None);
+        assert_eq!(destination(&["--local"], Some(&configured)), None);
+
+        // Here, or over ssh at one destination: not both.
+        assert!(
+            Cli::try_parse_from([
+                "splot", "apply", "--node", "Home", "--local", "--ssh", "router"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn an_agent_is_sent_over_ssh_only() {
+        let configured: SshDestination = "root@192.168.1.1".parse().unwrap();
+
+        // To the node's platform.ssh, or --ssh.
+        assert!(matches!(
+            reach(&["--agent", "./agent"]).agent(Some(&configured)),
+            Ok(Agent::Remote { destination, agent: Some(_), .. }) if destination == configured
+        ));
+        assert!(matches!(
+            reach(&["--ssh", "router", "--agent", "./agent"]).agent(None),
+            Ok(Agent::Remote { agent: Some(_), .. })
+        ));
+        // Nowhere to send it.
+        let err = reach(&["--agent", "./agent"]).agent(None).err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            "--agent is sent to the node over ssh, and the config gives it no platform.ssh: give --ssh"
+        );
+        assert!(
+            Cli::try_parse_from([
+                "splot", "apply", "--node", "Home", "--local", "--agent", "./a"
+            ])
+            .is_err()
+        );
+        // Without either, here.
+        assert!(matches!(reach(&[]).agent(None), Ok(Agent::Local)));
     }
 
     #[test]

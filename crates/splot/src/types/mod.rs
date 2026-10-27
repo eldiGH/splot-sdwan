@@ -12,6 +12,7 @@ pub mod platform;
 pub mod port;
 pub mod protocol;
 pub mod schema_helpers;
+pub mod ssh;
 pub mod wan_via_target;
 
 #[cfg(test)]
@@ -27,6 +28,7 @@ mod tests {
         platform::{FirewallProgram, Os, Setting},
         port::{Port, PortOrRange, PortRange, ServicePort},
         schema_helpers::OneOrManyUnique,
+        ssh::SshDestination,
         wan_via_target::{WanViaTarget, WanViaTargets},
     };
 
@@ -70,6 +72,7 @@ mod tests {
         is_error::<super::endpoint::ParseEndpointHostError>();
         is_error::<super::wg_key::KeyFormatError>();
         is_error::<super::platform::ParseSettingError>();
+        is_error::<super::ssh::ParseSshDestinationError>();
         is_error::<splot_core::os::ParseOsError>();
         is_error::<crate::model::validator::types::ValidationError>();
     }
@@ -122,6 +125,9 @@ mod tests {
             error::<EndpointHost>("a_b.net"),
             error::<Setting<FirewallProgram>>("iptables"),
             error::<Os>("windows"),
+            error::<SshDestination>(""),
+            error::<SshDestination>("-oProxyCommand=sh"),
+            error::<SshDestination>("root@router -p 2222"),
         ];
 
         // wan.via names a node at most once; only serde builds that list.

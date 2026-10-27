@@ -43,8 +43,9 @@ cp "target/$TARGET/agent/splot-agent" target/check-agents/x86_64
 SPLOT_AGENTS="$PWD/target/check-agents" cargo build --quiet --package splot --release --target "$TARGET"
 podman build --quiet --build-arg "OPENWRT_VERSION=$VERSION" -t "$IMAGE" scripts/openwrt >/dev/null
 
-# splot reaches the routers as `home` and `cabin`: hosts of an ssh config of
-# the check's own, with a key of its own, through an `ssh` first on its PATH.
+# splot reaches the routers at their platform.ssh, `home` and `cabin`: hosts of
+# an ssh config of the check's own, with a key of its own, through an `ssh`
+# first on its PATH.
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
@@ -122,6 +123,7 @@ nodes:
     platform:
       os: openwrt
       dhcp: none
+      ssh: home
     publicKey: $1
     endpoint: home.example.net
     listenPort: $HOME_PORT
@@ -130,6 +132,7 @@ nodes:
     platform:
       os: openwrt
       dhcp: none
+      ssh: cabin
     publicKey: $2
     endpoint: cabin.example.net
     listenPort: $CABIN_PORT
@@ -144,18 +147,18 @@ boot cabin "$CABIN_PORT"
 
 # Each router gets its key; the pair, a preshared key on both ends.
 mesh AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA= >"$work/splot.yml"
-splot init --node Home --ssh home >/dev/null
-splot init --node Cabin --ssh cabin >/dev/null
+splot init --node Home >/dev/null
+splot init --node Cabin >/dev/null
 home_key=$(run home 'uci get splot.config.private_key | wg pubkey')
 cabin_key=$(run cabin 'uci get splot.config.private_key | wg pubkey')
 mesh "$home_key" "$cabin_key" >"$work/splot.yml"
 psk=$(run home 'wg genpsk')
-splot psk set --node Home Cabin --ssh home <<<"$psk" >/dev/null
-splot psk set --node Cabin Home --ssh cabin <<<"$psk" >/dev/null
+splot psk set --node Home Cabin <<<"$psk" >/dev/null
+splot psk set --node Cabin Home <<<"$psk" >/dev/null
 
 # Both applied: the tunnel comes up, and each router answers the other's ping.
-output=$(splot apply --node Cabin --ssh cabin 2>&1) || true
-output="$output"$'\n'$(splot apply --node Home --ssh home 2>&1) || true
+output=$(splot apply --node Cabin 2>&1) || true
+output="$output"$'\n'$(splot apply --node Home 2>&1) || true
 if [ "$(grep -c '^Confirmed' <<<"$output")" = 2 ] &&
 	run home 'ping -c 3 -W 2 10.100.0.2 >/dev/null' && run cabin 'ping -c 3 -W 2 10.100.0.1 >/dev/null'; then
 	pass "both applied and confirmed: the tunnel is up, each answers the other's ping"
@@ -173,7 +176,7 @@ clients:
     meshIp: 10.100.1.10
     psk: false
 EOF
-output=$(splot apply --node Home --ssh home 2>&1) || true
+output=$(splot apply --node Home 2>&1) || true
 if grep -q '^Checked: Cabin answers as before' <<<"$output" && grep -q '^Confirmed' <<<"$output"; then
 	pass "a change that keeps the tunnel: Cabin checked, the change confirmed"
 else
@@ -184,8 +187,8 @@ fi
 # fresh session, which fails, so Home puts back what it had, and the tunnel
 # works again.
 before=$(run home 'md5sum /etc/config/network')
-splot psk set --node Home Cabin --ssh home <<<"$(run home 'wg genpsk')" >/dev/null
-output=$(splot apply --node Home --ssh home 2>&1) && status=0 || status=$?
+splot psk set --node Home Cabin <<<"$(run home 'wg genpsk')" >/dev/null
+output=$(splot apply --node Home 2>&1) && status=0 || status=$?
 after=$(run home 'md5sum /etc/config/network')
 last=$(run home 'cat /tmp/splot/last' 2>&1) || true
 if [ "$status" -ne 0 ] &&

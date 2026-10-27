@@ -18,6 +18,7 @@ use crate::{
         port::{Port, ServicePort},
         protocol::Protocol,
         schema_helpers::OneOrManyUnique,
+        ssh::SshDestination,
         wan_via_target::WanViaTargets,
         wg_key::WgPublicKey,
     },
@@ -109,6 +110,8 @@ pub struct Platform {
     pub firewall: Option<Setting<FirewallProgram>>,
     pub dhcp: Option<Setting<DhcpProgram>>,
     pub dns: Option<Setting<DnsProgram>>,
+    /// Where splot reaches the node over ssh.
+    pub ssh: Option<SshDestination>,
 }
 
 #[derive(Deserialize, Debug)]

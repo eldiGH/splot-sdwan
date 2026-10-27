@@ -67,6 +67,7 @@ Which software a node runs, and which concerns splot manages there: per concern,
 platform:
   os: openwrt      # every concern managed with what OpenWrt ships...
   dhcp: none       # ...except DHCP, which you keep by hand
+  ssh: root@192.168.1.1   # where splot reaches it
 ```
 
 ```yaml
@@ -85,6 +86,7 @@ platform:
 | `firewall`  | `fw4` (OpenWrt), `nftables` (Linux), `none`        | OpenWrt: no (`fw4`); Linux: yes       | The mesh zone, the rules `allowFrom` grants, the port forwards `wan` makes. |
 | `dhcp`      | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | Static leases for devices and global clients.                               |
 | `dns`       | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | Nothing yet: splot generates no DNS config so far.                          |
+| `ssh`       | anything `ssh` takes                               | no                                    | Where splot reaches the node. See below.                                    |
 
 - **Every node says what it runs.** There's no default OS, and splot doesn't detect it: `splot check` validates every node without reaching any, and the config keeps its meaning when a node is reinstalled. On the node itself, splot does check it's what the config says, and refuses otherwise.
 - **On OpenWrt** a concern left out is managed with what OpenWrt ships. **On Linux** there's no usual setup to assume: every concern is written out, `none` included, and one left out is an error.
@@ -95,6 +97,7 @@ platform:
   - **`wireguard: none`** (the node is in the mesh, its WireGuard set up by hand): splot keeps no key there, so `splot init` has nothing to create, and before it writes anything it checks the node by your WireGuard instead: one of the peer's interfaces must have the node's `publicKey` (and be up). With the firewall managed by splot, there's no mesh zone, so mesh traffic arrives in whichever zone your interface is in, and nothing is forwarded from the WAN to a host reached over the mesh. The rules `allowFrom` grants are still written. Such a node can't have a [hub](#hub) (an error): hub clients are peers on splot's mesh interface. A WireGuard server of your own, with its own subnet, is a [zone](#zone) to splot.
   - `firewall: none` and `dhcp: none` together: splot manages the mesh alone.
 - **`splot check` warns**, once per node and concern, where a concern left alone leaves part of the config undone, naming what (the services whose `allowFrom` isn't enforced there, those not forwarded from its WAN) and what's yours to do. A concern left alone with nothing asked of it gets no warning.
+- **`ssh`** is where splot reaches the node over ssh: `root@192.168.1.1`, a host of your `~/.ssh/config`, `ssh://root@router:2222`, given to the system `ssh` as it is (so your ssh config and agent apply). It can't start with `-` (ssh would read it as an option) or hold spaces or control characters. A command on one node (`--node`) reaches it at `--ssh <destination>` when given, else here; with neither, or with `--local`, splot acts on the machine it runs on, and refuses if that isn't the node. An address over the mesh (its `meshIp`) works once the node is in the mesh, but not for a node that isn't yet, or whose tunnel is down.
 - **On Linux, WireGuard only so far:** splot runs the mesh with wg-quick through systemd (see [Linux](#linux)), and `splot apply` refuses a Linux node whose `firewall` or `dhcp` names a program until splot manages it there: set it to `none` to apply the rest. `splot check` validates the node either way.
 
 ### Linux

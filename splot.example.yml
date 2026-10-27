@@ -8,8 +8,10 @@
 # placeholders below (`Replace…PublicKeyAAAA…=`) are well-formed fakes: the file
 # passes `splot check` as-is, but none of them is anyone's real key.
 #
-# Each node runs `splot` with `--node <its name>`; before writing anything,
-# splot checks that the node's WireGuard key is the one in its `publicKey`.
+# splot acts on a node named with `--node <its name>`, reaching it over ssh at
+# its `platform.ssh` (`--ssh` for another destination, `--local` on the node
+# itself); before writing anything, splot checks that the node's WireGuard key
+# is the one in its `publicKey`.
 #
 # Addresses below use the RFC 5737 / RFC 1918 documentation ranges.
 
@@ -45,6 +47,10 @@ nodes:
     # `firewall: none`, for one, leaves the firewall to you.
     platform:
       os: openwrt
+      # Where splot reaches it over ssh: anything ssh takes, given to the
+      # system ssh as it is (so ~/.ssh/config and your ssh agent apply). Here
+      # its LAN address.
+      ssh: root@192.168.1.1
     publicKey: ReplaceHomePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 203.0.113.10
     listenPort: 51820
@@ -110,6 +116,9 @@ nodes:
   Cabin:
     platform:
       os: openwrt
+      # Over the mesh, at its meshIp: fine once it's in the mesh, but not for a
+      # node that isn't yet, or whose tunnel is down.
+      ssh: root@10.100.0.2
     publicKey: ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=
     # Its public IP changes, so peers dial it by name. The name must resolve
     # through public DNS, never through the mesh: the tunnel can't need itself
@@ -145,6 +154,8 @@ nodes:
       # Its DHCP is kept by hand: splot writes no leases there and leaves its
       # DHCP config alone.
       dhcp: none
+      # A host of your ~/.ssh/config (say, with a ProxyJump).
+      ssh: lake
     publicKey: ReplaceLakePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
     listenPort: 51820
     meshIp: 10.100.0.3
@@ -165,6 +176,7 @@ nodes:
       firewall: nftables
       dhcp: dnsmasq
       dns: dnsmasq
+      ssh: root@192.168.4.1
     publicKey: ReplaceBarnPublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 203.0.113.30
     listenPort: 51820
