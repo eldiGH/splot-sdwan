@@ -319,7 +319,7 @@ mod tests {
             .is_err()
         );
         // Without either, here.
-        assert!(matches!(reach(&[]).agent(None), Ok(Agent::Local)));
+        assert!(matches!(reach(&[]).agent(None), Ok(Agent::Local(_))));
     }
 
     #[test]

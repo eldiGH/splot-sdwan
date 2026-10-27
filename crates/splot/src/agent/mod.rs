@@ -18,7 +18,7 @@ use session::Session;
 /// Where the agent splot asks is.
 pub enum Agent {
     /// In splot: it acts on the machine splot runs on.
-    Local,
+    Local(splot_agent::Agent),
     /// On the node at `destination`, reached over ssh: it gets `agent`, or the
     /// one splot carries for its CPU. The session opens at the first request.
     Remote {
@@ -33,7 +33,7 @@ impl Agent {
     /// one in splot.
     pub fn new(ssh: Option<SshDestination>, agent: Option<PathBuf>) -> Self {
         match ssh {
-            None => Self::Local,
+            None => Self::Local(splot_agent::Agent::default()),
             Some(destination) => Self::Remote {
                 destination,
                 agent,
@@ -52,7 +52,7 @@ impl Agent {
     /// The agent's answer to `request`; its failure as an error.
     pub fn ask(&mut self, request: Request) -> anyhow::Result<Reply> {
         let reply = match self {
-            Self::Local => splot_agent::handle(request),
+            Self::Local(agent) => agent.handle(request),
             Self::Remote {
                 destination,
                 agent,

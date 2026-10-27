@@ -16,7 +16,7 @@ use splot_core::{
 };
 
 use crate::{key_store::KeyStore, node, secret};
-pub use apply::{Error, find_duplicate_sections};
+pub use apply::{Error, Prepared, find_duplicate_sections};
 use key_store::UciKeyStore;
 
 /// `rendered` with the node's secrets from `store` in their slots. Refuses when
@@ -73,10 +73,14 @@ pub fn dry_run(rendered: &Rendered) -> Result<String, Error> {
     apply::print(&confirmed(rendered)?)
 }
 
-/// Makes `rendered` live on this peer, under `run`. Returns the files that
-/// changed.
-pub fn apply(rendered: &Rendered, run: &Run) -> Result<Vec<String>, Error> {
-    apply::run(&confirmed(rendered)?, run)
+/// Begins `run` to make `rendered` live on this peer, changing nothing yet.
+pub fn prepare(rendered: &Rendered, run: &Run) -> Result<Prepared, Error> {
+    apply::prepare(&confirmed(rendered)?, run)
+}
+
+/// Makes what run `id` prepared live. Returns the files that changed.
+pub fn go(prepared: &Prepared, id: &str) -> Result<Vec<String>, Error> {
+    apply::go(prepared, id)
 }
 
 /// Puts back the uci files a run changed (see `apply::restore`).

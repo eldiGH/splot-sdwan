@@ -15,7 +15,7 @@ use crate::{
     node,
     secret::{self, MissingPsks},
 };
-pub use apply::Error;
+pub use apply::{Error, Prepared};
 use key_store::FileKeyStore;
 
 /// The mesh interface: the name it has on OpenWrt too.
@@ -59,12 +59,20 @@ pub fn dry_run(rendered: &Rendered) -> Result<String, Error> {
     }
 }
 
-/// Makes `rendered` live on this peer, under `run`. Returns what changed.
-pub fn apply(rendered: &Rendered, run: &Run) -> Result<Vec<String>, Error> {
+/// Begins `run` to make `rendered` live on this peer, changing nothing yet.
+pub fn prepare(rendered: &Rendered, run: &Run) -> Result<Prepared, Error> {
     match confirmed(rendered)? {
-        Some((config, text)) => apply::run_config(config, &text, run),
-        None => Ok(Vec::new()),
+        Some((config, text)) => apply::prepare(config, &text, run),
+        None => {
+            crate::run::begin(run, None)?;
+            Ok(Prepared::nothing())
+        }
     }
+}
+
+/// Makes what run `id` prepared live. Returns what changed.
+pub fn go(prepared: &Prepared, id: &str) -> Result<Vec<String>, Error> {
+    apply::go(prepared, id)
 }
 
 /// Puts back the wg-quick file a run changed (see `apply::restore`).

@@ -17,7 +17,7 @@ use crate::{
 
 /// The protocol's version: splot and an agent talk only when theirs are the
 /// same. A change to a request or a reply bumps it.
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 
 /// What splot asks of the agent.
 #[derive(Debug, Serialize, Deserialize)]
@@ -44,17 +44,21 @@ pub enum Request {
     /// What making the node hold `rendered` would change, changing nothing:
     /// `DryRun`.
     DryRun { rendered: Rendered },
-    /// Make the node hold `rendered`, under `run`: the node keeps what it had
-    /// and rolls back to it by itself unless the run is confirmed in time.
-    /// `Applied`; nothing changed, no run.
-    Apply { rendered: Rendered, run: Run },
+    /// Begin `run` to make the node hold `rendered`, changing nothing yet: the
+    /// node keeps what it had, notes which peers answer, and puts it back by
+    /// itself unless the run is confirmed in time. `Prepared`, with what the go
+    /// will change; a run begins even when that's nothing.
+    Prepare { rendered: Rendered, run: Run },
+    /// Apply what the run prepared, over the same session: `Applied`.
+    Go { run: String },
     /// Whether the node's peers that answered before the run still do:
     /// `Checked`.
     Check { run: String },
     /// Keep what the run applied: `Confirmed`. Too late once the node has
     /// rolled back.
     Confirm { run: String },
-    /// Put back what the node had before the run: `RolledBack`.
+    /// Put back what the node had before the run (nothing, before the go):
+    /// `RolledBack`.
     Rollback { run: String },
 }
 
@@ -94,8 +98,9 @@ pub enum Reply {
         created: bool,
     },
     Stored,
-    /// What changed; nothing when the node held the config already (and then
-    /// there's no run to confirm).
+    /// What the go will change; nothing when the node holds the config already.
+    Prepared(Vec<String>),
+    /// What changed.
     Applied(Vec<String>),
     /// Of the peers that answered before the run, those that still do, and
     /// those that don't.
@@ -235,7 +240,7 @@ mod tests {
             Request::DryRun {
                 rendered: openwrt(),
             },
-            Request::Apply {
+            Request::Prepare {
                 rendered: linux(),
                 run: Run {
                     id: "1729500000-42".to_owned(),
@@ -245,6 +250,9 @@ mod tests {
                         address: Ipv4Addr::new(10, 100, 0, 2),
                     }],
                 },
+            },
+            Request::Go {
+                run: "1729500000-42".to_owned(),
             },
             Request::Check {
                 run: "1729500000-42".to_owned(),
@@ -296,6 +304,7 @@ mod tests {
             },
             Reply::Confirmed,
             Reply::RolledBack,
+            Reply::Prepared(vec!["network".to_owned()]),
             Reply::Applied(vec!["network".to_owned()]),
             Reply::DryRun("# Nothing to change.\n".to_owned()),
             Reply::Failed(Failure(vec!["it failed".to_owned(), "because".to_owned()])),

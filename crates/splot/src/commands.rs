@@ -220,17 +220,29 @@ pub fn apply(
         confirm_within,
         probes,
     };
-    let changed = match agent.ask(Request::Apply {
+    let changes = match agent.ask(Request::Prepare {
         rendered,
         run: run.clone(),
+    })? {
+        Reply::Prepared(changes) => changes,
+        reply => return Err(agent::unexpected(reply)),
+    };
+    if changes.is_empty() {
+        // Nothing to apply: the run ends here.
+        match agent.ask(Request::Rollback { run: run.id })? {
+            Reply::RolledBack => {}
+            reply => return Err(agent::unexpected(reply)),
+        }
+        println!("Nothing changed.");
+        return Ok(());
+    }
+
+    let changed = match agent.ask(Request::Go {
+        run: run.id.clone(),
     })? {
         Reply::Applied(changed) => changed,
         reply => return Err(agent::unexpected(reply)),
     };
-    if changed.is_empty() {
-        println!("Nothing changed.");
-        return Ok(());
-    }
     println!("Applied and reloaded: {}", changed.join(", "));
 
     // The node keeps it once splot reaches it again (with a session of its

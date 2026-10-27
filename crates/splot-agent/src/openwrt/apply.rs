@@ -19,7 +19,7 @@ use splot_core::{
 
 use super::{
     diff,
-    reload::{self, Reload},
+    reload::{self, PeerUpdate, Reload},
     slot,
     uci::{self, UciBatchCommand},
 };
@@ -114,13 +114,23 @@ fn commit_failed_message(file: &str, committed: &[String], reverted: bool) -> St
     format!("committing {file} failed: {outcome} ({revert})")
 }
 
-/// Applies the rendered config under `run` and makes it live: refuses to start
-/// while its files have uncommitted changes, keeps the files that change for
-/// the run, stages what differs from the current config, commits those files,
-/// then reloads their services. When any of that fails, puts the files back.
-/// Returns the files that changed; none (and no run) when the config already
-/// matches.
-pub(super) fn run(rendered: &Rendered, run: &Run) -> Result<Vec<String>, Error> {
+/// What a run prepared: the changes its go applies.
+pub struct Prepared {
+    changeset: Changeset,
+    peer_update: PeerUpdate,
+}
+
+impl Prepared {
+    /// The files the go changes.
+    pub fn changes(&self) -> Vec<String> {
+        self.changeset.files.clone()
+    }
+}
+
+/// Begins `run` to apply the rendered config, changing nothing yet: refuses to
+/// start while its files have uncommitted changes, works out what differs from
+/// the current config, and keeps the files that change for the run.
+pub(super) fn prepare(rendered: &Rendered, run: &Run) -> Result<Prepared, Error> {
     // uci keeps uncommitted changes in one place per file, shared by every uci
     // user on the router: committing or reverting ours would commit or revert
     // theirs too. So don't start while there are any.
@@ -138,20 +148,40 @@ pub(super) fn run(rendered: &Rendered, run: &Run) -> Result<Vec<String>, Error> 
     let peer_update = reload::peer_update().map_err(Error::Netifd)?;
 
     let changeset = changeset(rendered)?;
+    let backup = if changeset.files.is_empty() {
+        None
+    } else {
+        let files = changeset
+            .files
+            .iter()
+            .map(|file| {
+                let path = uci::file_path(file);
+                let text = read_optional(&path).map_err(|err| Error::Backup(path.clone(), err))?;
+                Ok((path, text))
+            })
+            .collect::<Result<_, Error>>()?;
+        Some(Backup::OpenWrt { files })
+    };
+    run::begin(run, backup)?;
+
+    Ok(Prepared {
+        changeset,
+        peer_update,
+    })
+}
+
+/// Applies what run `id` prepared and makes it live: stages the changes,
+/// commits their files, then reloads their services. When any of that fails,
+/// puts the files back. Returns the files that changed.
+pub(super) fn go(prepared: &Prepared, id: &str) -> Result<Vec<String>, Error> {
+    run::go(id)?;
+    let Prepared {
+        changeset,
+        peer_update,
+    } = prepared;
     if changeset.files.is_empty() {
         return Ok(Vec::new());
     }
-
-    let backup = changeset
-        .files
-        .iter()
-        .map(|file| {
-            let path = uci::file_path(file);
-            let text = read_optional(&path).map_err(|err| Error::Backup(path.clone(), err))?;
-            Ok((path, text))
-        })
-        .collect::<Result<_, Error>>()?;
-    run::begin(run, Backup::OpenWrt { files: backup })?;
 
     let applied = changeset
         .apply()
@@ -160,7 +190,7 @@ pub(super) fn run(rendered: &Rendered, run: &Run) -> Result<Vec<String>, Error> 
             match Reload::new(
                 &changeset.files,
                 naming::mesh_interface().to_string(),
-                peer_update,
+                *peer_update,
             ) {
                 Some(reload) => reload.run().map_err(Error::from),
                 None => Ok(()),
@@ -168,13 +198,13 @@ pub(super) fn run(rendered: &Rendered, run: &Run) -> Result<Vec<String>, Error> 
         });
     if let Err(cause) = applied {
         let cause = Box::new(cause);
-        return Err(match run::rollback(&run.id) {
+        return Err(match run::rollback(id) {
             Ok(()) => Error::PutBack(cause),
             Err(rollback) => Error::NotPutBack { cause, rollback },
         });
     }
 
-    Ok(changeset.files)
+    Ok(changeset.files.clone())
 }
 
 /// Drops the sessions of the peers whose public keys are `keys`, from splot's

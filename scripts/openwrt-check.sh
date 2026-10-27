@@ -397,10 +397,13 @@ EOF
 	before=$(run "ls -i $files; md5sum $files")
 	output=$(splot --config "$work/splot.yml" apply --node Home 2>&1) || true
 	after=$(run "ls -i $files; md5sum $files")
-	if [ "$(printf '%s' "$output" | tail -1)" = "Nothing changed." ] && [ "$before" = "$after" ]; then
-		pass "second apply changes nothing, files untouched"
+	# Its run, with nothing to apply, ends at once.
+	if [ "$(printf '%s' "$output" | tail -1)" = "Nothing changed." ] && [ "$before" = "$after" ] &&
+		! run '[ -e /tmp/splot/run ]' && run 'grep -q cancelled /tmp/splot/last'; then
+		pass "second apply changes nothing, files untouched, its run ended"
 	else
-		fail "second apply changes nothing, files untouched" "$output"$'\n'"before: $before"$'\n'"after: $after"
+		fail "second apply changes nothing, files untouched, its run ended" \
+			"$output"$'\n'"before: $before"$'\n'"after: $after"$'\n'"$(run 'ls /tmp/splot; cat /tmp/splot/last' 2>&1)"
 	fi
 
 	# A peer change: Cabin's endpoint moves. WireGuard must see it without a reboot.

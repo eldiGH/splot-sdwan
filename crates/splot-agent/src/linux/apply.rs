@@ -361,18 +361,46 @@ fn changes(config: &WgQuickConfig, text: &str) -> Result<(bool, Vec<Step>, Live)
     Ok((file_changed, steps, live))
 }
 
-/// Writes `text`, the file with its secrets in, if it differs from what's
-/// there, then makes it live, under `run`: what the node had is kept, and put
-/// back when any of it fails. Returns what changed; nothing (and no run) when
-/// it all matches already.
-pub(super) fn run_config(
-    config: &WgQuickConfig,
-    text: &str,
-    run: &Run,
-) -> Result<Vec<String>, Error> {
+/// What a run prepared: the file its go writes, if it changes, and what
+/// systemd does after.
+pub struct Prepared {
+    /// The file with its secrets in; none when it doesn't change.
+    text: Option<String>,
+    /// The peers whose sessions go before a reload: their preshared key
+    /// changed.
+    fresh: Vec<String>,
+    steps: Vec<Step>,
+}
+
+impl Prepared {
+    /// Nothing to do.
+    pub(crate) fn nothing() -> Self {
+        Self {
+            text: None,
+            fresh: Vec::new(),
+            steps: Vec::new(),
+        }
+    }
+
+    /// What the go changes, as it reports it.
+    pub fn changes(&self) -> Vec<String> {
+        self.text
+            .as_ref()
+            .map(|_| PATH.to_owned())
+            .into_iter()
+            .chain(self.steps.iter().map(Step::done))
+            .collect()
+    }
+}
+
+/// Begins `run` to write `text`, the file with its secrets in, and make it
+/// live, changing nothing yet: works out whether the file changes and what
+/// systemd does after, and keeps what the node has for the run.
+pub(super) fn prepare(config: &WgQuickConfig, text: &str, run: &Run) -> Result<Prepared, Error> {
     let (file_changed, steps, live) = changes(config, text)?;
     if !file_changed && steps.is_empty() {
-        return Ok(Vec::new());
+        run::begin(run, None)?;
+        return Ok(Prepared::nothing());
     }
 
     let before = current()?;
@@ -388,32 +416,42 @@ pub(super) fn run_config(
         active: live.active,
         enabled: live.enabled,
     };
-    run::begin(run, backup)?;
+    run::begin(run, Some(backup))?;
 
-    let mut changed = Vec::new();
+    Ok(Prepared {
+        text: file_changed.then(|| text.to_owned()),
+        fresh,
+        steps,
+    })
+}
+
+/// Applies what run `id` prepared: writes the file, then has systemd make it
+/// live. When any of it fails, puts back what the node had. Returns what
+/// changed.
+pub(super) fn go(prepared: &Prepared, id: &str) -> Result<Vec<String>, Error> {
+    run::go(id)?;
+
     let applied = (|| {
-        if file_changed {
+        if let Some(text) = &prepared.text {
             file::write_private(Path::new(PATH), text).map_err(Error::Write)?;
-            changed.push(PATH.to_owned());
         }
-        for key in &fresh {
+        for key in &prepared.fresh {
             wg::remove_peer(INTERFACE, key).map_err(Error::FreshSession)?;
         }
-        for step in &steps {
+        for step in &prepared.steps {
             step.run()?;
-            changed.push(step.done());
         }
         Ok(())
     })();
     if let Err(cause) = applied {
         let cause = Box::new(cause);
-        return Err(match run::rollback(&run.id) {
+        return Err(match run::rollback(id) {
             Ok(()) => Error::PutBack(cause),
             Err(rollback) => Error::NotPutBack { cause, rollback },
         });
     }
 
-    Ok(changed)
+    Ok(prepared.changes())
 }
 
 /// Each peer's public key in a wg-quick file, and its pair's preshared key.
