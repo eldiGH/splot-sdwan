@@ -83,7 +83,7 @@ platform:
 | ----------- | -------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------- |
 | `os`        | `openwrt`, `linux`                                 | yes                                   | The node's operating system.                                                |
 | `wireguard` | `netifd` (OpenWrt), `wg-quick` (Linux), `none`     | OpenWrt: no (`netifd`); Linux: yes    | The mesh interface and its peers.                                           |
-| `firewall`  | `fw4` (OpenWrt), `nftables` (Linux), `none`        | OpenWrt: no (`fw4`); Linux: yes       | The mesh zone, the rules `allowFrom` grants, the port forwards `wan` makes. |
+| `firewall`  | `fw4` (OpenWrt), `nftables` (Linux), `none`        | OpenWrt: no (`fw4`); Linux: yes       | The mesh zone, access between zones (the rules `allowFrom` grants, a drop for the rest), the port forwards `wan` makes. See [Access between zones](#access-between-zones). |
 | `dhcp`      | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | Static leases for devices and global clients.                               |
 | `dns`       | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | Nothing yet: splot generates no DNS config so far.                          |
 | `ssh`       | anything `ssh` takes                               | no                                    | Where splot reaches the node. See below.                                    |
@@ -114,7 +114,7 @@ What a Linux node needs, and what splot does there:
 
 ## Zone
 
-A downstream network the router serves. Splot does **not** manage zones in OpenWRT — the operator configures them — splot only references them when generating rules. The map key is the OpenWRT zone name on that router.
+A downstream network the router serves: one subnet, a LAN or a VLAN. Splot does **not** create zones in OpenWRT — the operator configures them — it decides what may cross between them (see [Access between zones](#access-between-zones)). The map key is the OpenWRT zone name on that router. No VLAN ID goes here: nothing splot generates depends on one.
 
 ```yaml
 lan:
@@ -129,6 +129,8 @@ lan:
 | `address` | CIDR (`x.x.x.x/prefix`)   | yes      | The router's IP and subnet on this zone.                            |
 | `devices` | map of name → ZoneDevice  | no       | Known devices on this zone.                                         |
 | `tags`    | string or list of strings | no       | Explicit tags assigned to this zone. Resolves to the zone's subnet. |
+
+Inside a zone everything reaches everything: that traffic never passes the router, so splot can't filter it. A device that needs protecting from its neighbours needs a zone of its own.
 
 WAN zones are not modeled here — they are not splot zones. If a router has a WAN interface that needs port forwards, declare its OpenWRT zone name in the node's `wanZone` field. See [WAN exposure](#wan-exposure).
 
@@ -255,7 +257,7 @@ Every WireGuard pair (node and node, node and client) uses a preshared key (PSK)
 
 ## Service
 
-A network service that should be reachable from specific parts of the mesh, externally via WAN, or both. Nothing else is: where splot runs a node's firewall, what arrives over the mesh is dropped unless a service lets it through. One exception: every WireGuard peer of a node (other nodes, global clients, hub clients) may ping the node's own mesh IP, and only that (echo requests to the router itself, nothing forwarded). splot uses it to check a node's tunnels after it applies a change.
+A network service that should be reachable from specific parts of the mesh, externally via WAN, or both. Nothing else is: where splot runs a node's firewall, what crosses between its zones, over the mesh or at the site, is dropped unless a service lets it through (see [Access between zones](#access-between-zones)). One exception: every WireGuard peer of a node (other nodes, global clients, hub clients) may ping the node's own mesh IP, and only that (echo requests to the router itself, nothing forwarded). splot uses it to check a node's tunnels after it applies a change.
 
 ```yaml
 ssh:
@@ -383,6 +385,52 @@ clients:
 ### Security note
 
 The splot WAN model is intentionally minimal: a service is either WAN-exposed or it isn't, with optional CIDR-based source filtering. No splot identifier participates in WAN allowlisting. The principle is to minimize external attack surface — every `wan` field in `splot.yml` is a publicly visible port, easy to audit with `grep wan splot.yml`.
+
+---
+
+## Access between zones
+
+Where splot runs a node's firewall, it decides what crosses between zones, at one site and over the mesh alike: what a service's `allowFrom` grants gets through, and nothing else. Whether a source is at the same site or across the mesh changes where splot puts the rule, never what `allowFrom` means.
+
+### What splot can enforce
+
+- **A zone is the smallest unit.** Inside a zone (one subnet) everything reaches everything, and that traffic never passes the router. Sources in a service's own zone get no rule: `allowFrom: admin` on a device doesn't keep out the other devices of its zone. A device that needs protecting from its neighbours needs a zone of its own (a VLAN).
+- **Only what passes a node splot manages.** Mesh traffic always does (it goes through the node's WireGuard), so splot enforces mesh access even on a node that isn't its site's router. Traffic between two zones of a site does only when the node is their router: a switch must not route between VLANs.
+- **No VLAN IDs, no L2 across the mesh.** A VLAN ID is local to its site, and nothing splot generates depends on one. Zones at different sites are grouped with tags (`iot`). splot routes between distinct subnets; it never bridges a network across the mesh.
+
+### Who owns what
+
+| You (the router's own config) | splot |
+| --- | --- |
+| VLANs, switch ports, access points | access between zones, local and over the mesh (`services`) |
+| internet access per zone, NAT, PPPoE | the drop between its zones, for everything no service grants |
+| DHCP pools | the WireGuard mesh: sites, global clients, hub clients |
+| the WAN zone, zones `splot.yml` doesn't declare | static leases (DNS records planned) |
+| what reaches the router from your zones (DHCP, DNS, LuCI, ssh from the LAN) | port forwards (`wan`) |
+
+### The default policy
+
+A node's splot zones are its mesh zone and every zone `splot.yml` declares for it. splot never relies on a platform's default (fw4's `defaults`, an "allow LAN to any" rule): the same `splot.yml` means the same on every platform.
+
+- **Between splot zones, and in and out of the mesh zone,** every packet ends in splot's own verdict: accepted by a rule a service grants, else dropped.
+- **Dropped, not rejected:** what's forbidden gets no answer, so a compromised device can't map the network quickly. Logging splot's drops is planned.
+- **Left alone:** traffic to and from the WAN zone and the zones `splot.yml` doesn't declare, and what reaches the router from your zones. splot's own exceptions: anything leaving the mesh zone (to the WAN too), the forwards a service's `wan` asks for, and the WireGuard listen port on the WAN of a node with an `endpoint`.
+- **Ping** between zones is dropped like anything else: a ping sweep is how mapping a network starts. Replies, and the ICMP errors of a connection that was let through (path MTU, unreachable, traceroute), always pass. Every WireGuard peer of a node may ping the node's mesh IP (see [Service](#service)).
+
+What follows:
+
+- **No internet through the mesh:** what comes from the mesh is dropped on its way to the WAN. Using a node as the way out for clients is planned.
+- **Your `forwarding` sections between splot zones stop working:** fw4 checks rules before forwardings, so splot's drop wins. Declare the flows they carried as services (`allowFrom: Home.lan` for a whole zone).
+- **Switching it on stops every flow nobody declared**, all at once. Move a site over with `firewall: none` first (see [Platform](#platform)): declare its flows, then let splot run its firewall.
+- A node that isn't its zones' router enforces only what passes through it.
+
+### Not yet
+
+splot doesn't enforce all of this yet. On Linux it doesn't run the firewall at all so far (see [Platform](#platform)). On OpenWrt today:
+
+- What arrives over the mesh for the router itself is dropped, and so is what's forwarded from the mesh back into it. But fw4 applies a zone's `forward` policy only within the zone: traffic between the mesh and your zones (either way), from the mesh to the WAN, and between your own zones, ends in fw4's `defaults` and your `forwarding` sections when no rule of splot's accepts it. splot's rules only add to what those allow (stock OpenWrt's `defaults` reject the rest).
+- splot's rules name no zone (`src` and `dest` are `*`), so they apply to forwarded traffic only: a service on the router itself (`node.services`) isn't reached over the mesh.
+- The WireGuard listen port isn't opened: add a rule of your own that accepts UDP on the node's `listenPort` from the WAN.
 
 ---
 
