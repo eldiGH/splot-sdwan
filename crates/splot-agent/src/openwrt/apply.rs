@@ -7,13 +7,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use splot_core::protocol::Run;
+use splot_core::protocol::{Changes, Run};
 
 use splot_core::{
     protocol::openwrt::Rendered,
     uci::{
         export::{self, ParseError},
         naming,
+        slot::Slot,
     },
 };
 
@@ -118,12 +119,13 @@ fn commit_failed_message(file: &str, committed: &[String], reverted: bool) -> St
 pub struct Prepared {
     changeset: Changeset,
     peer_update: PeerUpdate,
+    changes: Changes,
 }
 
 impl Prepared {
-    /// The files the go changes.
-    pub fn changes(&self) -> Vec<String> {
-        self.changeset.files.clone()
+    /// What the go changes, as the dry run shows it.
+    pub fn changes(&self) -> &Changes {
+        &self.changes
     }
 }
 
@@ -165,6 +167,7 @@ pub(super) fn prepare(rendered: &Rendered, run: &Run) -> Result<Prepared, Error>
     run::begin(run, backup)?;
 
     Ok(Prepared {
+        changes: described(&changeset, peer_update, &rendered.secrets),
         changeset,
         peer_update,
     })
@@ -178,6 +181,7 @@ pub(super) fn go(prepared: &Prepared, id: &str) -> Result<Vec<String>, Error> {
     let Prepared {
         changeset,
         peer_update,
+        changes,
     } = prepared;
     if changeset.files.is_empty() {
         return Ok(Vec::new());
@@ -204,7 +208,7 @@ pub(super) fn go(prepared: &Prepared, id: &str) -> Result<Vec<String>, Error> {
         });
     }
 
-    Ok(changeset.files.clone())
+    Ok(changes.summary.clone())
 }
 
 /// Drops the sessions of the peers whose public keys are `keys`, from splot's
@@ -265,20 +269,25 @@ pub(super) fn restore(files: &[(PathBuf, Option<String>)]) -> Result<(), Error> 
     Ok(())
 }
 
-/// What `run` would send to uci, and the reload after it, as the dry run shows
-/// it. The secrets are in the rendered config, so the diff is exact; they're
-/// shown as their placeholders.
-pub(super) fn print(rendered: &Rendered) -> Result<String, Error> {
+/// What `go` would change: the files, and what it would send to uci and the
+/// reload after it, as the dry run shows it.
+pub(super) fn print(rendered: &Rendered) -> Result<Changes, Error> {
     let peer_update = reload::peer_update().map_err(Error::Netifd)?;
     let changeset = changeset(rendered)?;
 
+    Ok(described(&changeset, peer_update, &rendered.secrets))
+}
+
+/// What `changeset` changes, and the reload after it. The secrets are in it,
+/// so the diff is exact; they're shown as their placeholders (`secrets`).
+fn described(changeset: &Changeset, peer_update: PeerUpdate, secrets: &[Slot]) -> Changes {
     if changeset.files.is_empty() {
-        return Ok("# Nothing to change.\n".to_owned());
+        return Changes::none();
     }
 
     let mut text = String::new();
     for command in changeset.commands() {
-        text.push_str(&format!("{}\n", slot::masked(command, &rendered.secrets)));
+        text.push_str(&format!("{}\n", slot::masked(command, secrets)));
     }
 
     // As comments, so the output stays a valid `uci batch` script.
@@ -293,7 +302,10 @@ pub(super) fn print(rendered: &Rendered) -> Result<String, Error> {
         }
     }
 
-    Ok(text)
+    Changes {
+        summary: changeset.files.clone(),
+        text,
+    }
 }
 
 /// What turns the current config into the rendered one: for every file, the

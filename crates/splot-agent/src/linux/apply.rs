@@ -15,7 +15,7 @@ use std::{
 
 use serde::{Deserialize, de::DeserializeOwned};
 
-use splot_core::protocol::{Run, linux::WgQuickConfig};
+use splot_core::protocol::{Changes, Run, linux::WgQuickConfig};
 
 use super::{INTERFACE, file};
 use crate::{
@@ -370,6 +370,7 @@ pub struct Prepared {
     /// changed.
     fresh: Vec<String>,
     steps: Vec<Step>,
+    changes: Changes,
 }
 
 impl Prepared {
@@ -379,17 +380,13 @@ impl Prepared {
             text: None,
             fresh: Vec::new(),
             steps: Vec::new(),
+            changes: Changes::none(),
         }
     }
 
-    /// What the go changes, as it reports it.
-    pub fn changes(&self) -> Vec<String> {
-        self.text
-            .as_ref()
-            .map(|_| PATH.to_owned())
-            .into_iter()
-            .chain(self.steps.iter().map(Step::done))
-            .collect()
+    /// What the go changes, as the dry run shows it.
+    pub fn changes(&self) -> &Changes {
+        &self.changes
     }
 }
 
@@ -421,6 +418,7 @@ pub(super) fn prepare(config: &WgQuickConfig, text: &str, run: &Run) -> Result<P
     Ok(Prepared {
         text: file_changed.then(|| text.to_owned()),
         fresh,
+        changes: described(config, file_changed, &steps),
         steps,
     })
 }
@@ -451,7 +449,7 @@ pub(super) fn go(prepared: &Prepared, id: &str) -> Result<Vec<String>, Error> {
         });
     }
 
-    Ok(prepared.changes())
+    Ok(prepared.changes.summary.clone())
 }
 
 /// Each peer's public key in a wg-quick file, and its pair's preshared key.
@@ -517,13 +515,20 @@ pub(super) fn restore(file: Option<&str>, active: bool, enabled: bool) -> Result
     Ok(())
 }
 
-/// What `run_config` would do, as the dry run shows it: the file, masked, if
-/// it changes, and the systemd steps after it.
-pub(super) fn print(config: &WgQuickConfig, text: &str) -> Result<String, Error> {
+/// What `go` would do: the file, if it changes, and the systemd steps after
+/// it.
+pub(super) fn print(config: &WgQuickConfig, text: &str) -> Result<Changes, Error> {
     let (file_changed, steps, _) = changes(config, text)?;
 
+    Ok(described(config, file_changed, &steps))
+}
+
+/// What writing the file (when it changes) and `steps` change: in a few words,
+/// as the go reports it, and as the dry run shows it, the file's secrets as
+/// their placeholders.
+fn described(config: &WgQuickConfig, file_changed: bool, steps: &[Step]) -> Changes {
     if !file_changed && steps.is_empty() {
-        return Ok("# Nothing to change.\n".to_owned());
+        return Changes::none();
     }
 
     let mut shown = String::new();
@@ -533,12 +538,19 @@ pub(super) fn print(config: &WgQuickConfig, text: &str) -> Result<String, Error>
     }
     if !steps.is_empty() {
         shown.push_str("# Then splot runs:\n");
-        for step in &steps {
+        for step in steps {
             shown.push_str(&format!("#   {step}\n"));
         }
     }
 
-    Ok(shown)
+    Changes {
+        summary: file_changed
+            .then(|| PATH.to_owned())
+            .into_iter()
+            .chain(steps.iter().map(Step::done))
+            .collect(),
+        text: shown,
+    }
 }
 
 #[cfg(test)]

@@ -17,7 +17,7 @@ use crate::{
 
 /// The protocol's version: splot and an agent talk only when theirs are the
 /// same. A change to a request or a reply bumps it.
-pub const PROTOCOL: u32 = 4;
+pub const PROTOCOL: u32 = 5;
 
 /// What splot asks of the agent.
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,12 +42,13 @@ pub enum Request {
         key: WgPresharedKey,
     },
     /// What making the node hold `rendered` would change, changing nothing:
-    /// `DryRun`.
+    /// `DryRun`, as `Prepare` would find it.
     DryRun { rendered: Rendered },
     /// Begin `run` to make the node hold `rendered`, changing nothing yet: the
     /// node keeps what it had, notes which peers answer, and puts it back by
     /// itself unless the run is confirmed in time. `Prepared`, with what the go
-    /// will change; a run begins even when that's nothing.
+    /// will change, as the dry run shows it; a run begins even when that's
+    /// nothing.
     Prepare { rendered: Rendered, run: Run },
     /// Apply what the run prepared, over the same session: `Applied`.
     Go { run: String },
@@ -58,7 +59,8 @@ pub enum Request {
     /// rolled back.
     Confirm { run: String },
     /// Put back what the node had before the run (nothing, before the go):
-    /// `RolledBack`.
+    /// `RolledBack`, also when it's put back already. Refused once it's
+    /// confirmed.
     Rollback { run: String },
 }
 
@@ -99,7 +101,7 @@ pub enum Reply {
     },
     Stored,
     /// What the go will change; nothing when the node holds the config already.
-    Prepared(Vec<String>),
+    Prepared(Changes),
     /// What changed.
     Applied(Vec<String>),
     /// Of the peers that answered before the run, those that still do, and
@@ -110,10 +112,33 @@ pub enum Reply {
     },
     Confirmed,
     RolledBack,
-    /// What apply would change, as the dry run shows it.
-    DryRun(String),
+    /// What apply would change.
+    DryRun(Changes),
     /// Why the agent didn't do what it was asked.
     Failed(Failure),
+}
+
+/// What making a node hold its rendered config changes there: each change in a
+/// few words (a file, what systemd does), as apply reports it, and in full, as
+/// the dry run shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Changes {
+    pub summary: Vec<String>,
+    pub text: String,
+}
+
+impl Changes {
+    /// Nothing changes.
+    pub fn none() -> Self {
+        Self {
+            summary: Vec::new(),
+            text: "# Nothing to change.\n".to_owned(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.summary.is_empty()
+    }
 }
 
 /// The config splot rendered for a node, for the platform it runs.
@@ -304,9 +329,12 @@ mod tests {
             },
             Reply::Confirmed,
             Reply::RolledBack,
-            Reply::Prepared(vec!["network".to_owned()]),
+            Reply::Prepared(Changes {
+                summary: vec!["network".to_owned()],
+                text: "set network.spl_mesh=interface\n".to_owned(),
+            }),
             Reply::Applied(vec!["network".to_owned()]),
-            Reply::DryRun("# Nothing to change.\n".to_owned()),
+            Reply::DryRun(Changes::none()),
             Reply::Failed(Failure(vec!["it failed".to_owned(), "because".to_owned()])),
         ] {
             assert_eq!(sent(&reply), reply);

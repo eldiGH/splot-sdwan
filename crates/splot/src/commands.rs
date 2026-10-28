@@ -209,7 +209,7 @@ pub fn apply(
 
     if dry_run {
         match agent.ask(Request::DryRun { rendered })? {
-            Reply::DryRun(text) => print!("{text}"),
+            Reply::DryRun(changes) => print!("{}", changes.text),
             reply => return Err(agent::unexpected(reply)),
         }
         return Ok(());

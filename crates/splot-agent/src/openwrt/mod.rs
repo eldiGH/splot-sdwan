@@ -11,7 +11,7 @@ mod uci;
 use std::path::PathBuf;
 
 use splot_core::{
-    protocol::{Run, openwrt::Rendered},
+    protocol::{Changes, Run, openwrt::Rendered},
     uci::section::Value,
 };
 
@@ -67,9 +67,8 @@ fn confirmed(rendered: &Rendered) -> Result<Rendered, Error> {
     }
 }
 
-/// What `apply` would change on this peer, as the dry run shows it, changing
-/// nothing.
-pub fn dry_run(rendered: &Rendered) -> Result<String, Error> {
+/// What `apply` would change on this peer, changing nothing.
+pub fn dry_run(rendered: &Rendered) -> Result<Changes, Error> {
     apply::print(&confirmed(rendered)?)
 }
 

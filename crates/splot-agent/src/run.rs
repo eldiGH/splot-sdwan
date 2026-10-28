@@ -107,6 +107,8 @@ pub enum Error {
     NotPrepared { id: String },
     #[error("run {id} isn't applied on this peer yet")]
     NotApplied { id: String },
+    #[error("run {id} is confirmed on this peer: it keeps the change")]
+    Confirmed { id: String },
     #[error("can't keep the run's state in {}", DIR)]
     Io(#[from] io::Error),
     #[error("the run's state in {} can't be read", DIR)]
@@ -235,6 +237,7 @@ fn gone(dir: &Path, id: &str) -> Error {
     match fs::read_to_string(last(dir)) {
         Ok(last) if last.starts_with(&format!("{id} rolled back")) => Error::TooLate { id },
         Ok(last) if last.starts_with(&format!("{id} cancelled")) => Error::Cancelled { id },
+        Ok(last) if last.starts_with(&format!("{id} confirmed")) => Error::Confirmed { id },
         _ => Error::NoSuchRun { id },
     }
 }
@@ -317,7 +320,9 @@ fn confirm_in(dir: &Path, id: &str) -> Result<(), Error> {
 }
 
 /// Puts back what the node had before run `id`, now: nothing, when what it
-/// prepared isn't applied yet (the run is cancelled).
+/// prepared isn't applied yet (the run is cancelled). Asked again, or while
+/// someone else puts it back, it answers the same: it is put back. Refused
+/// once the run is confirmed.
 pub fn rollback(id: &str) -> Result<(), Error> {
     rollback_in(Path::new(DIR), id, Backup::restore)
 }
@@ -327,7 +332,11 @@ fn rollback_in(
     id: &str,
     restore: impl FnOnce(&Backup) -> Result<(), Box<dyn std::error::Error + Send + Sync>>,
 ) -> Result<(), Error> {
-    let info = this_run(dir, id)?;
+    let info = match this_run(dir, id) {
+        Ok(info) => info,
+        Err(Error::TooLate { .. } | Error::Cancelled { .. }) => return Ok(()),
+        Err(err) => return Err(err),
+    };
     // Prepared first: a go between the two moves leaves it applied, and so
     // rolled back here, never applied with nobody to put it back.
     if decide(dir, PREPARED, CANCELLED)? {
@@ -335,7 +344,12 @@ fn rollback_in(
         return Ok(());
     }
     if !decide(dir, ARMED, ROLLING_BACK)? {
-        return Err(Error::TooLate { id: id.to_owned() });
+        // Decided already: kept, or being put back.
+        return if dir.join(CONFIRMED).exists() {
+            Err(Error::Confirmed { id: id.to_owned() })
+        } else {
+            Ok(())
+        };
     }
     let restored = info.backup.as_ref().map_or(Ok(()), restore);
     end(dir, id, "rolled back");
@@ -571,6 +585,54 @@ mod tests {
     }
 
     #[test]
+    fn a_rollback_asked_again_says_its_run_is_put_back() {
+        // Applied: put back once, however often it's asked.
+        let temp = TempDir::new("run-rollback-again");
+        let dir = applied(&temp, "r1", 120);
+        let restored = Cell::new(0);
+        let restore = |_: &Backup| {
+            restored.set(restored.get() + 1);
+            Ok(())
+        };
+        rollback_in(&dir, "r1", restore).unwrap();
+        rollback_in(&dir, "r1", restore).unwrap();
+        assert_eq!(restored.get(), 1);
+
+        // Prepared: cancelled, however often it's asked.
+        let temp = TempDir::new("run-cancel-again");
+        let dir = begun(&temp, "r1", 120);
+        rollback_in(&dir, "r1", |_| panic!("restored")).unwrap();
+        rollback_in(&dir, "r1", |_| panic!("restored")).unwrap();
+
+        // Being put back by someone else (the watchdog): it is.
+        let temp = TempDir::new("run-rollback-elsewhere");
+        let dir = applied(&temp, "r1", 120);
+        assert!(decide(&dir, ARMED, ROLLING_BACK).unwrap());
+        rollback_in(&dir, "r1", |_| panic!("restored twice")).unwrap();
+
+        // A run the node never had is still refused.
+        let err = rollback_in(&dir, "r0", |_| panic!("restored")).unwrap_err();
+        assert!(matches!(err, Error::NoSuchRun { .. }), "{err}");
+    }
+
+    #[test]
+    fn a_confirmed_run_isnt_put_back() {
+        // Confirmed, its directory not yet removed.
+        let temp = TempDir::new("run-confirmed-rollback");
+        let dir = applied(&temp, "r1", 120);
+        assert!(decide(&dir, ARMED, CONFIRMED).unwrap());
+        let err = rollback_in(&dir, "r1", |_| panic!("restored")).unwrap_err();
+        assert!(matches!(err, Error::Confirmed { .. }), "{err}");
+
+        // Confirmed and ended.
+        let temp = TempDir::new("run-confirmed-ended");
+        let dir = applied(&temp, "r1", 120);
+        confirm_in(&dir, "r1").unwrap();
+        let err = rollback_in(&dir, "r1", |_| panic!("restored")).unwrap_err();
+        assert!(matches!(err, Error::Confirmed { .. }), "{err}");
+    }
+
+    #[test]
     fn the_outcome_is_decided_once() {
         // The watchdog rolled back first: the confirm is too late.
         let temp = TempDir::new("run-race");
@@ -579,12 +641,12 @@ mod tests {
         let err = confirm_in(&dir, "r1").unwrap_err();
         assert!(matches!(err, Error::TooLate { .. }), "{err}");
 
-        // Confirmed first: the rollback is too late, and restores nothing.
+        // Confirmed first: the rollback is refused, and restores nothing.
         let temp = TempDir::new("run-race-2");
         let dir = applied(&temp, "r1", 120);
         assert!(decide(&dir, ARMED, CONFIRMED).unwrap());
         let err = rollback_in(&dir, "r1", |_| panic!("restored")).unwrap_err();
-        assert!(matches!(err, Error::TooLate { .. }), "{err}");
+        assert!(matches!(err, Error::Confirmed { .. }), "{err}");
 
         // Cancelled first: the go is too late, and applies nothing.
         let temp = TempDir::new("run-race-3");

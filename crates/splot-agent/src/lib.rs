@@ -20,7 +20,7 @@ use splot_core::{
     host::HostRef,
     identifier::Identifier,
     os::Os,
-    protocol::{Failure, PROTOCOL, Rendered, Reply, Request, Run},
+    protocol::{Changes, Failure, PROTOCOL, Rendered, Reply, Request, Run},
     wg_key::{WgPresharedKey, WgPublicKey},
 };
 
@@ -70,7 +70,7 @@ enum Prepared {
 
 impl Prepared {
     /// What the go will change.
-    fn changes(&self) -> Vec<String> {
+    fn changes(&self) -> &Changes {
         match self {
             Self::OpenWrt(prepared) => prepared.changes(),
             Self::Linux(prepared) => prepared.changes(),
@@ -124,7 +124,7 @@ impl Agent {
             Rendered::OpenWrt(rendered) => Prepared::OpenWrt(openwrt::prepare(rendered, run)?),
             Rendered::Linux(rendered) => Prepared::Linux(linux::prepare(rendered, run)?),
         };
-        let changes = prepared.changes();
+        let changes = prepared.changes().clone();
         self.prepared = Some((run.id.clone(), prepared));
 
         Ok(Reply::Prepared(changes))

@@ -6,7 +6,7 @@ mod file;
 pub(crate) mod key_store;
 
 use splot_core::protocol::{
-    Run,
+    Changes, Run,
     linux::{Rendered, WgQuickConfig},
 };
 
@@ -52,10 +52,10 @@ fn confirmed(rendered: &Rendered) -> Result<Option<(&WgQuickConfig, String)>, Er
 
 /// What `apply` would change on this peer, as the dry run shows it, changing
 /// nothing.
-pub fn dry_run(rendered: &Rendered) -> Result<String, Error> {
+pub fn dry_run(rendered: &Rendered) -> Result<Changes, Error> {
     match confirmed(rendered)? {
         Some((config, text)) => apply::print(config, &text),
-        None => Ok("# Nothing to change.\n".to_owned()),
+        None => Ok(Changes::none()),
     }
 }
 

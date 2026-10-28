@@ -234,7 +234,7 @@ mod tests {
 while IFS= read -r line; do
     case $line in
     '{{"Hello"'*) echo '{hello}' ;;
-    *) printf '{{"DryRun":"%s"}}\n' "$0" ;;
+    *) printf '{{"DryRun":{{"summary":[],"text":"%s"}}}}\n' "$0" ;;
     esac
 done
 "#
@@ -259,7 +259,7 @@ done
         };
 
         // A copy of its own in /tmp, which only its owner may run or read.
-        let ran_from = PathBuf::from(ran_from);
+        let ran_from = PathBuf::from(ran_from.text);
         assert!(ran_from.starts_with("/tmp"), "{}", ran_from.display());
         assert!(
             ran_from
