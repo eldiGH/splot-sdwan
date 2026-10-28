@@ -1,10 +1,11 @@
-//! A run across the mesh: every node splot manages, each reached at its
-//! platform.ssh, all or nothing. splot plans every node and asks before it
-//! applies anything. Then it prepares every node (each keeps what it has and
-//! starts its own rollback timer), and once all are prepared, gives each the
-//! go, all at once. It reaches every node again and has each check its peers:
-//! when all still answer, every node is confirmed; anything else, every node
-//! puts back what it had.
+//! A run, all or nothing: across the mesh (`splot apply`), every node splot
+//! manages, each reached at its platform.ssh; on one node (`--node`), the same
+//! run on a mesh of one. splot plans every node and asks before it applies
+//! anything. Then it prepares every node (each keeps what it has and starts its
+//! own rollback timer), and once all are prepared, gives each the go, all at
+//! once. It reaches every node again and has each check its peers: when all
+//! still answer, every node is confirmed; anything else, every node puts back
+//! what it had.
 
 use std::{
     io::{self, IsTerminal, Write},
@@ -19,7 +20,7 @@ use crate::{
     agent::{self, Agent},
     backend, commands,
     model::Network,
-    types::{identifier::Identifier, ssh::SshDestination},
+    types::identifier::Identifier,
 };
 
 /// How long after a node's deadline splot looks at it again: the time its
@@ -28,10 +29,9 @@ const AFTER_DEADLINE: Duration = Duration::from_secs(10);
 /// Between two tries to reach a node again to confirm it.
 const RETRY: Duration = Duration::from_secs(2);
 
-/// A node in the run: what splot asks of it, and where it's reached.
+/// A node in the run: what splot asks of it.
 struct Member {
     name: Identifier,
-    destination: SshDestination,
     rendered: Rendered,
     probes: Vec<Probe>,
 }
@@ -60,12 +60,37 @@ pub fn apply(
         println!("splot manages nothing on any node.");
         return Ok(());
     }
+
+    run(Mesh::new(members), dry_run, confirm_within, yes)
+}
+
+/// `splot apply --node`: the same run, on `node` alone, reached through
+/// `agent`.
+pub fn apply_node(
+    network: &Network,
+    node: &Identifier,
+    agent: Agent,
+    dry_run: bool,
+    confirm_within: u32,
+    yes: bool,
+) -> anyhow::Result<()> {
+    let Some(member) = member(network, node)? else {
+        println!("splot manages nothing on {node}.");
+        return Ok(());
+    };
+    let mesh = Mesh::new(vec![(member, agent)]);
+
+    run(mesh, dry_run, confirm_within, yes)
+}
+
+/// The run on every node of `mesh`: each holds what the config says, or none
+/// does.
+fn run(mut mesh: Mesh, dry_run: bool, confirm_within: u32, yes: bool) -> anyhow::Result<()> {
     if !dry_run && !yes && !io::stdin().is_terminal() {
         bail!(
-            "a run across the mesh asks before it applies, and there's no terminal to ask on: give --yes to apply without asking"
+            "splot asks before it applies, and there's no terminal to ask on: give --yes to apply without asking"
         );
     }
-    let mut mesh = Mesh::new(members);
 
     // Every node reached, checked to be the node, and asked what it would
     // change, before anything changes.
@@ -79,7 +104,10 @@ pub fn apply(
     });
     let planned = mesh.all(
         planned,
-        "splot couldn't plan every node, so it changed nothing",
+        &mesh.worded(
+            |node| format!("splot couldn't plan {node}, so it changed nothing"),
+            "splot couldn't plan every node, so it changed nothing",
+        ),
     )?;
 
     print!("{}", plan_view(&mesh.members, &planned));
@@ -116,13 +144,13 @@ pub fn apply(
     });
     let mut problems = Vec::new();
     for (index, result) in prepared.into_iter().enumerate() {
-        let name = &mesh.members[index].name;
         match result {
             Ok(changes) => {
                 stages[index] = Stage::Prepared;
                 if changes != planned[index] {
-                    problems.push(format!(
-                        "{name}: what it would change isn't the plan any more"
+                    problems.push((
+                        index,
+                        "what it would change isn't the plan any more".to_owned(),
                     ));
                 }
             }
@@ -131,14 +159,17 @@ pub fn apply(
                 if agent::lost(&err) {
                     stages[index] = Stage::Prepared;
                 }
-                problems.push(format!("{name}: {err:#}"));
+                problems.push((index, format!("{err:#}")));
             }
         }
     }
     if !problems.is_empty() {
         mesh.put_back(&id, &stages, &planned, deadline);
-        bail!(listed(
-            "splot couldn't prepare every node as planned, so no node changed anything",
+        bail!(mesh.listed(
+            &mesh.worded(
+                |node| format!("splot couldn't prepare {node} as planned, so it changed nothing"),
+                "splot couldn't prepare every node as planned, so no node changed anything",
+            ),
             &problems
         ));
     }
@@ -152,18 +183,14 @@ pub fn apply(
         },
     );
     stages.fill(Stage::Applied);
-    let problems: Vec<String> = gone
-        .iter()
-        .zip(&mesh.members)
-        .filter_map(|(result, member)| {
-            let err = result.as_ref().err()?;
-            Some(format!("{}: {err:#}", member.name))
-        })
-        .collect();
+    let problems = errors(&gone);
     if !problems.is_empty() {
         mesh.put_back(&id, &stages, &planned, deadline);
-        bail!(listed(
-            "applying failed on a node, so no node kept the change",
+        bail!(mesh.listed(
+            &mesh.worded(
+                |node| format!("applying failed on {node}, so it didn't keep the change"),
+                "applying failed on a node, so no node kept the change",
+            ),
             &problems
         ));
     }
@@ -202,42 +229,44 @@ pub fn apply(
     }
     if !cut.is_empty() || !unchecked.is_empty() {
         mesh.put_back(&id, &stages, &planned, deadline);
-        bail!("{}, so no node kept it", unhealthy(&cut, &unchecked));
+        bail!(
+            "{}, so {}",
+            unhealthy(&cut, &unchecked),
+            mesh.worded(|node| format!("{node} didn't keep it"), "no node kept it")
+        );
     }
 
     // Every node confirmed.
     let confirmed = mesh.each(|_, _, agent| confirm(agent, &id, deadline));
     if confirmed.iter().all(Result::is_ok) {
-        println!("Confirmed: splot reached every node again, and each keeps the change.");
+        println!(
+            "{}",
+            mesh.worded(
+                |node| format!("Confirmed: splot reached {node} again, and it keeps the change."),
+                "Confirmed: splot reached every node again, and each keeps the change.",
+            )
+        );
         return Ok(());
     }
     mesh.unconfirmed(&id, confirmed, deadline)
 }
 
-/// Every node splot manages something on, in the config's order. Refused when
-/// one has no platform.ssh (naming each), or splot can't apply it yet.
-fn members(network: &Network) -> anyhow::Result<Vec<Member>> {
+/// Every node splot manages something on, in the config's order, with the
+/// agent at its platform.ssh. Refused when one has no platform.ssh (naming
+/// each), or splot can't apply it yet.
+fn members(network: &Network) -> anyhow::Result<Vec<(Member, Agent)>> {
     let mut members = Vec::new();
     let mut unreachable = Vec::new();
 
     for node in network.nodes() {
-        let name = node.name();
-        let plan = commands::node_plan(network, name)?;
-        if plan.wireguard.is_none() && plan.firewall.is_none() && plan.dhcp.is_none() {
-            continue;
-        }
-        commands::check_applicable(network, name)?;
-
-        let Some(destination) = node.platform().ssh() else {
-            unreachable.push(name.to_string());
+        let Some(member) = member(network, node.name())? else {
             continue;
         };
-        members.push(Member {
-            name: name.clone(),
-            destination: destination.clone(),
-            rendered: backend::render(&plan, node.platform().os()),
-            probes: commands::probes(&plan),
-        });
+        let Some(destination) = node.platform().ssh() else {
+            unreachable.push(member.name.to_string());
+            continue;
+        };
+        members.push((member, Agent::new(Some(destination.clone()), None)));
     }
 
     if !unreachable.is_empty() {
@@ -250,6 +279,22 @@ fn members(network: &Network) -> anyhow::Result<Vec<Member>> {
     Ok(members)
 }
 
+/// What the run asks of `node`; none when splot manages nothing there. Refused
+/// when the config has no such node, or splot can't apply it yet.
+fn member(network: &Network, node: &Identifier) -> anyhow::Result<Option<Member>> {
+    let plan = commands::node_plan(network, node)?;
+    if plan.wireguard.is_none() && plan.firewall.is_none() && plan.dhcp.is_none() {
+        return Ok(None);
+    }
+    commands::check_applicable(network, node)?;
+
+    Ok(Some(Member {
+        name: node.clone(),
+        rendered: backend::render(&plan, commands::node_os(network, node)),
+        probes: commands::probes(&plan),
+    }))
+}
+
 /// Every node and its agent.
 struct Mesh {
     members: Vec<Member>,
@@ -257,13 +302,19 @@ struct Mesh {
 }
 
 impl Mesh {
-    fn new(members: Vec<Member>) -> Self {
-        let agents = members
-            .iter()
-            .map(|member| Agent::new(Some(member.destination.clone()), None))
-            .collect();
+    fn new(members: Vec<(Member, Agent)>) -> Self {
+        let (members, agents) = members.into_iter().unzip();
 
         Self { members, agents }
+    }
+
+    /// What the run says: `several`, of every node; in a run of one, `one`, of
+    /// its node.
+    fn worded(&self, one: impl FnOnce(&Identifier) -> String, several: &str) -> String {
+        match self.members.as_slice() {
+            [member] => one(&member.name),
+            _ => several.to_owned(),
+        }
     }
 
     /// `f` on every node at once, each with its index and agent; the results in
@@ -292,19 +343,26 @@ impl Mesh {
 
     /// Every node's result, or an error naming each node that failed and why.
     fn all<T>(&self, results: Vec<anyhow::Result<T>>, what: &str) -> anyhow::Result<Vec<T>> {
-        let problems: Vec<String> = results
-            .iter()
-            .zip(&self.members)
-            .filter_map(|(result, member)| {
-                let err = result.as_ref().err()?;
-                Some(format!("{}: {err:#}", member.name))
-            })
-            .collect();
+        let problems = errors(&results);
         if !problems.is_empty() {
-            bail!(listed(what, &problems));
+            bail!(self.listed(what, &problems));
         }
 
         Ok(results.into_iter().flatten().collect())
+    }
+
+    /// `what`, then why on each node (`problems`, by index), a line each after
+    /// its name; in a run of one, which `what` names, why on the same line.
+    fn listed(&self, what: &str, problems: &[(usize, String)]) -> String {
+        if let ([_], [(_, why)]) = (self.members.as_slice(), problems) {
+            return format!("{what}: {why}");
+        }
+        let lines: Vec<String> = problems
+            .iter()
+            .map(|(index, why)| format!("{}: {why}", self.members[*index].name))
+            .collect();
+
+        format!("{what}:\n  {}", lines.join("\n  "))
     }
 
     /// The names of the nodes `pick` picks, by index.
@@ -340,7 +398,10 @@ impl Mesh {
     /// once, and says how each ended. One splot can't reach is waited for until
     /// its deadline has passed, then asked again: it put back by itself.
     fn put_back(&mut self, id: &str, stages: &[Stage], planned: &[Changes], deadline: Instant) {
-        println!("Putting back every node:");
+        println!(
+            "Putting back {}:",
+            self.worded(ToString::to_string, "every node")
+        );
         let width = self.width();
         let put_back = self.each(|index, _, agent| {
             (stages[index] != Stage::Untouched).then(|| roll_back(agent, id))
@@ -420,10 +481,10 @@ impl Mesh {
         deadline: Instant,
     ) -> anyhow::Result<()> {
         let width = self.width();
-        println!(
-            "Confirmed: {}",
-            self.names(|index| confirmed[index].is_ok())
-        );
+        let kept = self.names(|index| confirmed[index].is_ok());
+        if !kept.is_empty() {
+            println!("Confirmed: {kept}");
+        }
 
         let mut waiting = Vec::new();
         let mut failed = Vec::new();
@@ -457,11 +518,29 @@ impl Mesh {
         if failed.is_empty() {
             return Ok(());
         }
+        let others = if failed.len() < self.members.len() {
+            ", the other nodes did"
+        } else {
+            ""
+        };
         bail!(
-            "{} didn't keep the change, the other nodes did: run splot apply again",
-            failed.join(", ")
+            "{} didn't keep the change{others}: {}",
+            failed.join(", "),
+            self.worded(
+                |node| format!("run splot apply --node {node} again"),
+                "run splot apply again"
+            )
         )
     }
+}
+
+/// Each node's error among `results`, by index.
+fn errors<T>(results: &[anyhow::Result<T>]) -> Vec<(usize, String)> {
+    results
+        .iter()
+        .enumerate()
+        .filter_map(|(index, result)| Some((index, format!("{:#}", result.as_ref().err()?))))
+        .collect()
 }
 
 /// Puts back what the node had before run `id`; asked once more over a new
@@ -563,11 +642,6 @@ fn answer(peers: &[String]) -> String {
     format!("{} {verb}", peers.join(", "))
 }
 
-/// `what`, then each of `problems` on a line of its own.
-fn listed(what: &str, problems: &[String]) -> String {
-    format!("{what}:\n  {}", problems.join("\n  "))
-}
-
 /// Asks the operator whether to apply the plan: only yes does.
 fn agreed() -> anyhow::Result<bool> {
     print!("Apply this plan? [y/N] ");
@@ -627,23 +701,56 @@ nodes:
     const HOME_SSH: &str = "      ssh: root@192.168.1.1";
     const CABIN: &str = "      os: openwrt\n      ssh: cabin";
 
+    fn name(name: &str) -> Identifier {
+        name.parse().unwrap()
+    }
+
+    /// Where `agent` reaches its node.
+    fn destination(agent: &Agent) -> &str {
+        match agent {
+            Agent::Remote { destination, .. } => destination.as_str(),
+            Agent::Local(_) => "here",
+        }
+    }
+
+    fn peers(member: &Member) -> Vec<&str> {
+        member
+            .probes
+            .iter()
+            .map(|probe| probe.peer.as_str())
+            .collect()
+    }
+
     #[test]
     fn every_node_splot_manages_takes_part_reached_at_its_platform_ssh() {
         let members = members(&mesh(HOME_SSH, CABIN)).unwrap();
 
         // Lake, where splot manages nothing, needs no ssh and isn't asked.
-        let names: Vec<&str> = members.iter().map(|m| m.name.as_ref()).collect();
+        let names: Vec<&str> = members.iter().map(|(m, _)| m.name.as_ref()).collect();
         assert_eq!(names, ["Cabin", "Home"]);
-        let destinations: Vec<&str> = members.iter().map(|m| m.destination.as_str()).collect();
+        let destinations: Vec<&str> = members.iter().map(|(_, a)| destination(a)).collect();
         assert_eq!(destinations, ["cabin", "root@192.168.1.1"]);
         // Each checks its node peers after the change, Lake included: it's in
         // the mesh, its WireGuard set up by hand.
-        let probes: Vec<&str> = members[1]
-            .probes
-            .iter()
-            .map(|probe| probe.peer.as_str())
-            .collect();
-        assert_eq!(probes, ["Cabin", "Lake"]);
+        assert_eq!(peers(&members[1].0), ["Cabin", "Lake"]);
+    }
+
+    #[test]
+    fn a_run_on_one_node_is_that_node_alone_wherever_it_is_reached() {
+        // No platform.ssh needed: the command says where it is.
+        let network = mesh("", "      os: openwrt");
+
+        let home = member(&network, &name("Home")).unwrap().unwrap();
+        assert_eq!(home.name.as_ref(), "Home");
+        assert_eq!(peers(&home), ["Cabin", "Lake"]);
+
+        // Where splot manages nothing, there's no run.
+        assert!(member(&network, &name("Lake")).unwrap().is_none());
+        let err = member(&network, &name("Pond")).err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            "there's no node Pond in the config; its nodes are Cabin, Home, Lake"
+        );
     }
 
     #[test]
@@ -660,12 +767,14 @@ nodes:
       {other}: none
       ssh: cabin"
             );
-            let members = members(&mesh(HOME_SSH, &cabin)).unwrap();
+            let network = mesh(HOME_SSH, &cabin);
+            let members = members(&network).unwrap();
 
-            let names: Vec<&str> = members.iter().map(|m| m.name.as_ref()).collect();
+            let names: Vec<&str> = members.iter().map(|(m, _)| m.name.as_ref()).collect();
             assert_eq!(names, ["Cabin", "Home"], "{alone} alone");
             // No WireGuard of splot's there: no peers to check.
-            assert!(members[0].probes.is_empty());
+            assert!(members[0].0.probes.is_empty());
+            assert!(member(&network, &name("Cabin")).unwrap().is_some());
         }
     }
 
@@ -686,17 +795,92 @@ nodes:
       dhcp: none
       dns: none
       ssh: barn";
-        let err = members(&mesh(HOME_SSH, barn)).err().unwrap();
-        assert!(
-            err.to_string()
-                .starts_with("splot can't manage Cabin's firewall (nftables) on Linux yet"),
-            "{err}"
+        let network = mesh(HOME_SSH, barn);
+        for err in [
+            members(&network).err().unwrap(),
+            member(&network, &name("Cabin")).err().unwrap(),
+        ] {
+            assert!(
+                err.to_string()
+                    .starts_with("splot can't manage Cabin's firewall (nftables) on Linux yet"),
+                "{err}"
+            );
+        }
+    }
+
+    /// The run across `network`, and the one on Home alone.
+    fn runs(network: &Network) -> (Mesh, Mesh) {
+        let home = member(network, &name("Home")).unwrap().unwrap();
+        let alone = Agent::new(Some("home".parse().unwrap()), None);
+
+        (
+            Mesh::new(members(network).unwrap()),
+            Mesh::new(vec![(home, alone)]),
+        )
+    }
+
+    #[test]
+    fn a_run_of_one_names_its_node_where_a_mesh_says_every_node() {
+        let (several, one) = runs(&mesh(HOME_SSH, CABIN));
+        let kept =
+            |mesh: &Mesh| mesh.worded(|node| format!("{node} didn't keep it"), "no node kept it");
+
+        assert_eq!(kept(&several), "no node kept it");
+        assert_eq!(kept(&one), "Home didn't keep it");
+    }
+
+    #[test]
+    fn why_each_node_failed_is_listed_after_its_name_in_a_run_of_one_after_what() {
+        let (several, one) = runs(&mesh(HOME_SSH, CABIN));
+        let refused = |index| (index, "refused".to_owned());
+
+        assert_eq!(
+            several.listed("splot couldn't plan every node", &[refused(0), refused(1)]),
+            "splot couldn't plan every node:\n  Cabin: refused\n  Home: refused"
+        );
+        // One node failing of several is still named.
+        assert_eq!(
+            several.listed("splot couldn't plan every node", &[refused(1)]),
+            "splot couldn't plan every node:\n  Home: refused"
+        );
+        assert_eq!(
+            one.listed("splot couldn't plan Home", &[refused(0)]),
+            "splot couldn't plan Home: refused"
+        );
+    }
+
+    #[test]
+    fn a_failed_confirm_names_the_nodes_that_didnt_keep_the_change() {
+        let (mut several, mut one) = runs(&mesh(HOME_SSH, CABIN));
+        // Refused, not lost: nothing to wait for.
+        let refused = || -> anyhow::Result<()> { Err(anyhow::anyhow!("too late")) };
+        let unconfirmed = |mesh: &mut Mesh, confirmed: Vec<anyhow::Result<()>>| {
+            mesh.unconfirmed("r1", confirmed, Instant::now())
+                .unwrap_err()
+                .to_string()
+        };
+
+        assert_eq!(
+            unconfirmed(&mut several, vec![refused(), Ok(())]),
+            "Cabin didn't keep the change, the other nodes did: run splot apply again"
+        );
+        assert_eq!(
+            unconfirmed(&mut several, vec![refused(), refused()]),
+            "Cabin, Home didn't keep the change: run splot apply again"
+        );
+        assert_eq!(
+            unconfirmed(&mut one, vec![refused()]),
+            "Home didn't keep the change: run splot apply --node Home again"
         );
     }
 
     #[test]
     fn the_plan_shows_each_node_with_what_it_would_change() {
-        let members = members(&mesh(HOME_SSH, CABIN)).unwrap();
+        let members: Vec<Member> = members(&mesh(HOME_SSH, CABIN))
+            .unwrap()
+            .into_iter()
+            .map(|(member, _)| member)
+            .collect();
         let planned = [
             Changes::none(),
             Changes {

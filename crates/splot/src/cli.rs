@@ -112,8 +112,8 @@ pub enum Command {
             conflicts_with = "dry_run"
         )]
         confirm_within: u32,
-        /// Across the mesh, apply the plan without asking first
-        #[arg(long, short, conflicts_with_all = ["node", "dry_run"])]
+        /// Apply the plan without asking first
+        #[arg(long, short, conflicts_with = "dry_run")]
         yes: bool,
     },
 
@@ -217,14 +217,37 @@ mod tests {
 
         // It asks first unless told not to, and only when it applies.
         for args in [
-            &["splot", "apply", "--node", "Home", "--yes"][..],
-            &["splot", "apply", "--dry-run", "--yes"],
+            &["splot", "apply", "--dry-run", "--yes"][..],
+            &["splot", "apply", "--node", "Home", "--dry-run", "--yes"],
             // Each node is reached at its own platform.ssh.
             &["splot", "apply", "--ssh", "router"],
             &["splot", "apply", "--local"],
             &["splot", "apply", "--agent", "./agent"],
         ] {
             assert!(Cli::try_parse_from(args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn a_run_on_one_node_asks_first_too() {
+        for (args, yes) in [
+            (&["splot", "apply", "--node", "Home"][..], false),
+            (&["splot", "apply", "--node", "Home", "--yes"], true),
+            (
+                &["splot", "apply", "--node", "Home", "-y", "--ssh", "router"],
+                true,
+            ),
+        ] {
+            let cli = parse(args);
+            let Some(Command::Apply {
+                node: Some(_),
+                yes: y,
+                ..
+            }) = cli.command()
+            else {
+                panic!("{args:?}: not apply on one node");
+            };
+            assert_eq!(*y, yes, "{args:?}");
         }
     }
 

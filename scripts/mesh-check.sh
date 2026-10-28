@@ -213,8 +213,8 @@ splot psk set --node Home Cabin <<<"$psk" >/dev/null
 splot psk set --node Cabin Home <<<"$psk" >/dev/null
 
 # Both applied: the tunnel comes up, and each router answers the other's ping.
-output=$(splot apply --node Cabin 2>&1) || true
-output="$output"$'\n'$(splot apply --node Home 2>&1) || true
+output=$(splot apply --node Cabin --yes 2>&1) || true
+output="$output"$'\n'$(splot apply --node Home --yes 2>&1) || true
 if [ "$(grep -c '^Confirmed' <<<"$output")" = 2 ] &&
 	run home 'ping -c 3 -W 2 10.100.0.2 >/dev/null' && run cabin 'ping -c 3 -W 2 10.100.0.1 >/dev/null'; then
 	pass "both applied and confirmed: the tunnel is up, each answers the other's ping"
@@ -232,8 +232,8 @@ clients:
     meshIp: 10.100.1.10
     psk: false
 EOF
-output=$(splot apply --node Home 2>&1) || true
-if grep -q '^Checked: Cabin answers as before' <<<"$output" && grep -q '^Confirmed' <<<"$output"; then
+output=$(splot apply --node Home --yes 2>&1) || true
+if grep -q '^Checked Home: Cabin answers as before$' <<<"$output" && grep -q '^Confirmed' <<<"$output"; then
 	pass "a change that keeps the tunnel: Cabin checked, the change confirmed"
 else
 	fail "a change that keeps the tunnel: Cabin checked, the change confirmed" "$output"
@@ -244,11 +244,12 @@ fi
 # works again.
 before=$(run home 'md5sum /etc/config/network')
 splot psk set --node Home Cabin <<<"$(run home 'wg genpsk')" >/dev/null
-output=$(splot apply --node Home 2>&1) && status=0 || status=$?
+output=$(splot apply --node Home --yes 2>&1) && status=0 || status=$?
 after=$(run home 'md5sum /etc/config/network')
 last=$(run home 'cat /tmp/splot/last' 2>&1) || true
-if [ "$status" -ne 0 ] &&
-	grep -q "the change cut Home off from Cabin, so splot didn't keep it: Home put back what it had" <<<"$output" &&
+if [ "$status" -ne 0 ] && grep -q '^Checked Home: lost Cabin$' <<<"$output" &&
+	grep -q '^  Home  put back$' <<<"$output" &&
+	grep -q "the change cut Home off from Cabin, so Home didn't keep it" <<<"$output" &&
 	[ "$after" = "$before" ] && grep -q "rolled back" <<<"$last" &&
 	run home 'ping -c 3 -W 2 10.100.0.2 >/dev/null'; then
 	pass "a preshared key changed on one end: Cabin lost, rolled back, the tunnel works again"

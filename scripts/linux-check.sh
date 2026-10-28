@@ -42,6 +42,16 @@ fail() {
 run() { podman exec "$CONTAINER" bash -c "$1"; }
 # What apply says once it has reached the node again and confirmed the change.
 CONFIRMED="Confirmed: splot reached Barn again, and it keeps the change."
+# The plan of a node with nothing to change: the dry run and apply both end
+# there.
+NOTHING="== Barn: nothing to change"$'\n'"Nothing to change."
+# Whether apply's output $1 is the plan for Barn changing $2 (the plan's
+# summary), applied and confirmed. Barn's node peers don't answer here, so
+# there's none to check.
+applied() {
+	[ "$(head -1 <<<"$1")" = "== Barn: $2" ] &&
+		[ "$(tail -3 <<<"$1")" = "Prepared: Barn"$'\n'"Applied: Barn"$'\n'"$CONFIRMED" ]
+}
 
 if [ ! -d /sys/module/wireguard ]; then
 	echo "The host's wireguard kernel module isn't loaded; run: sudo modprobe wireguard" >&2
@@ -181,7 +191,7 @@ fi
 barn_key=$(run 'sed -n "s/^private-key //p" /etc/splot/keys | wg pubkey')
 sed -i "s|ReplaceBarnPublicKeyAAAAAAAAAAAAAAAAAAAAAAA=|$barn_key|" "$work/splot.yml"
 
-output=$(splot apply --node Barn)
+output=$(splot apply --node Barn --yes)
 if printf '%s' "$output" | grep -q 'no preshared key stored for Cabin, Home, Lake, Phone:' &&
 	! run "[ -e $CONF ]"; then
 	pass "apply refuses while PSKs are missing, writing nothing"
@@ -207,8 +217,8 @@ else
 	fail "dry run, here: the file with placeholders, then the start; writes nothing" "$output"
 fi
 
-output=$(splot apply --node Barn)
-if [ "$output" = "Applied and reloaded: $CONF, $UNIT started and enabled"$'\n'"$CONFIRMED" ] &&
+output=$(splot apply --node Barn --yes)
+if applied "$output" "$CONF, $UNIT started and enabled" &&
 	[ "$(run "stat -c %a $CONF")" = 600 ] &&
 	run "grep -qxF 'PrivateKey = $private_key' $CONF" &&
 	! run "grep -q '<' $CONF" &&
@@ -245,9 +255,9 @@ fi
 
 file_state() { run "stat -c '%i %Y' $CONF"; }
 before=$(file_state)
-output=$(splot apply --node Barn)
+output=$(splot apply --node Barn --yes)
 dry=$(splot apply --node Barn --dry-run)
-if [ "$output" = "Nothing changed." ] && [ "$dry" = "# Nothing to change." ] &&
+if [ "$output" = "$NOTHING" ] && [ "$dry" = "$NOTHING" ] &&
 	[ "$before" = "$(file_state)" ]; then
 	pass "second apply changes nothing, file untouched; its dry run says so"
 else
@@ -261,9 +271,9 @@ ifindex() { run 'cat /sys/class/net/spl_mesh/ifindex'; }
 index=$(ifindex)
 sed -i "s/endpoint: $CABIN_ENDPOINT/endpoint: 203.0.113.21/" "$work/splot.yml"
 dry=$(splot apply --node Barn --dry-run)
-output=$(splot apply --node Barn)
+output=$(splot apply --node Barn --yes)
 if printf '%s' "$dry" | grep -q "^#   systemctl reload $UNIT$" &&
-	[ "$output" = "Applied and reloaded: $CONF, $UNIT reloaded"$'\n'"$CONFIRMED" ] &&
+	applied "$output" "$CONF, $UNIT reloaded" &&
 	[ "$index" = "$(ifindex)" ] &&
 	run 'wg show spl_mesh endpoints' | grep -q '203\.0\.113\.21:51820'; then
 	pass "peer change: reloaded, live, the interface kept"
@@ -275,12 +285,12 @@ fi
 # Cabin gets another zone: a route only a start sets, so a restart, saying why.
 sed -i '/^  # Behind its ISP/i\      guest:\n        address: 192.168.5.1/24\n' "$work/splot.yml"
 dry=$(splot apply --node Barn --dry-run)
-output=$(splot apply --node Barn)
-again=$(splot apply --node Barn)
+output=$(splot apply --node Barn --yes)
+again=$(splot apply --node Barn --yes)
 if printf '%s' "$dry" | grep -qF "#   systemctl restart $UNIT  (routes to add: 192.168.5.0/24)" &&
-	[ "$output" = "Applied and reloaded: $CONF, $UNIT restarted (routes to add: 192.168.5.0/24)"$'\n'"$CONFIRMED" ] &&
+	applied "$output" "$CONF, $UNIT restarted (routes to add: 192.168.5.0/24)" &&
 	[ "$(routes)" = "192.168.1.0/24 192.168.2.0/24 192.168.3.0/24 192.168.5.0/24" ] &&
-	[ "$again" = "Nothing changed." ]; then
+	[ "$again" = "$NOTHING" ]; then
 	pass "route change: restarted, saying why; the new route live; then nothing to do"
 else
 	fail "route change: restarted, saying why; the new route live; then nothing to do" "$dry
@@ -293,10 +303,10 @@ fi
 psk=$(run 'wg genpsk')
 splot psk set --node Barn Cabin <<<"$psk" >/dev/null
 dry=$(splot apply --node Barn --dry-run)
-output=$(splot apply --node Barn)
+output=$(splot apply --node Barn --yes)
 if ! printf '%s' "$dry" | grep -qF "$psk" &&
 	printf '%s' "$dry" | grep -q "^#   systemctl reload $UNIT$" &&
-	[ "$output" = "Applied and reloaded: $CONF, $UNIT reloaded"$'\n'"$CONFIRMED" ] &&
+	applied "$output" "$CONF, $UNIT reloaded" &&
 	run 'wg show spl_mesh preshared-keys' | grep -qF "$psk"; then
 	pass "PSK change: masked in the dry run, live after a reload"
 else
@@ -306,30 +316,41 @@ fi
 
 # The node keeps a change only once splot reaches it again: cut off after the
 # apply, it puts back what it had by itself at the deadline, the unit running
-# as it was.
+# as it was. splot waits for the deadline (meanwhile the change is there), and
+# asks again: still cut off, it says so.
 sed -i 's/endpoint: 203.0.113.21/endpoint: 203.0.113.22/' "$work/splot.yml"
 cut_before=$(run "md5sum $CONF")
 echo 0 >"$work/cut"
-output=$(splot apply --node Barn --confirm-within 10)
-rm -f "$work/cut"
+PATH="$work/bin:$PATH" "$BINARY" --config "$work/splot.yml" apply --node Barn --yes --confirm-within 10 \
+	>"$work/cut.out" 2>&1 &
+waiting=$!
+for _ in $(seq 40); do
+	if grep -q 'waiting for its deadline' "$work/cut.out"; then break; fi
+	sleep 0.5
+done
 cut_applied=$(run "md5sum $CONF")
-sleep 15
+wait "$waiting" && status=0 || status=$?
+rm -f "$work/cut"
+output=$(cat "$work/cut.out")
 cut_after=$(run "md5sum $CONF")
 last=$(run 'cat /tmp/splot/last 2>&1') || true
-if grep -q "so Barn puts back what it had by itself, within 10 s of the apply" <<<"$output" &&
+if [ "$status" -ne 0 ] && grep -q "^Couldn't check Barn: " <<<"$output" &&
+	grep -q '^  Barn  unreachable: waiting for its deadline' <<<"$output" &&
+	grep -q '^  Barn  still unreachable: ' <<<"$output" &&
+	grep -q "splot couldn't check Barn, so Barn didn't keep it" <<<"$output" &&
 	[ "$cut_applied" != "$cut_before" ] && [ "$cut_after" = "$cut_before" ] &&
 	grep -q "rolled back" <<<"$last" && ! run '[ -e /tmp/splot/run ]' &&
 	run "systemctl is-active --quiet $UNIT" && run 'wg show spl_mesh endpoints' | grep -q '203\.0\.113\.21:51820'; then
-	pass "cut off before the confirm: the node put back what it had at the deadline, $UNIT running"
+	pass "cut off before the confirm: the node put back what it had at the deadline, $UNIT running; splot waited"
 else
-	fail "cut off before the confirm: the node put back what it had at the deadline, $UNIT running" \
-		"$output"$'\n'"last: $last"$'\n'"before: $cut_before"$'\n'"applied: $cut_applied"$'\n'"after: $cut_after"
+	fail "cut off before the confirm: the node put back what it had at the deadline, $UNIT running; splot waited" \
+		"exit $status: $output"$'\n'"last: $last"$'\n'"before: $cut_before"$'\n'"applied: $cut_applied"$'\n'"after: $cut_after"
 fi
 sed -i 's/endpoint: 203.0.113.22/endpoint: 203.0.113.21/' "$work/splot.yml"
 
 run "systemctl stop $UNIT"
-output=$(splot apply --node Barn)
-if [ "$output" = "Applied and reloaded: $UNIT started and enabled"$'\n'"$CONFIRMED" ] &&
+output=$(splot apply --node Barn --yes)
+if applied "$output" "$UNIT started and enabled" &&
 	run "systemctl is-active --quiet $UNIT"; then
 	pass "stopped: apply starts it again"
 else
@@ -337,8 +358,8 @@ else
 fi
 
 run "systemctl disable --quiet $UNIT"
-output=$(splot apply --node Barn)
-if [ "$output" = "Applied and reloaded: $UNIT enabled"$'\n'"$CONFIRMED" ] &&
+output=$(splot apply --node Barn --yes)
+if applied "$output" "$UNIT enabled" &&
 	run "systemctl is-enabled --quiet $UNIT"; then
 	pass "disabled: apply enables it, so it comes back after a reboot"
 else
@@ -348,7 +369,7 @@ fi
 # Brought up by hand instead: starting the unit would fail on it.
 run "systemctl stop $UNIT && wg-quick up spl_mesh 2>/dev/null"
 before=$(file_state)
-output=$(splot apply --node Barn)
+output=$(splot apply --node Barn --yes)
 run 'wg-quick down spl_mesh 2>/dev/null'
 if printf '%s' "$output" | grep -q "spl_mesh is up, but not through $UNIT" &&
 	[ "$before" = "$(file_state)" ]; then
@@ -363,8 +384,8 @@ run "systemctl start $UNIT"
 podman cp "$BINARY" "$CONTAINER:/usr/bin/splot"
 sed 's/endpoint: 203.0.113.21/endpoint: 203.0.113.23/' "$work/splot.yml" >"$work/splot-local.yml"
 podman cp "$work/splot-local.yml" "$CONTAINER:/root/splot.yml"
-output=$(run 'splot --config /root/splot.yml apply --node Barn --local 2>&1 | grep -v "^warning: "' || true)
-if [ "$output" = "Applied and reloaded: $CONF, $UNIT reloaded"$'\n'"$CONFIRMED" ] &&
+output=$(run 'splot --config /root/splot.yml apply --node Barn --local --yes 2>&1 | grep -v "^warning: "' || true)
+if applied "$output" "$CONF, $UNIT reloaded" &&
 	run 'wg show spl_mesh endpoints' | grep -q '203\.0\.113\.23:51820' &&
 	! run '[ -e /tmp/splot/run ]' && run 'grep -q confirmed /tmp/splot/last'; then
 	pass "on the node itself (--local): applied and confirmed, no run left"
@@ -378,10 +399,10 @@ podman restart --time 5 "$CONTAINER" >/dev/null
 booted || true
 reachable || true
 state=$(run "systemctl is-active $UNIT" || true)
-output=$(splot apply --node Barn)
+output=$(splot apply --node Barn --yes)
 if [ "$state" = active ] &&
 	[ "$(routes)" = "192.168.1.0/24 192.168.2.0/24 192.168.3.0/24 192.168.5.0/24" ] &&
-	[ "$output" = "Nothing changed." ]; then
+	[ "$output" = "$NOTHING" ]; then
 	pass "reboot: the mesh comes back as splot left it"
 else
 	fail "reboot: the mesh comes back as splot left it" "$state; routes $(routes)

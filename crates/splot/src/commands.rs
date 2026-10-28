@@ -4,11 +4,10 @@ use std::net::Ipv4Addr;
 
 use anyhow::{Context, bail};
 
-use splot_core::protocol::{Probe, Reply, Request, Run};
+use splot_core::protocol::{Probe, Reply, Request};
 
 use crate::{
     agent::{self, Agent},
-    backend,
     model::{Network, host::HostRef},
     plan::{self, NodePlan},
     types::{
@@ -191,102 +190,6 @@ fn new_node_entry(
     )
 }
 
-/// `apply`: makes this peer's config what the plan for `node` says, or shows
-/// what that would change (`dry_run`). splot renders it; the agent checks this
-/// peer is `node` and applies it, under a run: the node puts back what it had
-/// unless splot reaches it again and confirms within `confirm_within` seconds.
-pub fn apply(
-    network: &Network,
-    node: &Identifier,
-    dry_run: bool,
-    confirm_within: u32,
-    agent: &mut Agent,
-) -> anyhow::Result<()> {
-    let plan = node_plan(network, node)?;
-    check_applicable(network, node)?;
-    let rendered = backend::render(&plan, node_os(network, node));
-    let probes = probes(&plan);
-
-    if dry_run {
-        match agent.ask(Request::DryRun { rendered })? {
-            Reply::DryRun(changes) => print!("{}", changes.text),
-            reply => return Err(agent::unexpected(reply)),
-        }
-        return Ok(());
-    }
-
-    let run = Run {
-        id: agent::run_id(),
-        confirm_within,
-        probes,
-    };
-    let changes = match agent.ask(Request::Prepare {
-        rendered,
-        run: run.clone(),
-    })? {
-        Reply::Prepared(changes) => changes,
-        reply => return Err(agent::unexpected(reply)),
-    };
-    if changes.is_empty() {
-        // Nothing to apply: the run ends here.
-        match agent.ask(Request::Rollback { run: run.id })? {
-            Reply::RolledBack => {}
-            reply => return Err(agent::unexpected(reply)),
-        }
-        println!("Nothing changed.");
-        return Ok(());
-    }
-
-    let changed = match agent.ask(Request::Go {
-        run: run.id.clone(),
-    })? {
-        Reply::Applied(changed) => changed,
-        reply => return Err(agent::unexpected(reply)),
-    };
-    println!("Applied and reloaded: {}", changed.join(", "));
-
-    // The node keeps it once splot reaches it again (with a session of its
-    // own, as after a reload that cut the one that applied it) and its peers
-    // that answered before still do.
-    agent.reconnect();
-    let checked = agent.ask(Request::Check {
-        run: run.id.clone(),
-    });
-    let lost = match checked {
-        Ok(Reply::Checked { still, lost }) => {
-            if !still.is_empty() {
-                let verb = if still.len() == 1 {
-                    "answers"
-                } else {
-                    "answer"
-                };
-                println!("Checked: {} {verb} as before.", still.join(", "));
-            }
-            lost
-        }
-        Ok(reply) => return Err(agent::unexpected(reply)),
-        Err(err) => {
-            return Err(err.context(format!(
-                "splot couldn't check the change, so {node} puts back what it had by itself, within {confirm_within} s of the apply"
-            )));
-        }
-    };
-    if !lost.is_empty() {
-        return Err(roll_back(agent, node, &run.id, &lost));
-    }
-
-    match agent.ask(Request::Confirm { run: run.id }) {
-        Ok(Reply::Confirmed) => {
-            println!("Confirmed: splot reached {node} again, and it keeps the change.");
-            Ok(())
-        }
-        Ok(reply) => Err(agent::unexpected(reply)),
-        Err(err) => Err(err.context(format!(
-            "splot couldn't confirm the change, so {node} puts back what it had by itself, within {confirm_within} s of the apply"
-        ))),
-    }
-}
-
 /// What a node checks after a change: its node peers, each pinged at its mesh
 /// IP. The ones that answer before the change must answer after it.
 pub(crate) fn probes(plan: &NodePlan) -> Vec<Probe> {
@@ -301,25 +204,8 @@ pub(crate) fn probes(plan: &NodePlan) -> Vec<Probe> {
         .collect()
 }
 
-/// Puts back what `node` had before run `id`, whose change cut it off from the
-/// peers `lost`: the error saying so.
-fn roll_back(agent: &mut Agent, node: &Identifier, id: &str, lost: &[String]) -> anyhow::Error {
-    let broke = format!(
-        "the change cut {node} off from {}, so splot didn't keep it",
-        lost.join(", ")
-    );
-
-    match agent.ask(Request::Rollback { run: id.to_owned() }) {
-        Ok(Reply::RolledBack) => anyhow::anyhow!("{broke}: {node} put back what it had"),
-        Ok(reply) => agent::unexpected(reply).context(broke),
-        Err(err) => err.context(format!(
-            "{broke}, and putting back what it had failed: it does by itself at the run's deadline"
-        )),
-    }
-}
-
 /// The OS the config says `node` runs: for a node it has a plan for.
-fn node_os(network: &Network, node: &Identifier) -> Os {
+pub(crate) fn node_os(network: &Network, node: &Identifier) -> Os {
     network
         .node(node)
         .expect("a node the config has a plan for is in the config")

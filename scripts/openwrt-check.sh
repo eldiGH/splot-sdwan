@@ -202,7 +202,7 @@ EOF
 	# Every pair uses a preshared key unless an end turns it off (the example's
 	# lte-cam does). Until they're stored, apply refuses, names the peers and
 	# touches nothing.
-	if output=$(splot --config "$work/splot.yml" apply --node Home 2>&1); then
+	if output=$(splot --config "$work/splot.yml" apply --node Home --yes 2>&1); then
 		fail "apply refuses while PSKs are missing" "$output"
 	elif grep -q 'no preshared key stored for Barn, Cabin, Lake, Phone:' <<<"$output" &&
 		[ "$(run 'uci show network | grep -c spl_')" = 0 ]; then
@@ -258,8 +258,8 @@ EOF
 	fi
 
 	log_lines=$(run 'logread | wc -l')
-	if output=$(splot --config "$work/splot.yml" apply --node Home 2>&1); then
-		pass "splot apply over ssh: $(head -1 <<<"$output")"
+	if output=$(splot --config "$work/splot.yml" apply --node Home --yes 2>&1); then
+		pass "splot apply over ssh: $(sed -n 's/^== Home: //p' <<<"$output")"
 	else
 		fail "splot apply over ssh" "$output"
 		return
@@ -381,29 +381,32 @@ EOF
 			"$(printf '%s\n' "$output" | sed -E 's/^.{24} //; s/\[[0-9]+\]//' | sort -u | head -10)"
 	fi
 
-	local before after
+	local before after nothing
+	# The plan of a node with nothing to change: the dry run and apply both end
+	# there.
+	nothing="== Home: nothing to change"$'\n'"Nothing to change."
 	# Applying an unchanged config stages nothing, so uci rewrites no file.
 	# stdout only: the log goes to stderr.
 	output=$(splot --config "$work/splot.yml" apply --node Home --dry-run 2>/dev/null) || true
-	if [ "$output" = "# Nothing to change." ]; then
+	if [ "$output" = "$nothing" ]; then
 		pass "dry run of an unchanged node stages nothing"
 	else
 		fail "dry run of an unchanged node stages nothing" "$output"
 	fi
 
 	# A commit writes a new file over the old one: its inode changes. (BusyBox
-	# here has no stat.)
+	# here has no stat.) With nothing to apply, no run begins: the last run is
+	# still the one before.
 	local files='/etc/config/network /etc/config/firewall /etc/config/dhcp'
-	before=$(run "ls -i $files; md5sum $files")
-	output=$(splot --config "$work/splot.yml" apply --node Home 2>&1) || true
-	after=$(run "ls -i $files; md5sum $files")
-	# Its run, with nothing to apply, ends at once.
-	if [ "$(printf '%s' "$output" | tail -1)" = "Nothing changed." ] && [ "$before" = "$after" ] &&
-		! run '[ -e /tmp/splot/run ]' && run 'grep -q cancelled /tmp/splot/last'; then
-		pass "second apply changes nothing, files untouched, its run ended"
+	before=$(run "ls -i $files; md5sum $files; cat /tmp/splot/last")
+	output=$(splot --config "$work/splot.yml" apply --node Home --yes 2>&1) || true
+	after=$(run "ls -i $files; md5sum $files; cat /tmp/splot/last")
+	if [ "$(printf '%s' "$output" | tail -2)" = "$nothing" ] && [ "$before" = "$after" ] &&
+		! run '[ -e /tmp/splot/run ]'; then
+		pass "second apply changes nothing, files untouched, no run begun"
 	else
-		fail "second apply changes nothing, files untouched, its run ended" \
-			"$output"$'\n'"before: $before"$'\n'"after: $after"$'\n'"$(run 'ls /tmp/splot; cat /tmp/splot/last' 2>&1)"
+		fail "second apply changes nothing, files untouched, no run begun" \
+			"$output"$'\n'"before: $before"$'\n'"after: $after"$'\n'"$(run 'ls /tmp/splot' 2>&1)"
 	fi
 
 	# A peer change: Cabin's endpoint moves. WireGuard must see it without a reboot.
@@ -413,13 +416,13 @@ EOF
 	sed -i "s/$CABIN_ENDPOINT/203.0.113.21/" "$work/splot.yml"
 	# Only that peer's endpoint is staged, then the network file is committed.
 	output=$(splot --config "$work/splot.yml" apply --node Home --dry-run 2>/dev/null | grep -v '^#') || true
-	expected="set network.spl_wireguard_spl_mesh_Cabin.endpoint_host='203.0.113.21'"$'\n'"commit network"
+	expected="== Home: network"$'\n'"set network.spl_wireguard_spl_mesh_Cabin.endpoint_host='203.0.113.21'"$'\n'"commit network"
 	if [ "$output" = "$expected" ]; then
 		pass "peer change stages only that peer"
 	else
 		fail "peer change stages only that peer" "$output"
 	fi
-	if ! output=$(splot --config "$work/splot.yml" apply --node Home 2>&1); then
+	if ! output=$(splot --config "$work/splot.yml" apply --node Home --yes 2>&1); then
 		fail "peer update: apply" "$output"
 	else
 		sleep 3
@@ -442,13 +445,13 @@ EOF
 	# dry run shows its placeholder, and WireGuard gets the new key.
 	splot --config "$work/splot.yml" psk set --node Home Cabin <<<"$(psk)" >/dev/null
 	output=$(splot --config "$work/splot.yml" apply --node Home --dry-run 2>/dev/null | grep -v '^#') || true
-	expected="set network.spl_wireguard_spl_mesh_Cabin.preshared_key='<preshared key>'"$'\n'"commit network"
+	expected="== Home: network"$'\n'"set network.spl_wireguard_spl_mesh_Cabin.preshared_key='<preshared key>'"$'\n'"commit network"
 	if [ "$output" = "$expected" ]; then
 		pass "PSK change stages only that key, shown as its placeholder"
 	else
 		fail "PSK change stages only that key, shown as its placeholder" "$output"
 	fi
-	if ! output=$(splot --config "$work/splot.yml" apply --node Home 2>&1); then
+	if ! output=$(splot --config "$work/splot.yml" apply --node Home --yes 2>&1); then
 		fail "PSK update: apply" "$output"
 	else
 		sleep 3
@@ -460,24 +463,34 @@ EOF
 	fi
 
 	# The router keeps a change only once splot reaches it again: cut off after
-	# the apply, it puts back what it had by itself at the deadline.
-	local cut_before cut_applied cut_after status last
+	# the apply, it puts back what it had by itself at the deadline. splot waits
+	# for the deadline; meanwhile the change is there, and the router is let in
+	# again, so splot, asking after the deadline, finds it put back.
+	local cut_before cut_applied cut_after status last waiting
 	sed 's/port: 22$/port: 2222/' "$work/splot.yml" >"$work/splot-cut.yml"
 	cut_before=$(run "md5sum $files")
 	echo 0 >"$work/cut"
-	output=$(splot --config "$work/splot-cut.yml" apply --node Home --confirm-within 10 2>&1) && status=0 || status=$?
-	rm -f "$work/cut"
+	splot --config "$work/splot-cut.yml" apply --node Home --yes --confirm-within 10 >"$work/cut.out" 2>&1 &
+	waiting=$!
+	for _ in $(seq 40); do
+		if grep -q 'waiting for its deadline' "$work/cut.out"; then break; fi
+		sleep 0.5
+	done
 	cut_applied=$(run "md5sum $files")
-	sleep 15
+	rm -f "$work/cut"
+	wait "$waiting" && status=0 || status=$?
+	output=$(cat "$work/cut.out")
 	cut_after=$(run "md5sum $files")
 	last=$(run 'cat /tmp/splot/last 2>&1') || true
-	if [ "$status" -ne 0 ] &&
-		grep -q "so Home puts back what it had by itself, within 10 s of the apply" <<<"$output" &&
+	if [ "$status" -ne 0 ] && grep -q "^Couldn't check Home: " <<<"$output" &&
+		grep -q '^  Home  unreachable: waiting for its deadline' <<<"$output" &&
+		grep -q '^  Home  put back by itself$' <<<"$output" &&
+		grep -q "splot couldn't check Home, so Home didn't keep it" <<<"$output" &&
 		[ "$cut_applied" != "$cut_before" ] && [ "$cut_after" = "$cut_before" ] &&
 		grep -q "rolled back" <<<"$last" && ! run '[ -e /tmp/splot/run ]'; then
-		pass "cut off before the confirm: the router put back what it had at the deadline"
+		pass "cut off before the confirm: the router put back what it had at the deadline, splot waited and saw it"
 	else
-		fail "cut off before the confirm: the router put back what it had at the deadline" \
+		fail "cut off before the confirm: the router put back what it had at the deadline, splot waited and saw it" \
 			"exit $status: $output"$'\n'"last: $last"$'\n'"before: $cut_before"$'\n'"applied: $cut_applied"$'\n'"after: $cut_after"
 	fi
 	sleep 3
@@ -493,9 +506,9 @@ EOF
 	local sections dry_run
 	sections=$(run "uci show firewall | grep -c '^firewall\.spl_[^.]*='; uci show dhcp | grep -c '^dhcp\.spl_[^.]*='" | paste -sd' ')
 	dry_run=$(splot --config "$work/splot-none.yml" apply --node Home --dry-run 2>/dev/null) || true
-	output=$(splot --config "$work/splot-none.yml" apply --node Home 2>&1) || true
+	output=$(splot --config "$work/splot-none.yml" apply --node Home --yes 2>&1) || true
 	after=$(run "ls -i $left_alone; md5sum $left_alone")
-	if [ "$dry_run" = "# Nothing to change." ] && [ "$(printf '%s' "$output" | tail -1)" = "Nothing changed." ] &&
+	if [ "$dry_run" = "$nothing" ] && [ "$(printf '%s' "$output" | tail -2)" = "$nothing" ] &&
 		[ "$before" = "$after" ] && ! printf '%s' "$sections" | grep -qw 0; then
 		pass "concerns left alone (none): their files untouched, splot's sections kept ($sections)"
 	else
@@ -513,9 +526,9 @@ EOF
 	network_before=$(run 'ls -i /etc/config/network; md5sum /etc/config/network')
 	refused_before=$(run "ls -i $all_files; md5sum $all_files")
 	output=$(says "none of this peer.s WireGuard interfaces has the key the config has for Cabin" \
-		--config "$work/splot-own-wg.yml" apply --node Cabin || echo "as Cabin: not refused;")
+		--config "$work/splot-own-wg.yml" apply --node Cabin --yes || echo "as Cabin: not refused;")
 	refused_after=$(run "ls -i $all_files; md5sum $all_files")
-	splot --config "$work/splot-own-wg.yml" apply --node Home >/dev/null 2>&1 || output="$output as Home: refused;"
+	splot --config "$work/splot-own-wg.yml" apply --node Home --yes >/dev/null 2>&1 || output="$output as Home: refused;"
 	says "nothing to initialise" --config "$work/splot-own-wg.yml" init --node Home || output="$output init;"
 	if [ -z "$output" ] && [ "$refused_before" = "$refused_after" ] &&
 		[ "$network_before" = "$(run 'ls -i /etc/config/network; md5sum /etc/config/network')" ]; then

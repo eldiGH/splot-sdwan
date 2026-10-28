@@ -49,16 +49,17 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Apply {
             node: Some(node),
+            reach,
             dry_run,
             confirm_within,
-            reach,
-            ..
-        } => commands::apply(
+            yes,
+        } => mesh_run::apply_node(
             &network,
             node,
+            reach.agent(configured(node))?,
             *dry_run,
             *confirm_within,
-            &mut reach.agent(configured(node))?,
+            *yes,
         ),
         Command::Apply {
             node: None,
