@@ -3,7 +3,8 @@
 # with a real WireGuard tunnel between them. splot runs here and reaches each
 # over ssh. It checks that an apply is confirmed only while the other router
 # still answers through the tunnel, and rolled back when the change cuts it off;
-# then runs across the mesh, both routers at once: all or nothing.
+# then runs across the mesh, both routers at once: all or nothing; then a Linux
+# node, Barn (Debian with wg-quick), joins, and runs across the three.
 #
 #   scripts/mesh-check.sh [VERSION]     default: the newest version in use
 #
@@ -17,11 +18,13 @@ cd "$(dirname "$0")/.."
 
 VERSION=${1:-25.12.2}
 IMAGE=localhost/splot-openwrt:$VERSION
+LINUX_IMAGE=localhost/splot-linux:trixie
 TARGET=x86_64-unknown-linux-musl
 BINARY=target/$TARGET/release/splot
-# WireGuard's ports, one per router: published on this machine's loopback.
+# WireGuard's ports, one per node: published on this machine's loopback.
 HOME_PORT=52820
 CABIN_PORT=52821
+BARN_PORT=52822
 
 failures=0
 pass() { printf '  PASS  %s\n' "$1"; }
@@ -43,6 +46,7 @@ mkdir -p target/check-agents
 cp "target/$TARGET/agent/splot-agent" target/check-agents/x86_64
 SPLOT_AGENTS="$PWD/target/check-agents" cargo build --quiet --package splot --release --target "$TARGET"
 podman build --quiet --build-arg "OPENWRT_VERSION=$VERSION" -t "$IMAGE" scripts/openwrt >/dev/null
+podman build --quiet -t "$LINUX_IMAGE" scripts/linux >/dev/null
 
 # splot reaches the routers at their platform.ssh, `home` and `cabin`: hosts of
 # an ssh config of the check's own, with a key of its own, through an `ssh`
@@ -70,7 +74,40 @@ chmod +x "$work/bin/ssh"
 : >"$work/ssh_config"
 
 splot() { PATH="$work/bin:$PATH" "$BINARY" --config "$work/splot.yml" "$@"; }
-run() { podman exec "splot-openwrt-mesh-$1" sh -c "$2"; }
+# The container of node $1 (`home`, `cabin`, `barn`).
+container() {
+	case $1 in
+	barn) echo splot-linux-mesh-barn ;;
+	*) echo "splot-openwrt-mesh-$1" ;;
+	esac
+}
+run() { podman exec "$(container "$1")" sh -c "$2"; }
+
+# Lets the check in at node $1 over ssh: a host of its ssh config.
+reachable() {
+	cat >>"$work/ssh_config" <<EOF
+Host $1
+	HostName 127.0.0.1
+	Port $(podman port "$(container "$1")" 22/tcp | sed 's/.*://')
+	User root
+	IdentityFile $work/key
+	IdentitiesOnly yes
+	StrictHostKeyChecking no
+	UserKnownHostsFile /dev/null
+	LogLevel ERROR
+
+EOF
+	for _ in $(seq 30); do
+		PATH="$work/bin:$PATH" ssh "$1" true 2>/dev/null && return 0
+		sleep 1
+	done
+	echo "$1: no ssh within 30 s" >&2
+	return 1
+}
+
+# The names of the nodes' endpoints: this machine, at the container's
+# gateway's address, where each node's WireGuard port is published.
+ENDPOINTS='home.example.net cabin.example.net barn.example.net'
 
 # Boots router $1 (`home`, `cabin`) with its WireGuard port $2, and lets the
 # check in over ssh.
@@ -100,33 +137,37 @@ boot() {
 	# address; WireGuard's ports are let in on the WAN, as an operator would.
 	run "$name" "chmod 600 /etc/dropbear/authorized_keys
 		gateway=\$(ip -4 route show default | awk '{ print \$3 }')
-		echo \"\$gateway home.example.net cabin.example.net\" >>/etc/hosts
+		echo \"\$gateway $ENDPOINTS\" >>/etc/hosts
 		uci add firewall rule >/dev/null
 		uci set firewall.@rule[-1].name='Allow-WireGuard-for-splot-check'
 		uci set firewall.@rule[-1].src=wan
 		uci set firewall.@rule[-1].proto=udp
-		uci set firewall.@rule[-1].dest_port='$HOME_PORT-$CABIN_PORT'
+		uci set firewall.@rule[-1].dest_port='$HOME_PORT-$BARN_PORT'
 		uci set firewall.@rule[-1].target=ACCEPT
 		uci commit firewall
 		fw4 reload >/dev/null 2>&1"
-	cat >>"$work/ssh_config" <<EOF
-Host $name
-	HostName 127.0.0.1
-	Port $(podman port "$container" 22/tcp | sed 's/.*://')
-	User root
-	IdentityFile $work/key
-	IdentitiesOnly yes
-	StrictHostKeyChecking no
-	UserKnownHostsFile /dev/null
-	LogLevel ERROR
+	reachable "$name"
+}
 
-EOF
-	for _ in $(seq 30); do
-		PATH="$work/bin:$PATH" ssh "$name" true 2>/dev/null && return 0
+# Boots Barn, the Linux node: Debian with systemd and wg-quick, its WireGuard
+# port published like the routers'.
+boot_barn() {
+	podman rm --force --ignore --time 0 splot-linux-mesh-barn >/dev/null
+	podman run --detach --name splot-linux-mesh-barn --privileged --systemd=always \
+		--network pasta:--map-gw --publish 127.0.0.1::22 \
+		--publish "127.0.0.1:$BARN_PORT:$BARN_PORT/udp" "$LINUX_IMAGE" >/dev/null
+
+	local state
+	for _ in $(seq 60); do
+		state=$(run barn 'systemctl is-system-running 2>/dev/null' || true)
+		case $state in running | degraded) break ;; esac
 		sleep 1
 	done
-	echo "$name: no ssh within 30 s" >&2
-	return 1
+	podman cp "$work/key.pub" splot-linux-mesh-barn:/root/authorized_keys
+	run barn "install -d -m 700 /root/.ssh && install -m 600 /root/authorized_keys /root/.ssh/authorized_keys
+		gateway=\$(ip -4 route show default | awk '{ print \$3 }')
+		echo \"\$gateway $ENDPOINTS\" >>/etc/hosts"
+	reachable barn
 }
 
 # The mesh, with each router's public key ($1, $2).
@@ -217,7 +258,11 @@ else
 fi
 
 # Across the mesh: what each router holds, and whether a run is left there.
-held() { run "$1" 'md5sum /etc/config/network; [ ! -e /tmp/splot/run ] || echo "a run is left"'; }
+held() {
+	local file=/etc/config/network
+	[ "$1" != barn ] || file=/etc/wireguard/spl_mesh.conf
+	run "$1" "md5sum $file; [ ! -e /tmp/splot/run ] || echo 'a run is left'"
+}
 last() { run "$1" 'cat /tmp/splot/last 2>/dev/null' || true; }
 
 # Without a terminal to ask on, and without --yes, it refuses before it reaches
@@ -322,10 +367,80 @@ else
 		"exit $status: $output"$'\n'"cabin: $(last cabin)"
 fi
 
+# A Linux node joins: Barn, with a key of its own and a preshared key with
+# each router. Every node's peer list changes, in one run. A run checks only
+# the tunnels that worked before it, so the new ones are pinged here.
+barn() {
+	cat <<EOF
+  Barn:
+    platform:
+      os: linux
+      wireguard: wg-quick
+      firewall: none
+      dhcp: none
+      dns: none
+      ssh: barn
+    publicKey: $1
+    endpoint: barn.example.net
+    listenPort: $BARN_PORT
+    meshIp: 10.100.0.4
+EOF
+}
+# The mesh with Barn ($1 its key), and the clients the config has.
+with_barn() {
+	{
+		mesh "$home_key" "$cabin_key"
+		barn "$1"
+		sed -n '/^clients:/,$p' "$work/splot.yml"
+	} >"$work/splot.yml.new"
+	mv "$work/splot.yml.new" "$work/splot.yml"
+}
+# Its setup without the config's warning (Barn leaves its firewall alone): a
+# failure there shows in the check after it.
+boot_barn
+with_barn BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+splot init --node Barn >/dev/null 2>&1
+with_barn "$(run barn 'sed -n "s/^private-key //p" /etc/splot/keys | wg pubkey')"
+for router in Home Cabin; do
+	psk=$(run home 'wg genpsk')
+	splot psk set --node "$router" Barn <<<"$psk" >/dev/null 2>&1
+	splot psk set --node Barn "$router" <<<"$psk" >/dev/null 2>&1
+done
+output=$(splot apply --yes 2>&1) && status=0 || status=$?
+if [ "$status" -eq 0 ] && grep -q '^Applied: Barn, Cabin, Home$' <<<"$output" &&
+	grep -q '^Confirmed: splot reached every node again, and each keeps the change.$' <<<"$output" &&
+	run home 'ping -c 3 -W 2 10.100.0.4 >/dev/null' && run cabin 'ping -c 3 -W 2 10.100.0.4 >/dev/null' &&
+	run barn 'ping -c 3 -W 2 10.100.0.1 >/dev/null && ping -c 3 -W 2 10.100.0.2 >/dev/null' &&
+	run home 'ping -c 3 -W 2 10.100.0.2 >/dev/null'; then
+	pass "a Linux node joins: every node's peers in one run, all confirmed, each pair answers"
+else
+	fail "a Linux node joins: every node's peers in one run, all confirmed, each pair answers" \
+		"exit $status: $output"$'\n'"$(run barn 'wg show spl_mesh' 2>&1)"
+fi
+
+# Home and Cabin dial each other where nothing answers: they lose each other,
+# so every node puts back what it had, the Linux node too.
+cp "$work/splot.yml" "$work/splot.yml.good"
+sed -i 's/endpoint: home.example.net/endpoint: 192.0.2.1/; s/endpoint: cabin.example.net/endpoint: 192.0.2.2/' "$work/splot.yml"
+before="$(held home)$(held cabin)$(held barn)"
+output=$(splot apply --yes 2>&1) && status=0 || status=$?
+cp "$work/splot.yml.good" "$work/splot.yml"
+if [ "$status" -ne 0 ] && grep -q '^Checked Home: lost Cabin' <<<"$output" &&
+	grep -q '^  Barn   put back$' <<<"$output" && grep -q '^  Cabin  put back$' <<<"$output" &&
+	grep -q '^  Home   put back$' <<<"$output" &&
+	[ "$(held home)$(held cabin)$(held barn)" = "$before" ] &&
+	grep -q "rolled back" <<<"$(last barn)" &&
+	run home 'ping -c 3 -W 2 10.100.0.2 >/dev/null' && run barn 'ping -c 3 -W 2 10.100.0.1 >/dev/null'; then
+	pass "with a Linux node: Home and Cabin cut off from each other, every node put back, Barn too"
+else
+	fail "with a Linux node: Home and Cabin cut off from each other, every node put back, Barn too" \
+		"exit $status: $output"$'\n'"barn: $(last barn)"
+fi
+
 if [ "${SPLOT_CHECK_KEEP:-}" = 1 ]; then
 	echo "  ----  kept: podman exec -it splot-openwrt-mesh-home sh"
 else
-	podman rm --force --time 0 splot-openwrt-mesh-home splot-openwrt-mesh-cabin >/dev/null
+	podman rm --force --time 0 splot-openwrt-mesh-home splot-openwrt-mesh-cabin splot-linux-mesh-barn >/dev/null
 fi
 
 echo
