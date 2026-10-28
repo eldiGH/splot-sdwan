@@ -289,7 +289,7 @@ pub fn apply(
 
 /// What a node checks after a change: its node peers, each pinged at its mesh
 /// IP. The ones that answer before the change must answer after it.
-fn probes(plan: &NodePlan) -> Vec<Probe> {
+pub(crate) fn probes(plan: &NodePlan) -> Vec<Probe> {
     plan.wireguard
         .iter()
         .flat_map(|wireguard| &wireguard.peers)
@@ -396,7 +396,7 @@ pub fn psk_set(
 /// Refuses a node that asks splot for what it can check but not do yet: on
 /// Linux, its firewall and DHCP. Applying the rest alone would leave the node
 /// short of what the config says.
-fn check_applicable(network: &Network, node: &Identifier) -> anyhow::Result<()> {
+pub(crate) fn check_applicable(network: &Network, node: &Identifier) -> anyhow::Result<()> {
     let Some(node) = network.node(node) else {
         return Ok(());
     };
@@ -433,7 +433,7 @@ fn check_applicable(network: &Network, node: &Identifier) -> anyhow::Result<()> 
 
 /// The plan for `node`; an error naming the config's nodes when it has no node
 /// of that name.
-fn node_plan(network: &Network, node: &Identifier) -> anyhow::Result<NodePlan> {
+pub(crate) fn node_plan(network: &Network, node: &Identifier) -> anyhow::Result<NodePlan> {
     plan::plan(network, node).with_context(|| {
         let nodes: Vec<String> = network
             .nodes()

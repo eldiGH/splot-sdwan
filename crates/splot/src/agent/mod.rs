@@ -94,6 +94,12 @@ fn error(Failure(messages): Failure) -> anyhow::Error {
     error
 }
 
+/// Whether `error` is splot losing the node (ssh, the session) rather than the
+/// agent refusing what it was asked: when it is, what was asked may be done.
+pub fn lost(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.is::<session::Error>())
+}
+
 /// The agent's answer wasn't one to what splot asked.
 pub fn unexpected(reply: Reply) -> anyhow::Error {
     anyhow::anyhow!("the agent answered what splot didn't ask: {reply:?}")
@@ -102,6 +108,21 @@ pub fn unexpected(reply: Reply) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lost_session_is_told_from_the_agents_refusal() {
+        let ended = anyhow::Error::from(session::Error::Ended {
+            destination: "cabin".to_owned(),
+            when: "before it answered",
+            code: Some(255),
+        });
+        assert!(lost(&ended));
+        assert!(lost(&ended.context("splot couldn't confirm Cabin")));
+
+        let refused = error(Failure(vec!["too late".to_owned()]));
+        assert!(!lost(&refused));
+        assert!(!lost(&unexpected(Reply::Stored)));
+    }
 
     #[test]
     fn an_agents_failure_reads_as_its_error_with_its_causes() {

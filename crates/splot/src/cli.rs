@@ -36,14 +36,14 @@ pub struct Reach {
     /// Reach the node over ssh at DESTINATION, anything ssh takes (`root@router`,
     /// a host of ~/.ssh/config). Without it, at the node's platform.ssh; without
     /// that, splot acts on the machine it runs on
-    #[arg(long, value_name = "DESTINATION")]
+    #[arg(long, value_name = "DESTINATION", requires = "node")]
     ssh: Option<SshDestination>,
     /// Act on the machine splot runs on, even when the config gives the node a
     /// platform.ssh
-    #[arg(long, conflicts_with = "ssh")]
+    #[arg(long, conflicts_with = "ssh", requires = "node")]
     local: bool,
     /// Send the node this agent instead of the one splot carries for its CPU
-    #[arg(long, value_name = "FILE", conflicts_with = "local")]
+    #[arg(long, value_name = "FILE", conflicts_with = "local", requires = "node")]
     agent: Option<PathBuf>,
 }
 
@@ -89,11 +89,14 @@ pub enum Command {
         reach: Reach,
     },
 
-    /// Make the node hold what the config says it should
+    /// Make the node hold what the config says it should; without --node, every
+    /// node, all or nothing
     Apply {
-        /// The node this peer is, as the config names it
+        /// The node this peer is, as the config names it. Without it, every node
+        /// splot manages, each reached at its platform.ssh: all keep the change,
+        /// or all put back what they had
         #[arg(long)]
-        node: Identifier,
+        node: Option<Identifier>,
         #[command(flatten)]
         reach: Reach,
         /// Show what apply would change, changing nothing
@@ -109,6 +112,9 @@ pub enum Command {
             conflicts_with = "dry_run"
         )]
         confirm_within: u32,
+        /// Across the mesh, apply the plan without asking first
+        #[arg(long, short, conflicts_with_all = ["node", "dry_run"])]
+        yes: bool,
     },
 
     /// Validate the config and report all errors and warnings
@@ -173,16 +179,50 @@ mod tests {
         let cli = parse(&["splot", "apply", "--node", "Home"]);
         assert!(matches!(
             cli.command(),
-            Some(Command::Apply { node, dry_run: false, .. }) if node.as_ref() == "Home"
+            Some(Command::Apply { node: Some(node), dry_run: false, .. }) if node.as_ref() == "Home"
         ));
     }
 
     #[test]
     fn a_command_that_acts_on_a_node_needs_its_name() {
+        for args in [&["splot", "psk", "set", "Cabin"][..], &["splot", "init"]] {
+            assert!(Cli::try_parse_from(args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn apply_without_a_node_is_a_run_across_the_mesh() {
+        for (args, dry_run, yes) in [
+            (&["splot", "apply"][..], false, false),
+            (&["splot", "apply", "--dry-run"], true, false),
+            (&["splot", "apply", "--yes"], false, true),
+            (
+                &["splot", "apply", "-y", "--confirm-within", "60"],
+                false,
+                true,
+            ),
+        ] {
+            let cli = parse(args);
+            let Some(Command::Apply {
+                node: None,
+                dry_run: d,
+                yes: y,
+                ..
+            }) = cli.command()
+            else {
+                panic!("{args:?}: not apply across the mesh");
+            };
+            assert_eq!((*d, *y), (dry_run, yes), "{args:?}");
+        }
+
+        // It asks first unless told not to, and only when it applies.
         for args in [
-            &["splot", "apply"][..],
-            &["splot", "apply", "--dry-run"],
-            &["splot", "psk", "set", "Cabin"],
+            &["splot", "apply", "--node", "Home", "--yes"][..],
+            &["splot", "apply", "--dry-run", "--yes"],
+            // Each node is reached at its own platform.ssh.
+            &["splot", "apply", "--ssh", "router"],
+            &["splot", "apply", "--local"],
+            &["splot", "apply", "--agent", "./agent"],
         ] {
             assert!(Cli::try_parse_from(args).is_err(), "{args:?}");
         }

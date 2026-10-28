@@ -304,19 +304,31 @@ pub fn check(id: &str) -> Result<(Vec<String>, Vec<String>), Error> {
     Ok(probe::check(&info.answered, within)?)
 }
 
-/// Keeps what run `id` applied.
+/// Keeps what run `id` applied. Asked again (its answer lost), it answers the
+/// same: it's kept.
 pub fn confirm(id: &str) -> Result<(), Error> {
     confirm_in(Path::new(DIR), id)
 }
 
 fn confirm_in(dir: &Path, id: &str) -> Result<(), Error> {
-    applied_run(dir, id)?;
-    if !decide(dir, ARMED, CONFIRMED)? {
-        return Err(Error::TooLate { id: id.to_owned() });
+    match this_run(dir, id) {
+        Ok(_) => {}
+        Err(Error::Confirmed { .. }) => return Ok(()),
+        Err(err) => return Err(err),
     }
-    end(dir, id, "confirmed");
+    if decide(dir, ARMED, CONFIRMED)? {
+        end(dir, id, "confirmed");
+        return Ok(());
+    }
 
-    Ok(())
+    // Not applied yet, or decided already: kept, or being put back.
+    if dir.join(CONFIRMED).exists() {
+        Ok(())
+    } else if dir.join(PREPARED).exists() {
+        Err(Error::NotApplied { id: id.to_owned() })
+    } else {
+        Err(Error::TooLate { id: id.to_owned() })
+    }
 }
 
 /// Puts back what the node had before run `id`, now: nothing, when what it
@@ -531,6 +543,8 @@ mod tests {
         confirm_in(&dir, "r1").unwrap();
         assert!(!dir.exists());
         assert!(last_of(&dir).starts_with("r1 confirmed at "));
+        // Asked again (its answer was lost): it is.
+        confirm_in(&dir, "r1").unwrap();
         // Its deadline passing does nothing now.
         assert_eq!(tick(&dir, u64::MAX, |_| panic!("restored")), Tick::Over);
     }
@@ -641,12 +655,14 @@ mod tests {
         let err = confirm_in(&dir, "r1").unwrap_err();
         assert!(matches!(err, Error::TooLate { .. }), "{err}");
 
-        // Confirmed first: the rollback is refused, and restores nothing.
+        // Confirmed first: the rollback is refused, and restores nothing; the
+        // confirm asked again (by a splot that lost its answer) is answered.
         let temp = TempDir::new("run-race-2");
         let dir = applied(&temp, "r1", 120);
         assert!(decide(&dir, ARMED, CONFIRMED).unwrap());
         let err = rollback_in(&dir, "r1", |_| panic!("restored")).unwrap_err();
         assert!(matches!(err, Error::Confirmed { .. }), "{err}");
+        confirm_in(&dir, "r1").unwrap();
 
         // Cancelled first: the go is too late, and applies nothing.
         let temp = TempDir::new("run-race-3");

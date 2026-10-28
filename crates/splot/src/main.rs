@@ -14,6 +14,7 @@ mod commands;
 mod config;
 mod consts;
 mod env;
+mod mesh_run;
 mod model;
 mod plan;
 #[cfg(test)]
@@ -47,10 +48,11 @@ fn main() -> anyhow::Result<()> {
             commands::init(&network, node, *os, &mut reach.agent(configured(node))?)
         }
         Command::Apply {
-            node,
+            node: Some(node),
             dry_run,
             confirm_within,
             reach,
+            ..
         } => commands::apply(
             &network,
             node,
@@ -58,6 +60,13 @@ fn main() -> anyhow::Result<()> {
             *confirm_within,
             &mut reach.agent(configured(node))?,
         ),
+        Command::Apply {
+            node: None,
+            dry_run,
+            confirm_within,
+            yes,
+            ..
+        } => mesh_run::apply(&network, *dry_run, *confirm_within, *yes),
         Command::Check => Ok(()),
         Command::Psk {
             command: PskCommand::Set { node, peer, reach },

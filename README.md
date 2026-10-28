@@ -111,13 +111,17 @@ Requires Rust (edition 2024) to build, and on the node: OpenWrt with `uci` and W
 
 splot runs on your machine and reaches each node over ssh, at the node's `platform.ssh` in the config (anything `ssh` takes: `root@router`, a host of your `~/.ssh/config`), or at `--ssh <destination>` for one command. It sends the node a small agent for its CPU, which does the work there and is gone afterwards: nothing is installed on the node, and its keys never leave it. With neither, or with `--local`, splot acts on the machine it runs on.
 
+`splot apply` without `--node` is one run across the mesh: every node keeps the change, or every node puts back what it had. splot shows the plan for every node and asks first (`--yes` doesn't; without a terminal it needs `--yes`); then every node prepares, applies at once, checks that its peers still answer through the mesh, and is confirmed. A change that cuts a node off, or that splot can't confirm in time (`--confirm-within`, default 2 minutes), is put back everywhere, by each node itself if splot can't reach it.
+
 ```sh
 scripts/dist.sh            # build target/dist/splot, carrying the agents (needs the Rust targets it names)
 cd target/dist             # with splot.yml in the working directory:
 ./splot check              # validate the config, report errors and warnings
 ./splot init --node Cabin --ssh root@cabin   # a new router, not in the config yet: give it its WireGuard key; print its entry
-./splot apply --node Cabin --dry-run   # show what apply would change (placeholders for the keys), at Cabin's platform.ssh
-./splot apply --node Cabin             # make Cabin hold what the config says
+./splot apply --dry-run    # show what every node would change (placeholders for the keys)
+./splot apply              # make every node hold what the config says, or none: shows the plan, asks, applies
+./splot apply --node Cabin --dry-run   # the same for Cabin alone, at its platform.ssh
+./splot apply --node Cabin             # make Cabin alone hold what the config says
 ./splot psk set --node Cabin Home < home.psk  # store Cabin's preshared key with Home
 ```
 

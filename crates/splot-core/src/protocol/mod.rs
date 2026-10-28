@@ -17,7 +17,7 @@ use crate::{
 
 /// The protocol's version: splot and an agent talk only when theirs are the
 /// same. A change to a request or a reply bumps it.
-pub const PROTOCOL: u32 = 5;
+pub const PROTOCOL: u32 = 6;
 
 /// What splot asks of the agent.
 #[derive(Debug, Serialize, Deserialize)]
@@ -55,8 +55,8 @@ pub enum Request {
     /// Whether the node's peers that answered before the run still do:
     /// `Checked`.
     Check { run: String },
-    /// Keep what the run applied: `Confirmed`. Too late once the node has
-    /// rolled back.
+    /// Keep what the run applied: `Confirmed`, also when it's kept already.
+    /// Too late once the node has rolled back.
     Confirm { run: String },
     /// Put back what the node had before the run (nothing, before the go):
     /// `RolledBack`, also when it's put back already. Refused once it's

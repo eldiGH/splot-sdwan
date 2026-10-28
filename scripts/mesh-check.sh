@@ -2,7 +2,8 @@
 # Checks splot across a mesh: two OpenWrt routers, Home and Cabin, in containers
 # with a real WireGuard tunnel between them. splot runs here and reaches each
 # over ssh. It checks that an apply is confirmed only while the other router
-# still answers through the tunnel, and rolled back when the change cuts it off.
+# still answers through the tunnel, and rolled back when the change cuts it off;
+# then runs across the mesh, both routers at once: all or nothing.
 #
 #   scripts/mesh-check.sh [VERSION]     default: the newest version in use
 #
@@ -45,12 +46,26 @@ podman build --quiet --build-arg "OPENWRT_VERSION=$VERSION" -t "$IMAGE" scripts/
 
 # splot reaches the routers at their platform.ssh, `home` and `cabin`: hosts of
 # an ssh config of the check's own, with a key of its own, through an `ssh`
-# first on its PATH.
+# first on its PATH. While $work/lose-<host> exists, splot loses that host after
+# its first session: as if the change had cut it off.
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
 ssh-keygen -q -t ed25519 -N '' -C splot-check -f "$work/key"
-printf '#!/bin/sh\nexec %s -F %s "$@"\n' "$(command -v ssh)" "$work/ssh_config" >"$work/bin/ssh"
+cat >"$work/bin/ssh" <<EOF
+#!/bin/sh
+for arg; do
+	lose="$work/lose-\$arg"
+	[ -e "\$lose" ] || continue
+	sessions=\$(cat "\$lose")
+	echo \$((sessions + 1)) >"\$lose"
+	if [ "\$sessions" -ge 1 ]; then
+		echo "ssh: lost \$arg (the check cuts it off)" >&2
+		exit 255
+	fi
+done
+exec $(command -v ssh) -F $work/ssh_config "\$@"
+EOF
 chmod +x "$work/bin/ssh"
 : >"$work/ssh_config"
 
@@ -199,6 +214,112 @@ if [ "$status" -ne 0 ] &&
 else
 	fail "a preshared key changed on one end: Cabin lost, rolled back, the tunnel works again" \
 		"exit $status: $output"$'\n'"last: $last"$'\n'"before: $before"$'\n'"after: $after"
+fi
+
+# Across the mesh: what each router holds, and whether a run is left there.
+held() { run "$1" 'md5sum /etc/config/network; [ ! -e /tmp/splot/run ] || echo "a run is left"'; }
+last() { run "$1" 'cat /tmp/splot/last 2>/dev/null' || true; }
+
+# Without a terminal to ask on, and without --yes, it refuses before it reaches
+# any router.
+before="$(held home)$(held cabin)"
+output=$(splot apply </dev/null 2>&1) && status=0 || status=$?
+if [ "$status" -ne 0 ] && grep -q "there's no terminal to ask on: give --yes" <<<"$output" &&
+	[ "$(held home)$(held cabin)" = "$before" ]; then
+	pass "across the mesh: without a terminal or --yes, refused before anything"
+else
+	fail "across the mesh: without a terminal or --yes, refused before anything" "exit $status: $output"
+fi
+
+# The dry run shows each router's plan: Home holds another preshared key for
+# Cabin since the last check put its config back; Cabin doesn't have Phone yet,
+# a global client, so a peer of every router.
+output=$(splot apply --dry-run 2>&1) || true
+if grep -q '^== Cabin: network, firewall$' <<<"$output" && grep -q '^== Home: network$' <<<"$output" &&
+	grep -q '^set network.spl_wireguard_spl_mesh_Phone=' <<<"$output" &&
+	grep -q "^set network.spl_wireguard_spl_mesh_Cabin.preshared_key='<preshared key>'$" <<<"$output" &&
+	[ "$(held home)$(held cabin)" = "$before" ]; then
+	pass "across the mesh: the dry run shows each router's plan, changing nothing"
+else
+	fail "across the mesh: the dry run shows each router's plan, changing nothing" "$output"
+fi
+
+# A preshared key changed on both ends: one router alone can't (the other would
+# hold the old one), both in one run can.
+psk=$(run home 'wg genpsk')
+splot psk set --node Home Cabin <<<"$psk" >/dev/null
+splot psk set --node Cabin Home <<<"$psk" >/dev/null
+output=$(splot apply --yes 2>&1) && status=0 || status=$?
+again=$(splot apply --yes 2>&1) || true
+if [ "$status" -eq 0 ] && grep -q '^Applied: Cabin, Home$' <<<"$output" &&
+	grep -q '^Checked Cabin: Home answers as before$' <<<"$output" &&
+	grep -q '^Checked Home: Cabin answers as before$' <<<"$output" &&
+	grep -q '^Confirmed: splot reached every node again, and each keeps the change.$' <<<"$output" &&
+	[ "$(run home 'wg show spl_mesh preshared-keys' | awk -v peer="$cabin_key" '$1 == peer { print $2 }')" = "$psk" ] &&
+	[ "$(run cabin 'wg show spl_mesh preshared-keys' | awk -v peer="$home_key" '$1 == peer { print $2 }')" = "$psk" ] &&
+	run home 'ping -c 3 -W 2 10.100.0.2 >/dev/null' && [ "$(tail -1 <<<"$again")" = "Nothing to change." ]; then
+	pass "across the mesh: a preshared key changed on both ends, both confirmed, the tunnel up with it"
+else
+	fail "across the mesh: a preshared key changed on both ends, both confirmed, the tunnel up with it" \
+		"exit $status: $output"$'\n'"again: $again"
+fi
+
+# Each router dials the other where nothing answers: both lose the other, so
+# both put back what they had, and the tunnel works again.
+cp "$work/splot.yml" "$work/splot.yml.good"
+sed -i 's/endpoint: home.example.net/endpoint: 192.0.2.1/; s/endpoint: cabin.example.net/endpoint: 192.0.2.2/' "$work/splot.yml"
+before="$(held home)$(held cabin)"
+output=$(splot apply --yes 2>&1) && status=0 || status=$?
+cp "$work/splot.yml.good" "$work/splot.yml"
+if [ "$status" -ne 0 ] && grep -q '^Checked Home: lost Cabin$' <<<"$output" &&
+	grep -q '^  Home   put back$' <<<"$output" && grep -q '^  Cabin  put back$' <<<"$output" &&
+	grep -q 'the change cut Cabin off from Home, and Home off from Cabin, so no node kept it' <<<"$output" &&
+	[ "$(held home)$(held cabin)" = "$before" ] &&
+	grep -q "rolled back" <<<"$(last home)" && grep -q "rolled back" <<<"$(last cabin)" &&
+	run home 'ping -c 3 -W 2 10.100.0.2 >/dev/null'; then
+	pass "across the mesh: a change that cuts the routers off from each other, both put back"
+else
+	fail "across the mesh: a change that cuts the routers off from each other, both put back" \
+		"exit $status: $output"$'\n'"home: $(last home)"$'\n'"cabin: $(last cabin)"
+fi
+
+# A new client on both; Cabin holds uncommitted uci changes, so it can't
+# prepare: Home, prepared, is cancelled, and nothing is applied anywhere.
+cat >>"$work/splot.yml" <<'EOF'
+  Tablet:
+    publicKey: TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTA=
+    meshIp: 10.100.1.11
+    psk: false
+EOF
+run cabin 'uci set network.splot_check=interface'
+before="$(held home)$(held cabin)"
+output=$(splot apply --yes 2>&1) && status=0 || status=$?
+run cabin 'uci revert network'
+if [ "$status" -ne 0 ] && grep -q "splot couldn't prepare every node as planned, so no node changed anything" <<<"$output" &&
+	grep -q '^  Cabin: network already has uncommitted uci changes' <<<"$output" &&
+	grep -q '^  Home   nothing applied$' <<<"$output" && grep -q '^  Cabin  nothing to put back$' <<<"$output" &&
+	[ "$(held home)$(held cabin)" = "$before" ] && grep -q "cancelled" <<<"$(last home)"; then
+	pass "across the mesh: a router that can't prepare, the other cancelled, nothing applied"
+else
+	fail "across the mesh: a router that can't prepare, the other cancelled, nothing applied" \
+		"exit $status: $output"$'\n'"home: $(last home)"
+fi
+
+# splot loses Cabin after the go: Home is put back, and Cabin, waited for until
+# its deadline, put back what it had by itself.
+before_cabin=$(held cabin)
+echo 0 >"$work/lose-cabin"
+output=$(splot apply --yes --confirm-within 15 2>&1) && status=0 || status=$?
+rm "$work/lose-cabin"
+if [ "$status" -ne 0 ] && grep -q '^Applied: Cabin, Home$' <<<"$output" && grep -q "^Couldn't check Cabin: " <<<"$output" &&
+	grep -q '^  Home   put back$' <<<"$output" &&
+	grep -q '^  Cabin  unreachable: waiting for its deadline' <<<"$output" &&
+	grep -q '^  Cabin  still unreachable: ' <<<"$output" &&
+	[ "$(held cabin)" = "$before_cabin" ] && grep -q "rolled back" <<<"$(last cabin)"; then
+	pass "across the mesh: splot loses a router after the go, the other put back, it puts back by itself"
+else
+	fail "across the mesh: splot loses a router after the go, the other put back, it puts back by itself" \
+		"exit $status: $output"$'\n'"cabin: $(last cabin)"
 fi
 
 if [ "${SPLOT_CHECK_KEEP:-}" = 1 ]; then
