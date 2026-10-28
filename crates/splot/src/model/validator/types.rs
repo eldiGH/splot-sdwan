@@ -38,6 +38,13 @@ pub enum ValidationError {
         "{at}: the node has a hub, but splot leaves its WireGuard alone - hub clients are peers on splot's mesh interface; a WireGuard server of your own, with its own subnet, is a zone"
     )]
     HubWithoutWireGuard { at: ConfigLocation },
+    #[error(
+        "{at}: fw4 can't name a firewall zone '{zone}' - its zone names don't start with a digit, and on OpenWrt this is the zone's name there"
+    )]
+    Fw4ZoneName {
+        zone: Identifier,
+        at: ConfigLocation,
+    },
 
     // names
     #[error("{at}: name '{name}' is already used as another global name (node, client, or tag)")]
@@ -220,20 +227,11 @@ pub enum ValidationError {
     },
 
     #[error(
-        "{at}: wanZone '{wan_zone}' collides with another zone at {with} — wanZone must not match any zone or the splot-managed mesh interface on the same node"
+        "{at}: wanZone '{wan_zone}' collides with another zone at {with} — wanZone must not match any zone on the same node"
     )]
     WanZoneNameCollision {
         wan_zone: Identifier,
         with: ConfigLocation,
-        at: ConfigLocation,
-    },
-
-    #[error(
-        "{at}: wanZone '{wan_zone}' uses the name reserved for the splot-managed mesh interface ('{}')",
-        consts::MESH_INTERFACE_NAME
-    )]
-    WanZoneReservedName {
-        wan_zone: Identifier,
         at: ConfigLocation,
     },
 
@@ -252,6 +250,7 @@ impl ValidationError {
             Self::ConcernMissing { at, .. } => at,
             Self::UnsupportedProgram { at, .. } => at,
             Self::HubWithoutWireGuard { at } => at,
+            Self::Fw4ZoneName { at, .. } => at,
             Self::GlobalNameCollision { at, .. } => at,
             Self::InvalidPrefix { at, .. } => at,
             Self::ReservedName { at, .. } => at,
@@ -281,7 +280,6 @@ impl ValidationError {
             Self::WanViaNetworkMissing { at, .. } => at,
             Self::WanViaUnreachable { at, .. } => at,
             Self::WanZoneNameCollision { at, .. } => at,
-            Self::WanZoneReservedName { at, .. } => at,
             Self::EndpointNoWanZone { at, .. } => at,
         }
     }
@@ -486,6 +484,10 @@ mod tests {
                 at: at(),
             },
             ValidationError::HubWithoutWireGuard { at: at() },
+            ValidationError::Fw4ZoneName {
+                zone: id("1lan"),
+                at: at(),
+            },
             ValidationError::GlobalNameCollision {
                 name: id("Home"),
                 at: at(),
@@ -601,10 +603,6 @@ mod tests {
             ValidationError::WanZoneNameCollision {
                 wan_zone: id("lan"),
                 with: with(),
-                at: at(),
-            },
-            ValidationError::WanZoneReservedName {
-                wan_zone: id("mesh"),
                 at: at(),
             },
             ValidationError::EndpointNoWanZone {

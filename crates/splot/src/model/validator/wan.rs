@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::{
     config::{Client, Config, Node, ServiceHost, ServiceWan},
-    consts,
     model::{
         host::{Host, HostAddress, Place},
         platform::Platform,
@@ -200,8 +199,8 @@ pub(super) fn warn_unused_wan_zones(
 }
 
 /// A node others dial needs a `wanZone` where splot lets its listen port in, as
-/// it does a `wan.via` node's forwards. A `wanZone` must not reuse a zone's name
-/// or the mesh interface's.
+/// it does a `wan.via` node's forwards. A `wanZone` must not reuse a zone's
+/// name.
 pub(super) fn check_wan_zones(
     config: &Config,
     platforms: &BTreeMap<Identifier, Platform>,
@@ -221,16 +220,6 @@ pub(super) fn check_wan_zones(
             continue;
         };
 
-        let at = || ConfigLocation::Node(node_name.clone(), NodeLoc::WanZone);
-
-        if wan_zone == consts::MESH_INTERFACE_NAME {
-            report.errors.push(ValidationError::WanZoneReservedName {
-                wan_zone: wan_zone.clone(),
-                at: at(),
-            });
-            continue;
-        }
-
         if node.zones.contains_key(wan_zone) {
             report.errors.push(ValidationError::WanZoneNameCollision {
                 wan_zone: wan_zone.clone(),
@@ -238,7 +227,7 @@ pub(super) fn check_wan_zones(
                     node_name.clone(),
                     NodeLoc::Zone(wan_zone.clone(), ZoneLoc::Root),
                 ),
-                at: at(),
+                at: ConfigLocation::Node(node_name.clone(), NodeLoc::WanZone),
             });
         }
     }
@@ -733,10 +722,8 @@ nodes:
     }
 
     #[test]
-    fn wan_zone_reserved_mesh_name() {
-        // wanZone "mesh" collides with the splot-managed mesh interface name — a
-        // reserved-name error (no config location to point `with` at), distinct
-        // from a collision with the operator's own zone.
+    fn a_wan_zone_may_be_called_mesh() {
+        // splot's mesh zone is spl_mesh in fw4, a name splot.yml can't give.
         let r = report(
             "
 meshNetwork: 10.100.0.0/24
@@ -751,16 +738,7 @@ nodes:
     wanZone: mesh
 ",
         );
-        assert!(error_at(
-            &r,
-            "nodes.Home.wanZone",
-            |e| matches!(e, ValidationError::WanZoneReservedName { wan_zone, .. } if wan_zone == "mesh")
-        ));
-        // ...and it must NOT be misreported as an ordinary name collision.
-        assert!(!has_error(&r, |e| matches!(
-            e,
-            ValidationError::WanZoneNameCollision { .. }
-        )));
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
     }
 
     /// Home, whom Cabin dials, with the platform lines given and no wanZone;

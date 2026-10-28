@@ -47,7 +47,7 @@ set network.spl_wireguard_spl_mesh_Phone.route_allowed_ips='0'
 add_list network.spl_wireguard_spl_mesh_Phone.allowed_ips='10.100.0.100/32'
 # firewall
 set firewall.spl_zone_mesh='zone'
-set firewall.spl_zone_mesh.name='[SPLOT] mesh'
+set firewall.spl_zone_mesh.name='spl_mesh'
 set firewall.spl_zone_mesh.input='DROP'
 set firewall.spl_zone_mesh.output='ACCEPT'
 set firewall.spl_zone_mesh.forward='DROP'

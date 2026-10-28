@@ -11,9 +11,9 @@ use crate::{
         validator::types::{ValidationError, ValidationReport},
     },
     types::{
-        config_location::{ConfigLocation, HubLoc, NodeLoc, PlatformLoc},
+        config_location::{ConfigLocation, HubLoc, NodeLoc, PlatformLoc, ZoneLoc},
         identifier::Identifier,
-        platform::{Os, Program, Setting, names},
+        platform::{FirewallProgram, Os, Program, Setting, names},
     },
 };
 
@@ -36,10 +36,32 @@ pub(super) fn check_platforms(
                     at: ConfigLocation::Node(name.clone(), NodeLoc::Hub(HubLoc::Root)),
                 });
             }
+            if platform.firewall == Some(FirewallProgram::Fw4) {
+                check_fw4_zone_names(name, node, report);
+            }
 
             Some((name.clone(), platform))
         })
         .collect()
+}
+
+/// On OpenWrt a zone's key is the name of its fw4 zone, and so is `wanZone`.
+/// fw4's names can't start with a digit; a name in `splot.yml` may.
+fn check_fw4_zone_names(name: &Identifier, node: &config::Node, report: &mut ValidationReport) {
+    let zones = node
+        .zones
+        .keys()
+        .map(|zone| (zone, NodeLoc::Zone(zone.clone(), ZoneLoc::Root)));
+    let wan_zone = node.wan_zone.iter().map(|zone| (zone, NodeLoc::WanZone));
+
+    for (zone, at) in zones.chain(wan_zone) {
+        if zone.as_ref().starts_with(|c: char| c.is_ascii_digit()) {
+            report.errors.push(ValidationError::Fw4ZoneName {
+                zone: zone.clone(),
+                at: ConfigLocation::Node(name.clone(), at),
+            });
+        }
+    }
 }
 
 fn check_platform(
@@ -308,6 +330,39 @@ nodes:
         assert!(hub_error("      os: openwrt\n      wireguard: none"));
         assert!(!hub_error("      os: openwrt"));
         assert!(!hub_error("      os: openwrt\n      firewall: none"));
+    }
+
+    #[test]
+    fn fw4_names_no_zone_after_a_digit() {
+        // On OpenWrt a zone's key is its fw4 zone's name, and so is wanZone.
+        let zones = "    zones:
+      1lan: { address: 192.168.1.1/24 }
+      lan2: { address: 192.168.2.1/24 }
+";
+        let errors = |platform: &str, wan_zone: &str| {
+            let yaml =
+                home(platform).replace("    wanZone: wan\n", &format!("    wanZone: {wan_zone}\n"));
+            let r = report(&format!("{yaml}{zones}"));
+            [
+                "nodes.Home.zones.1lan",
+                "nodes.Home.zones.lan2",
+                "nodes.Home.wanZone",
+            ]
+            .into_iter()
+            .filter(|at| error_at(&r, at, |e| matches!(e, ValidationError::Fw4ZoneName { .. })))
+            .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            errors("      os: openwrt", "0wan"),
+            ["nodes.Home.zones.1lan", "nodes.Home.wanZone"]
+        );
+        assert_eq!(
+            errors("      os: openwrt", "wan"),
+            ["nodes.Home.zones.1lan"]
+        );
+        // Where splot leaves the firewall alone, no fw4 zone is named after them.
+        assert!(errors("      os: openwrt\n      firewall: none", "0wan").is_empty());
     }
 
     #[test]

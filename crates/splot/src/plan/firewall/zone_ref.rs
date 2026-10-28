@@ -2,30 +2,20 @@ use std::fmt;
 
 use crate::{consts, types::identifier::Identifier};
 
+/// One of the node's firewall zones: splot's mesh zone, or one the operator
+/// declares under the node's `zones`. Each backend names it its own way.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub enum ZoneRef {
     Mesh,
     Named(Identifier),
 }
 
-impl ZoneRef {
-    fn as_str(&self) -> &str {
-        match self {
-            Self::Mesh => consts::MESH_INTERFACE_NAME,
-            Self::Named(id) => id.as_ref(),
-        }
-    }
-}
-
-impl AsRef<str> for ZoneRef {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-
 impl fmt::Display for ZoneRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        match self {
+            Self::Mesh => f.write_str(consts::MESH_INTERFACE_NAME),
+            Self::Named(id) => write!(f, "{id}"),
+        }
     }
 }
 
@@ -38,24 +28,9 @@ mod tests {
     }
 
     #[test]
-    fn mesh_renders_constant() {
-        let z = ZoneRef::Mesh;
-        assert_eq!(z.to_string(), consts::MESH_INTERFACE_NAME);
-        assert_eq!(z.as_ref(), consts::MESH_INTERFACE_NAME);
-    }
-
-    #[test]
-    fn named_renders_its_name() {
-        let z = ZoneRef::Named(id("lan"));
-        assert_eq!(z.to_string(), "lan");
-        assert_eq!(z.as_ref(), "lan");
-    }
-
-    #[test]
-    fn display_eq_as_ref() {
-        for z in [ZoneRef::Mesh, ZoneRef::Named(id("guest"))] {
-            assert_eq!(z.to_string(), z.as_ref());
-        }
+    fn a_zone_reads_as_in_the_config() {
+        assert_eq!(ZoneRef::Mesh.to_string(), "mesh");
+        assert_eq!(ZoneRef::Named(id("lan")).to_string(), "lan");
     }
 
     #[test]

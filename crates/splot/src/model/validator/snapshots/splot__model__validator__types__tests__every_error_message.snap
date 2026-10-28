@@ -1,10 +1,11 @@
 ---
-source: src/model/validator/types.rs
+source: crates/splot/src/model/validator/types.rs
 expression: "messages.join(\"\\n\")"
 ---
 nodes.Home.meshIp: firewall left out - a linux node names the program behind every concern, or none to leave it alone
 nodes.Home.meshIp: splot can't manage wireguard with wg-quick on openwrt - there it's netifd, or none
 nodes.Home.meshIp: the node has a hub, but splot leaves its WireGuard alone - hub clients are peers on splot's mesh interface; a WireGuard server of your own, with its own subnet, is a zone
+nodes.Home.meshIp: fw4 can't name a firewall zone '1lan' - its zone names don't start with a digit, and on OpenWrt this is the zone's name there
 nodes.Home.meshIp: name 'Home' is already used as another global name (node, client, or tag)
 nodes.Home.meshIp: local name Cabin conflicts with global Cabin - rename one to avoid ambiguity
 nodes.Home.meshIp: name 'lan' is already used in the same node
@@ -33,6 +34,5 @@ nodes.Home.meshIp: qualified wan target form ({Node}.{Network}) is only allowed 
 nodes.Home.meshIp: qualified wan target references network 'iot' on node 'Home', but no such zone exists on that node
 nodes.Home.meshIp: qualified wan target 'Home.iot' requires this client to have an IP at ips.Home.iot — none declared
 nodes.Home.meshIp: client has no reachable address on node 'Home' (no meshIp, no zone IP on this node). Either declare an IP for this client on the node, or use a different wan.via target
-nodes.Home.meshIp: wanZone 'lan' collides with another zone at nodes.Cabin.meshIp — wanZone must not match any zone or the splot-managed mesh interface on the same node
-nodes.Home.meshIp: wanZone 'mesh' uses the name reserved for the splot-managed mesh interface ('mesh')
+nodes.Home.meshIp: wanZone 'lan' collides with another zone at nodes.Cabin.meshIp — wanZone must not match any zone on the same node
 nodes.Home.meshIp: others dial node 'Home' here, so splot lets its listen port in from the WAN, but it does not have wanZone defined

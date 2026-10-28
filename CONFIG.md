@@ -54,7 +54,7 @@ HomeRouter:
 | `zones`         | map of name → Zone         | no       | Downstream networks the router serves (LAN, VLANs).                                                                                                                                                               |
 | `hub`           | Hub                        | no       | A network inside `meshNetwork` for devices that reach the mesh through this node alone. See [Hub](#hub).                                                                                                         |
 | `services`      | map of name → Service      | no       | Services exposed by the router itself (e.g. SSH, admin UI).                                                                                                                                                       |
-| `wanZone`       | string                     | no\*     | Name of the OpenWRT firewall zone that is WAN-facing on this router. Splot does not manage this zone; it only references it when generating port forwards, and to let the node's WireGuard `listenPort` in. \*Required if any service uses this node in `wan.via`, or the node has an `endpoint` (others dial it), unless the node leaves its firewall alone (`firewall: none`). An `endpoint` doesn't need it where splot leaves the WireGuard alone (`wireguard: none`). |
+| `wanZone`       | string                     | no\*     | Name of the OpenWRT firewall zone that is WAN-facing on this router (where splot manages the firewall, not starting with a digit, as fw4's zone names don't). Splot does not manage this zone; it only references it when generating port forwards, and to let the node's WireGuard `listenPort` in. \*Required if any service uses this node in `wan.via`, or the node has an `endpoint` (others dial it), unless the node leaves its firewall alone (`firewall: none`). An `endpoint` doesn't need it where splot leaves the WireGuard alone (`wireguard: none`). |
 | `tags`          | string or list of strings  | no       | Explicit tags assigned to the node. See [Tags](#tags).                                                                                                                                                            |
 
 ---
@@ -114,7 +114,7 @@ What a Linux node needs, and what splot does there:
 
 ## Zone
 
-A downstream network the router serves: one subnet, a LAN or a VLAN. Splot does **not** create zones in OpenWRT — the operator configures them — it decides what may cross between them (see [Access between zones](#access-between-zones)). The map key is the OpenWRT zone name on that router. No VLAN ID goes here: nothing splot generates depends on one.
+A downstream network the router serves: one subnet, a LAN or a VLAN. Splot does **not** create zones in OpenWRT — the operator configures them — it decides what may cross between them (see [Access between zones](#access-between-zones)). The map key is the OpenWRT zone name on that router, so where splot manages the firewall (fw4) it can't start with a digit, as fw4's zone names don't. No VLAN ID goes here: nothing splot generates depends on one.
 
 ```yaml
 lan:

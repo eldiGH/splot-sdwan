@@ -1,6 +1,6 @@
 //! Redirects as uci `redirect` sections.
 
-use super::qualified_host_id;
+use super::{qualified_host_id, zone_name};
 use crate::{
     backend::openwrt::{
         naming,
@@ -30,7 +30,7 @@ impl UciSection for Redirect {
             .set("src", self.wan_zone.as_ref())
             .set("src_dport", self.external_port.to_string())
             .extend_list("src_ip", &self.sources)
-            .set("dest", self.dest_zone.to_string())
+            .set("dest", zone_name(&self.dest_zone))
             .set("dest_ip", self.dest_ip.to_string())
             .set("dest_port", self.internal_port.to_string())
             .extend_list("proto", &self.proto)

@@ -6,10 +6,13 @@ mod zones;
 
 use log::{Level, debug, info, log_enabled};
 
-use super::section::{Section, UciSection};
+use super::{
+    naming,
+    section::{Section, UciSection},
+};
 use crate::{
     model::host::HostRef,
-    plan::firewall::{FirewallPlan, Verdict},
+    plan::firewall::{FirewallPlan, Verdict, zone_ref::ZoneRef},
 };
 use zones::MeshZone;
 
@@ -21,6 +24,15 @@ fn qualified_host_id(host: &HostRef) -> Vec<&str> {
     match host {
         HostRef::Local { node, name } => vec![node.as_ref(), name.as_ref()],
         _ => vec![host.name().as_ref()],
+    }
+}
+
+/// A zone as fw4 knows it, by its `name`: splot's mesh zone after the interface
+/// it covers, one of the operator's by its key in `splot.yml`.
+fn zone_name(zone: &ZoneRef) -> String {
+    match zone {
+        ZoneRef::Mesh => naming::mesh_interface().to_string(),
+        ZoneRef::Named(zone) => zone.to_string(),
     }
 }
 
@@ -73,4 +85,58 @@ pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
         .chain(rules)
         .chain(redirects)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use splot_core::uci::section::Value;
+
+    use super::*;
+    use crate::{plan, test_support::checked};
+
+    /// The value of `option` in each of `sections` of type `section_type`.
+    fn values<'a>(sections: &'a [Section], section_type: &str, option: &str) -> Vec<&'a str> {
+        sections
+            .iter()
+            .filter(|section| section.section_type == section_type)
+            .flat_map(|section| &section.options)
+            .filter_map(|(name, value)| match value {
+                Value::Single(value) if name == option => Some(value.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_redirect_into_the_mesh_names_the_mesh_zone_as_fw4_knows_it() {
+        // fw4 knows a zone by its `name`: a redirect naming any other resolves to
+        // nothing. The camera on Home's hub is reached over the mesh.
+        let network = checked(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    platform:
+      os: openwrt
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+          services:
+            rtsp: { port: 554, proto: tcp, wan: { via: Home } }
+",
+        );
+        let plan = plan::plan(&network, &"Home".parse().unwrap()).unwrap();
+        let sections = render(&plan.firewall.unwrap());
+
+        assert_eq!(values(&sections, "zone", "name"), ["spl_mesh"]);
+        assert_eq!(values(&sections, "redirect", "dest"), ["spl_mesh"]);
+    }
 }

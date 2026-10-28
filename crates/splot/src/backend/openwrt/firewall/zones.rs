@@ -1,11 +1,11 @@
 use crate::{
     backend::openwrt::{
-        firewall::target,
+        firewall::{target, zone_name},
         naming,
         section::{UciSection, UciSectionBuilder},
     },
     consts,
-    plan::firewall::ZonePolicy,
+    plan::firewall::{ZonePolicy, zone_ref::ZoneRef},
 };
 
 /// The mesh zone, splot's one zone: the operator's zones (`lan`, …) aren't
@@ -29,7 +29,7 @@ impl UciSection for MeshZone<'_> {
         } = *self.0;
 
         section
-            .set("name", naming::name_prefixed(consts::MESH_INTERFACE_NAME))
+            .set("name", zone_name(&ZoneRef::Mesh))
             .set("input", target(input))
             .set("output", target(output))
             .set("forward", target(forward))
@@ -60,7 +60,7 @@ mod tests {
             commands,
             [
                 "set firewall.spl_zone_mesh='zone'",
-                "set firewall.spl_zone_mesh.name='[SPLOT] mesh'",
+                "set firewall.spl_zone_mesh.name='spl_mesh'",
                 "set firewall.spl_zone_mesh.input='DROP'",
                 "set firewall.spl_zone_mesh.output='ACCEPT'",
                 "set firewall.spl_zone_mesh.forward='DROP'",

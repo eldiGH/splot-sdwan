@@ -283,6 +283,14 @@ EOF
 		pass "fw4 check: every section accepted"
 	fi
 
+	# fw4 knows a zone by its name, which must be one it takes: then the mesh
+	# zone has its chains, under that name.
+	if run 'nft list chain inet fw4 input_spl_mesh' >/dev/null 2>&1; then
+		pass "fw4 takes the mesh zone, as spl_mesh"
+	else
+		fail "fw4 takes the mesh zone, as spl_mesh" "$(run 'fw4 check 2>&1')"
+	fi
+
 	# The reload regenerated the live ruleset: splot's rules are in it.
 	if [ "$(run 'nft list ruleset | grep -c "\[SPLOT\]"')" -gt 0 ]; then
 		pass "fw4 reloaded: splot's rules are live"
