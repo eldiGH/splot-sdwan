@@ -299,6 +299,17 @@ EOF
 		fail "fw4 takes the peers' ping rule, and it's live" "$output"
 	fi
 
+	# Others dial the router (the example's Home has an endpoint): fw4 takes the
+	# rule for its listen port, and the WAN lets the port in to the router.
+	output=$(run 'fw4 check 2>&1') || true
+	if ! grep -q spl_rule_listen_port <<<"$output" &&
+		grep -q 'udp dport 51820 .*WireGuard listen port' <<<"$(run 'nft list chain inet fw4 input_wan')"; then
+		pass "fw4 takes the listen port rule, and the WAN lets the port in"
+	else
+		fail "fw4 takes the listen port rule, and the WAN lets the port in" \
+			"$output"$'\n'"$(run 'nft list chain inet fw4 input_wan' 2>&1)"
+	fi
+
 	if output=$(run 'for conf in /var/etc/dnsmasq.conf.*; do dnsmasq --test -C "$conf" 2>&1 || exit 1; done'); then
 		pass "dnsmasq --test on the generated config"
 	else

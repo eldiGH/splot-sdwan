@@ -8,7 +8,10 @@ pub mod zone_ref;
 use std::{fmt, net::Ipv4Addr};
 
 use super::wireguard::WireGuardPlan;
-use crate::model::{Network, host::HostRef, node::Node};
+use crate::{
+    model::{Network, host::HostRef, node::Node},
+    types::{identifier::Identifier, port::Port},
+};
 use redirect::Redirect;
 use rules::Rule;
 use zone_ref::ZoneRef;
@@ -21,6 +24,8 @@ pub struct FirewallPlan {
     pub mesh_zone: Option<ZonePolicy>,
     /// The node's WireGuard peers may ping it: none without a mesh zone.
     pub ping: Option<Ping>,
+    /// None on a node nobody dials, or whose WireGuard splot leaves alone.
+    pub listen_port: Option<ListenPort>,
     /// Ingress rules first, then egress.
     pub rules: Vec<Rule>,
     /// Without a mesh zone, none to a host reached over the mesh.
@@ -47,6 +52,16 @@ pub struct Ping {
     pub to: Ipv4Addr,
     /// Each peer, and its own address on the mesh.
     pub from: Vec<(HostRef, Ipv4Addr)>,
+}
+
+/// Others dial the node: its WireGuard listen port is let in from its WAN, to
+/// the node itself. One that only dials out needs none: the replies come back
+/// as established traffic.
+#[derive(Debug)]
+pub struct ListenPort {
+    /// The node's `wanZone`.
+    pub wan_zone: Identifier,
+    pub port: Port,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +94,13 @@ pub(super) fn plan(
             .map(|peer| (peer.host.clone(), peer.address))
             .collect(),
     });
+    let listen_port = wireguard
+        .filter(|_| own.endpoint().is_some())
+        .zip(own.wan_zone())
+        .map(|(wireguard, wan_zone)| ListenPort {
+            wan_zone: wan_zone.clone(),
+            port: wireguard.listen_port,
+        });
     let mut redirects = redirect::redirects(network, own);
     if mesh_zone.is_none() {
         redirects.retain(|redirect| redirect.dest_zone != ZoneRef::Mesh);
@@ -87,6 +109,7 @@ pub(super) fn plan(
     FirewallPlan {
         mesh_zone,
         ping,
+        listen_port,
         rules,
         redirects,
     }
@@ -119,6 +142,9 @@ impl fmt::Display for FirewallPlan {
                 .iter()
                 .map(|(host, address)| format!("{host} {address}"));
             writeln!(f, "ping {to} from {}", super::list(from))?;
+        }
+        if let Some(ListenPort { wan_zone, port }) = &self.listen_port {
+            writeln!(f, "listen port: {wan_zone} udp/{port}")?;
         }
 
         for rule in &self.rules {
@@ -205,6 +231,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
     hub:
@@ -218,6 +245,7 @@ nodes:
       os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.2
     hub:
@@ -251,6 +279,26 @@ clients:
     }
 
     #[test]
+    fn a_node_others_dial_lets_its_listen_port_in_from_its_wan() {
+        let ListenPort { wan_zone, port } = home(HOME).listen_port.unwrap();
+        assert_eq!(wan_zone.as_ref(), "wan");
+        assert_eq!(port.to_string(), "51820");
+    }
+
+    #[test]
+    fn a_node_nobody_dials_opens_no_port() {
+        // It dials out, and the replies come back as established traffic. Its
+        // hub would need an endpoint.
+        let hub_start = HOME.find("    hub:\n").unwrap();
+        let hub_end = HOME.find("clients:\n  Phone").unwrap();
+        let undialled = format!("{}{}", &HOME[..hub_start], &HOME[hub_end..])
+            .replace("    endpoint: 1.2.3.4\n", "");
+        let plan = home(&undialled);
+        assert!(plan.listen_port.is_none());
+        assert!(!plan.to_string().contains("listen port"));
+    }
+
+    #[test]
     fn with_splots_wireguard_the_mesh_has_its_zone_and_its_forwards() {
         let plan = home(HOME);
         assert!(plan.mesh_zone.is_some());
@@ -274,6 +322,8 @@ clients:
         ));
         assert!(plan.mesh_zone.is_none());
         assert!(plan.ping.is_none());
+        // The operator's interface listens there, not splot's.
+        assert!(plan.listen_port.is_none());
         assert_eq!(forwards(&plan), ["Home.printer ipp"]);
 
         let rules: Vec<String> = plan

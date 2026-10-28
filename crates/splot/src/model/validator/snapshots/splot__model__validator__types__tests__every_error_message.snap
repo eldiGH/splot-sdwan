@@ -35,3 +35,4 @@ nodes.Home.meshIp: qualified wan target 'Home.iot' requires this client to have 
 nodes.Home.meshIp: client has no reachable address on node 'Home' (no meshIp, no zone IP on this node). Either declare an IP for this client on the node, or use a different wan.via target
 nodes.Home.meshIp: wanZone 'lan' collides with another zone at nodes.Cabin.meshIp — wanZone must not match any zone or the splot-managed mesh interface on the same node
 nodes.Home.meshIp: wanZone 'mesh' uses the name reserved for the splot-managed mesh interface ('mesh')
+nodes.Home.meshIp: others dial node 'Home' here, so splot lets its listen port in from the WAN, but it does not have wanZone defined

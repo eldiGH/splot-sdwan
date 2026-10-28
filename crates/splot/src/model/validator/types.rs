@@ -236,6 +236,14 @@ pub enum ValidationError {
         wan_zone: Identifier,
         at: ConfigLocation,
     },
+
+    #[error(
+        "{at}: others dial node '{node_name}' here, so splot lets its listen port in from the WAN, but it does not have wanZone defined"
+    )]
+    EndpointNoWanZone {
+        node_name: Identifier,
+        at: ConfigLocation,
+    },
 }
 
 impl ValidationError {
@@ -274,6 +282,7 @@ impl ValidationError {
             Self::WanViaUnreachable { at, .. } => at,
             Self::WanZoneNameCollision { at, .. } => at,
             Self::WanZoneReservedName { at, .. } => at,
+            Self::EndpointNoWanZone { at, .. } => at,
         }
     }
 }
@@ -281,7 +290,7 @@ impl ValidationError {
 pub enum ValidationWarning {
     // platform, concerns left alone
     /// What the node's firewall won't do, and whether splot's mesh interface is
-    /// there for the operator to put into a zone.
+    /// there for the operator to put into a zone, and its listen port to let in.
     FirewallLeftAlone {
         node: Identifier,
         /// Services whose `allowFrom` splot would enforce on the node.
@@ -289,13 +298,18 @@ pub enum ValidationWarning {
         /// Services exposed through the node.
         unforwarded: Vec<String>,
         mesh_interface: bool,
+        /// Others dial the mesh interface (only with one).
+        listen_port: bool,
         at: ConfigLocation,
     },
-    /// The node's firewall has no mesh zone.
+    /// The node's firewall has no mesh zone, and doesn't let in the listen port
+    /// of the operator's WireGuard.
     WireGuardLeftAlone {
         node: Identifier,
         /// Services exposed through the node to a host reached over the mesh.
         unforwarded: Vec<String>,
+        /// Others dial the node.
+        listen_port: bool,
         at: ConfigLocation,
     },
 
@@ -337,6 +351,7 @@ impl fmt::Display for ValidationWarning {
                 unenforced,
                 unforwarded,
                 mesh_interface,
+                listen_port,
                 at,
             } => {
                 let mut undone = Vec::new();
@@ -353,10 +368,11 @@ impl fmt::Display for ValidationWarning {
                     ));
                 }
                 if *mesh_interface {
-                    undone.push(
-                        "put splot's mesh interface into a zone of yours, and let its listen port in from the WAN"
-                            .to_owned(),
-                    );
+                    let mut place = "put splot's mesh interface into a zone of yours".to_owned();
+                    if *listen_port {
+                        place.push_str(", and let its listen port in from the WAN");
+                    }
+                    undone.push(place);
                 }
                 write!(
                     f,
@@ -367,12 +383,16 @@ impl fmt::Display for ValidationWarning {
             Self::WireGuardLeftAlone {
                 node,
                 unforwarded,
+                listen_port,
                 at,
             } => {
                 write!(
                     f,
                     "{at}: splot leaves {node}'s WireGuard alone, so its firewall has no mesh zone - mesh traffic arrives in your interface's zone, under your rules"
                 )?;
+                if *listen_port {
+                    write!(f, ", and your rule lets its listen port in from the WAN")?;
+                }
                 if !unforwarded.is_empty() {
                     write!(
                         f,
@@ -402,7 +422,7 @@ impl fmt::Display for ValidationWarning {
             ),
             Self::UnusedWanZone { at } => write!(
                 f,
-                "{at}: wanZone is declared but no service exposes this node in 'wan.via' — either reference this node from a service's wan.via, or remove wanZone"
+                "{at}: wanZone is declared but splot lets nothing in through it: no service exposes this node in 'wan.via', and it opens no listen port there (nobody dials the node, or its WireGuard is left alone) — either reference this node from a service's wan.via, or remove wanZone"
             ),
         }
     }
@@ -585,6 +605,10 @@ mod tests {
             },
             ValidationError::WanZoneReservedName {
                 wan_zone: id("mesh"),
+                at: at(),
+            },
+            ValidationError::EndpointNoWanZone {
+                node_name: id("Home"),
                 at: at(),
             },
         ];

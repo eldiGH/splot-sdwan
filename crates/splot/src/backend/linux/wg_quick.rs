@@ -117,6 +117,7 @@ nodes:
       os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: cabin.example.net
+    wanZone: wan
     listenPort: 51821
     meshIp: 10.100.0.2
     zones:

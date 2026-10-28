@@ -61,6 +61,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
     zones:

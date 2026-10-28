@@ -157,7 +157,8 @@ mod tests {
         types::identifier::Identifier,
     };
 
-    // Home declares a WAN zone no service uses: a warning, not an error.
+    // Home declares a WAN zone nothing comes in through (no service, and nobody
+    // dials it): a warning, not an error.
     const WARNING_ONLY: &str = "
 meshNetwork: 10.100.0.0/24
 nodes:
@@ -165,7 +166,6 @@ nodes:
     platform:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
     wanZone: wan
@@ -201,6 +201,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
     zones:
@@ -223,6 +224,7 @@ nodes:
       os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.2
 clients:
@@ -427,6 +429,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
     hub:
@@ -436,6 +439,7 @@ nodes:
       os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.3
 clients:
@@ -459,6 +463,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
   Cabin:
@@ -466,6 +471,7 @@ nodes:
       os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.2
 ",

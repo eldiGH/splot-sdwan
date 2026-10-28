@@ -134,18 +134,12 @@ boot() {
 
 	podman cp "$work/key.pub" "$container:/etc/dropbear/authorized_keys"
 	# The other router's endpoint name is this machine, at the gateway's
-	# address; WireGuard's ports are let in on the WAN, as an operator would.
+	# address. WireGuard's port comes in on the WAN, where only splot's rule
+	# lets it in. The tunnel doesn't prove that rule: both routers dial, and
+	# each one's handshakes let the other's in as replies.
 	run "$name" "chmod 600 /etc/dropbear/authorized_keys
 		gateway=\$(ip -4 route show default | awk '{ print \$3 }')
-		echo \"\$gateway $ENDPOINTS\" >>/etc/hosts
-		uci add firewall rule >/dev/null
-		uci set firewall.@rule[-1].name='Allow-WireGuard-for-splot-check'
-		uci set firewall.@rule[-1].src=wan
-		uci set firewall.@rule[-1].proto=udp
-		uci set firewall.@rule[-1].dest_port='$HOME_PORT-$BARN_PORT'
-		uci set firewall.@rule[-1].target=ACCEPT
-		uci commit firewall
-		fw4 reload >/dev/null 2>&1"
+		echo \"\$gateway $ENDPOINTS\" >>/etc/hosts"
 	reachable "$name"
 }
 
@@ -184,6 +178,7 @@ nodes:
     endpoint: home.example.net
     listenPort: $HOME_PORT
     meshIp: 10.100.0.1
+    wanZone: wan
   Cabin:
     platform:
       os: openwrt
@@ -193,6 +188,7 @@ nodes:
     endpoint: cabin.example.net
     listenPort: $CABIN_PORT
     meshIp: 10.100.0.2
+    wanZone: wan
 EOF
 }
 

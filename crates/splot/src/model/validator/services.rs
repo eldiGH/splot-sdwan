@@ -60,7 +60,7 @@ pub(super) fn check_services(
         );
     }
 
-    warn_unused_wan_zones(config, &wan_nodes_used, report);
+    warn_unused_wan_zones(config, platforms, &wan_nodes_used, report);
 
     services
 }

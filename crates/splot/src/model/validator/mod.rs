@@ -56,9 +56,9 @@ pub(super) fn check(config: &Config) -> Checked {
     check_ports(config, &mut report);
 
     let services = check_services(config, &platforms, &hosts, &refs, &mut report);
-    check_wan_zones(config, &mut report);
+    check_wan_zones(config, &platforms, &mut report);
 
-    check_unmanaged(&platforms, &hosts, &services, &mut report);
+    check_unmanaged(&platforms, &nodes, &hosts, &services, &mut report);
 
     // Canonical order for every consumer: by config location, so the output reads
     // top to bottom like the config instead of pass by pass. Stable sort — several
@@ -85,6 +85,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1";
 
@@ -121,6 +122,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
     zones:
@@ -161,6 +163,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.200.0.1
   Zeta:
@@ -168,6 +171,7 @@ nodes:
       os: openwrt
     publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
     endpoint: 5.6.7.8
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.2
     zones:

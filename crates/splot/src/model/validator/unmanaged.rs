@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use crate::{
     model::{
         host::{Host, HostAddress, HostRef, Place},
+        node::Node,
         platform::Platform,
         service::Service,
         validator::types::{ValidationReport, ValidationWarning},
@@ -22,6 +23,7 @@ use crate::{
 /// warning: the config says so already.
 pub(super) fn check_unmanaged(
     platforms: &BTreeMap<Identifier, Platform>,
+    nodes: &BTreeMap<Identifier, Node>,
     hosts: &[Host],
     services: &BTreeMap<HostRef, BTreeMap<Identifier, Service>>,
     report: &mut ValidationReport,
@@ -35,6 +37,10 @@ pub(super) fn check_unmanaged(
     };
 
     for (node, platform) in platforms {
+        // Others dial it: its listen port needs letting in.
+        let dialled = nodes
+            .get(node)
+            .is_some_and(|node| node.endpoint().is_some());
         // What the node forwards from its WAN, to which address.
         let forwarded: Vec<(String, &Place)> = hosts
             .iter()
@@ -77,6 +83,7 @@ pub(super) fn check_unmanaged(
                     unenforced,
                     unforwarded,
                     mesh_interface,
+                    listen_port: mesh_interface && dialled,
                     at: at(node, Concern::Firewall),
                 });
             }
@@ -93,6 +100,7 @@ pub(super) fn check_unmanaged(
             report.warnings.push(ValidationWarning::WireGuardLeftAlone {
                 node: node.clone(),
                 unforwarded,
+                listen_port: dialled,
                 at: at(node, Concern::WireGuard),
             });
         }
@@ -110,7 +118,7 @@ mod tests {
     // forwarded from the WAN; the camera on its hub, forwarded too. Phone's own
     // http is forwarded to its mesh IP. Cabin's ssh is no concern of Home's.
     fn mesh(home_platform: &str) -> String {
-        mesh_without_hub(home_platform).replace(
+        mesh_without_hub(home_platform).replacen(
             "    wanZone: wan\n",
             "    wanZone: wan
     hub:
@@ -122,6 +130,7 @@ mod tests {
           services:
             rtsp: { port: 554, proto: tcp, wan: { via: Home } }
 ",
+            1,
         )
     }
 
@@ -157,6 +166,7 @@ nodes:
       os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.2
     services:
@@ -188,7 +198,7 @@ clients:
             "nodes.Home.platform.firewall",
             |w| matches!(
                 w,
-                ValidationWarning::FirewallLeftAlone { unenforced, unforwarded, mesh_interface: true, .. }
+                ValidationWarning::FirewallLeftAlone { unenforced, unforwarded, mesh_interface: true, listen_port: true, .. }
                     if *unenforced == strings(&["Home.ssh", "Home.printer.ipp"])
                         && *unforwarded == strings(&["Home.printer.ipp", "Home.camera.rtsp", "Phone.http"])
             )
@@ -198,6 +208,32 @@ clients:
             [
                 "nodes.Home.platform.firewall: splot leaves Home's firewall alone - allowFrom isn't enforced there, your own rules decide who reaches Home.ssh, Home.printer.ipp; nothing is forwarded from its WAN to Home.printer.ipp, Home.camera.rtsp, Phone.http; put splot's mesh interface into a zone of yours, and let its listen port in from the WAN"
             ]
+        );
+    }
+
+    #[test]
+    fn a_firewall_left_alone_on_a_node_nobody_dials_has_no_listen_port_to_let_in() {
+        let r = report(
+            &mesh_without_hub("      firewall: none").replace("    endpoint: 1.2.3.4\n", ""),
+        );
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+
+        assert!(warning_at(
+            &r,
+            "nodes.Home.platform.firewall",
+            |w| matches!(
+                w,
+                ValidationWarning::FirewallLeftAlone {
+                    mesh_interface: true,
+                    listen_port: false,
+                    ..
+                }
+            )
+        ));
+        assert!(
+            messages(&r.warnings)[0].ends_with("; put splot's mesh interface into a zone of yours"),
+            "{:?}",
+            messages(&r.warnings)
         );
     }
 
@@ -214,6 +250,7 @@ clients:
                 w,
                 ValidationWarning::FirewallLeftAlone {
                     mesh_interface: false,
+                    listen_port: false,
                     ..
                 }
             )
@@ -283,15 +320,40 @@ clients:
             "nodes.Home.platform.wireguard",
             |w| matches!(
                 w,
-                ValidationWarning::WireGuardLeftAlone { unforwarded, .. }
+                ValidationWarning::WireGuardLeftAlone { unforwarded, listen_port: true, .. }
                     if *unforwarded == strings(&["Phone.http"])
             )
         ));
         assert_eq!(
             messages(&r.warnings),
             [
-                "nodes.Home.platform.wireguard: splot leaves Home's WireGuard alone, so its firewall has no mesh zone - mesh traffic arrives in your interface's zone, under your rules; nothing is forwarded from its WAN to what's reached over the mesh: Phone.http"
+                "nodes.Home.platform.wireguard: splot leaves Home's WireGuard alone, so its firewall has no mesh zone - mesh traffic arrives in your interface's zone, under your rules, and your rule lets its listen port in from the WAN; nothing is forwarded from its WAN to what's reached over the mesh: Phone.http"
             ]
+        );
+    }
+
+    #[test]
+    fn wireguard_left_alone_on_a_node_nobody_dials_has_no_listen_port_to_let_in() {
+        let r = report(
+            &mesh_without_hub("      wireguard: none").replace("    endpoint: 1.2.3.4\n", ""),
+        );
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+
+        assert!(warning_at(
+            &r,
+            "nodes.Home.platform.wireguard",
+            |w| matches!(
+                w,
+                ValidationWarning::WireGuardLeftAlone {
+                    listen_port: false,
+                    ..
+                }
+            )
+        ));
+        assert!(
+            !messages(&r.warnings)[0].contains("listen port"),
+            "{:?}",
+            messages(&r.warnings)
         );
     }
 

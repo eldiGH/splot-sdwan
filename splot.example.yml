@@ -40,7 +40,8 @@ clients:
 
 nodes:
   # Internet-facing router. Hosts services and exposes some to the WAN
-  # through the firewall zone named in `wanZone`.
+  # through the firewall zone named in `wanZone`, where splot also lets its
+  # WireGuard listen port in: the other nodes dial it at its endpoint.
   Home:
     # The software the node runs. On OpenWrt, splot manages WireGuard
     # (netifd), the firewall (fw4) and DHCP (dnsmasq) unless told otherwise;
@@ -112,7 +113,8 @@ nodes:
               proto: tcp
               allowFrom: admin
 
-  # Remote site. No WAN exposure of its own — reachable over the mesh.
+  # Remote site. No services exposed to the WAN — reachable over the mesh.
+  # The other nodes dial it, so splot lets its listen port in from `wanZone`.
   Cabin:
     platform:
       os: openwrt
@@ -127,6 +129,7 @@ nodes:
     endpoint: cabin.example.net
     listenPort: 51820
     meshIp: 10.100.0.2
+    wanZone: wan
 
     zones:
       lan:
@@ -181,6 +184,7 @@ nodes:
     endpoint: 203.0.113.30
     listenPort: 51820
     meshIp: 10.100.0.4
+    wanZone: wan
 
     zones:
       lan:

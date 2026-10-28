@@ -184,7 +184,8 @@ fn new_node_entry(
     meshIp: {mesh_ip}
     listenPort: {SUGGESTED_LISTEN_PORT}
     # endpoint: where the other nodes dial it, its public IP or DNS name;
-    # leave it out if nobody can (behind NAT)
+    # leave it out if nobody can (behind NAT). With one, and its firewall
+    # splot's, wanZone: the firewall zone its listen port is let in from
 ",
         new_node_platform(os)
     )
@@ -391,6 +392,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
 ";
@@ -440,6 +442,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
     hub:
@@ -453,6 +456,7 @@ nodes:
       os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.2
 clients:
@@ -508,6 +512,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
 {}{}{}{}",
@@ -566,6 +571,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
     hub:
@@ -579,6 +585,7 @@ nodes:
       os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.2
   Lake:
@@ -613,6 +620,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
   Cabin:
@@ -620,6 +628,7 @@ nodes:
       os: openwrt
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.2
 ",

@@ -49,8 +49,14 @@ mod tests {
         test_support::{error_at, has_error, has_warning, report, warning_at},
     };
 
-    /// A node of the mesh; `endpoint` is its endpoint line, if any.
+    /// A node of the mesh; `endpoint` is its endpoint line, if any. Others dial
+    /// a node with one, so it has a wanZone to let its listen port in.
     fn node(name: &str, key: char, ip: u8, endpoint: &str) -> String {
+        let wan_zone = if endpoint.is_empty() {
+            ""
+        } else {
+            "wanZone: wan"
+        };
         format!(
             "
   {name}:
@@ -58,6 +64,7 @@ mod tests {
       os: openwrt
     publicKey: {key}{rest}A=
     {endpoint}
+    {wan_zone}
     listenPort: 51820
     meshIp: 10.100.0.{ip}",
             rest = key.to_string().repeat(41),

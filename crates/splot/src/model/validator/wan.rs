@@ -172,14 +172,26 @@ pub(super) fn check_targets<'a>(
     targets
 }
 
-/// A `wanZone` no service is exposed through is a warning.
+/// Whether others dial the node at the listen port of splot's WireGuard, which
+/// splot then lets in from its `wanZone` (where it manages its firewall). A node
+/// whose platform failed counts as managed: its error stands.
+fn listens_on_wan(node: &Node, platform: Option<&Platform>) -> bool {
+    node.endpoint.is_some() && platform.is_none_or(|platform| platform.wireguard().is_some())
+}
+
+/// A `wanZone` nothing comes in through, no service and no listen port, is a
+/// warning.
 pub(super) fn warn_unused_wan_zones(
     config: &Config,
+    platforms: &BTreeMap<Identifier, Platform>,
     wan_nodes_used: &HashSet<&Identifier>,
     report: &mut ValidationReport,
 ) {
     for (node_name, node) in &config.nodes {
-        if node.wan_zone.is_some() && !wan_nodes_used.contains(node_name) {
+        if node.wan_zone.is_some()
+            && !wan_nodes_used.contains(node_name)
+            && !listens_on_wan(node, platforms.get(node_name))
+        {
             report.warnings.push(ValidationWarning::UnusedWanZone {
                 at: ConfigLocation::Node(node_name.clone(), NodeLoc::WanZone),
             })
@@ -187,10 +199,25 @@ pub(super) fn warn_unused_wan_zones(
     }
 }
 
-/// A `wanZone` must not reuse a zone's name or the mesh interface's.
-pub(super) fn check_wan_zones(config: &Config, report: &mut ValidationReport) {
+/// A node others dial needs a `wanZone` where splot lets its listen port in, as
+/// it does a `wan.via` node's forwards. A `wanZone` must not reuse a zone's name
+/// or the mesh interface's.
+pub(super) fn check_wan_zones(
+    config: &Config,
+    platforms: &BTreeMap<Identifier, Platform>,
+    report: &mut ValidationReport,
+) {
     for (node_name, node) in &config.nodes {
         let Some(wan_zone) = &node.wan_zone else {
+            let platform = platforms.get(node_name);
+            if listens_on_wan(node, platform)
+                && platform.is_none_or(|platform| platform.firewall().is_some())
+            {
+                report.errors.push(ValidationError::EndpointNoWanZone {
+                    node_name: node_name.clone(),
+                    at: ConfigLocation::Node(node_name.clone(), NodeLoc::Endpoint),
+                });
+            }
             continue;
         };
 
@@ -239,6 +266,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
     zones:
@@ -445,6 +473,7 @@ nodes:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
     services:
@@ -463,7 +492,8 @@ nodes:
 
     #[test]
     fn wan_via_node_without_wan_zone() {
-        // Home has no wanZone, but a service uses it in wan.via.
+        // Home has no wanZone, but a service uses it in wan.via. Nobody dials
+        // it, so that's the only use it would have.
         let r = report(
             "
 meshNetwork: 10.100.0.0/24
@@ -472,7 +502,6 @@ nodes:
     platform:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
     services:
@@ -734,9 +763,57 @@ nodes:
         )));
     }
 
+    /// Home, whom Cabin dials, with the platform lines given and no wanZone;
+    /// Lake, whom nobody dials, without one either.
+    fn dialled(home_platform: &str) -> String {
+        format!(
+            "
+meshNetwork: 10.100.0.0/24
+nodes:
+  Home:
+    platform:
+      os: openwrt
+{home_platform}
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+  Lake:
+    platform:
+      os: openwrt
+    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+    listenPort: 51820
+    meshIp: 10.100.0.2
+"
+        )
+    }
+
+    #[test]
+    fn a_node_others_dial_needs_a_wan_zone_to_let_its_listen_port_in() {
+        let r = report(&dialled(""));
+        assert!(error_at(
+            &r,
+            "nodes.Home.endpoint",
+            |e| matches!(e, ValidationError::EndpointNoWanZone { node_name, .. } if node_name == "Home")
+        ));
+        // Lake dials out: the replies come back as established traffic.
+        assert_eq!(r.errors.len(), 1, "{:?}", r.errors);
+    }
+
+    #[test]
+    fn a_node_whose_firewall_or_wireguard_is_left_alone_needs_no_wan_zone_to_be_dialled() {
+        // Its firewall is the operator's; or its WireGuard is, and with it the
+        // port. The warnings say so.
+        for platform in ["      firewall: none", "      wireguard: none"] {
+            let r = report(&dialled(platform));
+            assert!(r.errors.is_empty(), "{platform}: {:?}", r.errors);
+        }
+    }
+
     #[test]
     fn wan_unused_wan_zone_warning() {
-        // wanZone is declared but no service references this node in wan.via.
+        // wanZone is declared but no service references this node in wan.via,
+        // and nobody dials it.
         let r = report(
             "
 meshNetwork: 10.100.0.0/24
@@ -745,7 +822,6 @@ nodes:
     platform:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
     listenPort: 51820
     meshIp: 10.100.0.1
     wanZone: wan
@@ -758,12 +834,32 @@ nodes:
     }
 
     #[test]
+    fn the_listen_port_of_a_node_others_dial_uses_its_wan_zone() {
+        let with_wan_zone = |platform: &str| {
+            report(&dialled(platform).replace(
+                "    meshIp: 10.100.0.1\n",
+                "    meshIp: 10.100.0.1\n    wanZone: wan\n",
+            ))
+        };
+        let unused = |w: &ValidationWarning| matches!(w, ValidationWarning::UnusedWanZone { .. });
+
+        let r = with_wan_zone("");
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(!has_warning(&r, unused));
+        // Splot doesn't open the port of WireGuard it leaves alone.
+        assert!(warning_at(
+            &with_wan_zone("      wireguard: none"),
+            "nodes.Home.wanZone",
+            unused
+        ));
+    }
+
+    #[test]
     fn hub_client_service_wan_via_must_be_bare() {
         // The qualified form picks one of a global client's networks; a hub client
         // has one address.
         let r = report(&format!(
             "{HUB_HOME}
-    wanZone: wan
     zones:
       lan:
         address: 192.168.1.1/24
