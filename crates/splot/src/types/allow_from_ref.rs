@@ -22,7 +22,10 @@ pub enum ParseAllowFromRefError {
 pub enum AllowFromRef {
     Bare(Identifier),
     Nested(NestedIdentifier),
+    /// `$node`: the node the rule is on.
     SelfNode,
+    /// `{Node}.$node`: that node itself, named from anywhere.
+    NodeItself(Identifier),
 }
 
 impl FromStr for AllowFromRef {
@@ -31,6 +34,14 @@ impl FromStr for AllowFromRef {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == consts::CURRENT_NODE_IDENTIFIER {
             return Ok(Self::SelfNode);
+        }
+
+        if let Some((node, consts::CURRENT_NODE_IDENTIFIER)) = s.split_once('.') {
+            return node.parse().map(Self::NodeItself).map_err(|error| {
+                ParseAllowFromRefError::InvalidNested(ParseNestedIdentifierError::InvalidNode(
+                    error,
+                ))
+            });
         }
 
         if s.contains('.') {
@@ -59,6 +70,7 @@ impl fmt::Display for AllowFromRef {
             Self::Bare(id) => id.fmt(f),
             Self::Nested(nested) => nested.fmt(f),
             Self::SelfNode => write!(f, "$node"),
+            Self::NodeItself(node) => write!(f, "{node}.$node"),
         }
     }
 }
@@ -82,6 +94,42 @@ mod tests {
         let r = parse("$node").unwrap();
         assert_eq!(r, AllowFromRef::SelfNode);
         assert_eq!(r.to_string(), "$node");
+    }
+
+    #[test]
+    fn a_node_itself() {
+        let r = parse("Home.$node").unwrap();
+        assert_eq!(r, AllowFromRef::NodeItself("Home".parse().unwrap()));
+        assert_eq!(r.to_string(), "Home.$node");
+    }
+
+    #[test]
+    fn a_node_itself_needs_a_node_name() {
+        for s in [".$node", "$node.$node", "-bad.$node"] {
+            assert!(
+                matches!(
+                    parse(s),
+                    Err(ParseAllowFromRefError::InvalidNested(
+                        ParseNestedIdentifierError::InvalidNode(_)
+                    ))
+                ),
+                "{s}"
+            );
+        }
+        // `$node` is the only keyword a node name qualifies, and only as the
+        // last segment.
+        assert!(matches!(
+            parse("Home.$hub"),
+            Err(ParseAllowFromRefError::InvalidNested(
+                ParseNestedIdentifierError::InvalidLocal(_)
+            ))
+        ));
+        assert!(matches!(
+            parse("Home.$node.lan"),
+            Err(ParseAllowFromRefError::InvalidNested(
+                ParseNestedIdentifierError::TooManyDots
+            ))
+        ));
     }
 
     #[test]
@@ -132,7 +180,7 @@ mod tests {
 
     #[test]
     fn display_roundtrip() {
-        for s in ["$node", "Home", "Home.lan"] {
+        for s in ["$node", "Home.$node", "Home", "Home.lan"] {
             assert_eq!(parse(s).unwrap().to_string(), s);
         }
     }

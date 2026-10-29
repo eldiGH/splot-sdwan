@@ -106,6 +106,7 @@ pub(super) fn validate_names(
         add_name(node_name, None, &mut refs, None, None, report, || {
             ConfigLocation::Node(node_name.clone(), NodeLoc::Root)
         });
+        refs.insert(AllowFromRef::NodeItself(node_name.clone()));
     }
 
     // Pass 2: each node's local names (zones, devices and hub clients).

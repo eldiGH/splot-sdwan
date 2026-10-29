@@ -23,11 +23,12 @@ use crate::{
 /// What each reference names, and where it lives.
 #[derive(Default)]
 pub(super) struct Resolution {
-    /// Every reference but `$node`. A known reference with nothing behind it (a
-    /// node with no zones and no hub) has no entry.
+    /// Every reference but a node itself (`{Node}.$node`, `$node`). A known
+    /// reference with nothing behind it (a node with no zones and no hub) has
+    /// no entry.
     sources: BTreeMap<AllowFromRef, BTreeSet<Source>>,
-    /// What `$node` names on each node: its own address on each of its zones.
-    this_node: BTreeMap<Identifier, BTreeSet<Source>>,
+    /// Each node itself: its mesh IP and its address on each of its zones.
+    nodes: BTreeMap<Identifier, BTreeSet<Source>>,
 }
 
 impl Resolution {
@@ -55,7 +56,8 @@ impl Resolution {
     }
 
     /// A bare node name and the node's tags name its zones and its hub: subnets,
-    /// any device on them. `$node` is the router itself: its address on each zone.
+    /// any device on them. `{Node}.$node` is the node itself: its mesh IP and
+    /// its address on each zone.
     fn add_node(&mut self, node_name: &Identifier, node: &Node) {
         let node_refs: Vec<AllowFromRef> = iter::once(node_name.clone())
             .chain(node.tags.iter().cloned())
@@ -67,7 +69,10 @@ impl Resolution {
                 .chain(tags.iter().cloned().map(AllowFromRef::Bare))
                 .collect::<Vec<_>>()
         };
-        let mut this_node = BTreeSet::new();
+        let mut itself = BTreeSet::from([Source {
+            network: Ipv4Network::host(node.mesh_ip),
+            place: Place::Mesh,
+        }]);
 
         for (zone_name, zone) in &node.zones {
             let place = Place::Zone {
@@ -82,7 +87,7 @@ impl Resolution {
             self.add(node_refs.iter().cloned(), &subnet);
             self.add(local_refs(zone_name, &zone.tags), &subnet);
 
-            this_node.insert(Source {
+            itself.insert(Source {
                 network: Ipv4Network::host(zone.address.ip()),
                 place: place.clone(),
             });
@@ -96,7 +101,7 @@ impl Resolution {
             }
         }
 
-        self.this_node.insert(node_name.clone(), this_node);
+        self.nodes.insert(node_name.clone(), itself);
 
         let Some(hub) = &node.hub else { return };
         let place = Place::Hub {
@@ -148,7 +153,8 @@ impl Resolution {
 }
 
 /// Resolves the service's `allowFrom`. An unknown reference is reported and left
-/// out.
+/// out, and so is `$node`: the node the rule is on, whose own traffic needs no
+/// rule there.
 pub(super) fn resolve_sources(
     service: &config::Service,
     known_references: &HashSet<AllowFromRef>,
@@ -173,8 +179,10 @@ pub(super) fn resolve_sources(
                 reference: reference.clone(),
                 at: locate(ServiceLoc::AllowFrom),
             });
-        } else if *reference == AllowFromRef::SelfNode {
-            sources.this_node = resolution.this_node.clone();
+        } else if let AllowFromRef::NodeItself(node) = reference
+            && let Some(itself) = resolution.nodes.get(node)
+        {
+            sources.nodes.insert(node.clone(), itself.clone());
         } else if let Some(found) = resolution.sources.get(reference) {
             sources.everywhere.extend(found.iter().cloned());
         }
@@ -314,42 +322,59 @@ clients:
         assert_eq!(sources(&bare("server")), sources(&bare("Home")));
     }
 
-    // ── $node: the router's own address on each of its zones, per node ────
+    // ── a node itself: its mesh IP and its address on each zone ───────────
 
     #[test]
-    fn this_node_is_the_routers_own_address_on_each_zone() {
+    fn a_node_itself_is_its_mesh_ip_and_its_address_on_each_zone() {
         let resolution = resolution();
         assert_eq!(
-            resolution.this_node[&id("Home")],
+            resolution.nodes[&id("Home")],
             BTreeSet::from([
+                source("10.100.0.1/32", Place::Mesh),
                 source("192.168.1.1/32", zone("Home", "lan")),
                 source("192.168.2.1/32", zone("Home", "guest")),
             ])
         );
         assert_eq!(
-            resolution.this_node[&id("Cabin")],
-            BTreeSet::from([source("192.168.3.1/32", zone("Cabin", "lan"))])
+            resolution.nodes[&id("Cabin")],
+            BTreeSet::from([
+                source("10.100.0.2/32", Place::Mesh),
+                source("192.168.3.1/32", zone("Cabin", "lan")),
+            ])
+        );
+    }
+
+    /// What `allowFrom` lets in on `node`, for a service on Home.
+    fn on(yaml: &str, service: &str, node: &str) -> Vec<String> {
+        let network = checked(yaml);
+        network.services[&HostRef::Node(id("Home"))][&id(service)]
+            .sources()
+            .on(&id(node))
+            .map(|source| source.network().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_node_itself_is_let_in_on_every_other_node() {
+        // On Home, what Home sends leaves through its output: nothing to let in.
+        let fixture = FIXTURE.replace("[$node, Phone]", "[Home.$node, Cabin.$node]");
+        assert_eq!(
+            on(&fixture, "dns", "Home"),
+            ["10.100.0.2/32", "192.168.3.1/32"]
+        );
+        assert_eq!(
+            on(&fixture, "dns", "Cabin"),
+            ["10.100.0.1/32", "192.168.1.1/32", "192.168.2.1/32"]
         );
     }
 
     #[test]
-    fn a_service_from_this_node_resolves_on_each_node() {
-        let network = checked(FIXTURE);
-        let sources = network.services[&HostRef::Node(id("Home"))][&id("dns")].sources();
-        let on = |node: &str| -> Vec<String> {
-            sources
-                .on(&id(node))
-                .map(|source| source.network().to_string())
-                .collect()
-        };
-
-        // Phone's IPs, then the node's own.
+    fn this_node_names_nothing_to_let_in_on_any_node() {
+        // `$node` is the node the rule is on, so all it names leaves through that
+        // node's output.
         let phone = ["10.100.0.100/32", "192.168.1.60/32", "192.168.3.10/32"];
-        assert_eq!(
-            on("Home"),
-            [&phone[..], &["192.168.1.1/32", "192.168.2.1/32"]].concat()
-        );
-        assert_eq!(on("Cabin"), [&phone[..], &["192.168.3.1/32"]].concat());
+        assert_eq!(on(FIXTURE, "dns", "Home"), phone);
+        assert_eq!(on(FIXTURE, "dns", "Cabin"), phone);
     }
 
     // ── a node's zones and devices ────────────────────────────────────────
@@ -421,7 +446,11 @@ nodes:
 ",
         ));
         assert!(!resolution.sources.contains_key(&bare("Home")));
-        assert!(resolution.this_node[&id("Home")].is_empty());
+        // Itself, it's still its mesh IP.
+        assert_eq!(
+            resolution.nodes[&id("Home")],
+            BTreeSet::from([source("10.100.0.1/32", Place::Mesh)])
+        );
     }
 
     #[test]
@@ -477,6 +506,19 @@ nodes:
             e,
             ValidationError::UnknownRef { .. }
         )));
+    }
+
+    #[test]
+    fn refs_a_node_itself_must_be_a_node() {
+        let allowing = |reference: &str| {
+            report(&FIXTURE.replace("[$node, Phone]", &format!("[\"{reference}\"]")))
+        };
+        let unknown = |e: &ValidationError| matches!(e, ValidationError::UnknownRef { .. });
+        assert!(!has_error(&allowing("Cabin.$node"), unknown));
+        // A global client, a tag, and nothing at all.
+        for reference in ["Phone.$node", "server.$node", "Attic.$node"] {
+            assert!(has_error(&allowing(reference), unknown), "{reference}");
+        }
     }
 
     #[test]

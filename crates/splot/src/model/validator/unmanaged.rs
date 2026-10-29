@@ -99,7 +99,7 @@ pub(super) fn check_unmanaged(
                     let elsewhere = host.addresses_on(|on| on != node).next().is_some();
                     services_of(host)
                         .filter(move |(_, service)| {
-                            service.sources().everywhere().any(|source| {
+                            service.sources().on(node).any(|source| {
                                 let behind = source.place().zone_on(node).is_some();
                                 (here && !behind) || (elsewhere && behind)
                             })
@@ -370,6 +370,55 @@ clients:
                 w,
                 ValidationWarning::WireGuardLeftAlone { unenforced, .. }
                     if *unenforced == strings(&["Cabin.ssh", "Home.ssh"])
+            )
+        ));
+    }
+
+    #[test]
+    fn a_firewall_left_alone_would_not_see_the_nodes_own_traffic() {
+        // What Home sends leaves through its output: `$node` and Home itself
+        // leave nothing to Home's firewall. Cabin itself comes in over the mesh.
+        let yaml = mesh_without_hub("      firewall: none")
+            .replace(
+                "ssh: { port: 22, proto: tcp, allowFrom: Phone }",
+                "ssh: { port: 22, proto: tcp, allowFrom: [$node, Home.$node] }",
+            )
+            .replace(
+                "allowFrom: Phone, wan: { via: Home }",
+                "allowFrom: Cabin.$node, wan: { via: Home }",
+            );
+        let r = report(&yaml);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(warning_at(
+            &r,
+            "nodes.Home.platform.firewall",
+            |w| matches!(
+                w,
+                ValidationWarning::FirewallLeftAlone { unenforced, .. }
+                    if *unenforced == strings(&["Home.printer.ipp"])
+            )
+        ));
+    }
+
+    #[test]
+    fn wireguard_left_alone_leaves_only_other_nodes_themselves_unenforced() {
+        // Home itself, toward Cabin's ssh, leaves through Home's output; Cabin
+        // itself, toward Home's ssh, crosses the mesh.
+        let yaml = mesh_without_hub("      wireguard: none")
+            .replace(
+                "ssh: { port: 22, proto: tcp, allowFrom: Phone }",
+                "ssh: { port: 22, proto: tcp, allowFrom: Cabin.$node }",
+            )
+            .replace("allowFrom: [Phone, Home.lan]", "allowFrom: Home.$node");
+        let r = report(&yaml);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(warning_at(
+            &r,
+            "nodes.Home.platform.wireguard",
+            |w| matches!(
+                w,
+                ValidationWarning::WireGuardLeftAlone { unenforced, .. }
+                    if *unenforced == strings(&["Home.ssh", "Home.printer.ipp"])
             )
         ));
     }

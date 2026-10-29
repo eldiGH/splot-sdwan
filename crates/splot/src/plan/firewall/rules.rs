@@ -84,7 +84,7 @@ impl Flow<'_> {
                 .push(Ipv4Network::host(address.ip()));
         }
 
-        let sources = by_zone(own, self.service.sources().everywhere());
+        let sources = by_zone(own, self.service.sources().on(own.name()));
         let mut rules = Vec::new();
         for (to, destinations) in destinations {
             for (from, sources) in &sources {
@@ -120,7 +120,7 @@ impl Flow<'_> {
         let behind = self
             .service
             .sources()
-            .everywhere()
+            .on(own.name())
             .filter(|source| source.place().node() == Some(own.name()));
 
         by_zone(own, behind)
@@ -375,12 +375,37 @@ clients:
     #[test]
     fn the_router_itself_needs_no_rule() {
         // What the router sends leaves through its output, which splot leaves
-        // open: `$node` names no source that needs letting through.
-        let sites = SITES.replace("allowFrom: [Home.lan, $node]", "allowFrom: $node");
-        for node in ["Home", "Cabin"] {
-            let rules = placed(&sites, node);
-            assert!(of(&rules, "Home.printer ipp").is_empty(), "{rules:?}");
+        // open: `$node` names no source that needs letting through, and neither
+        // does Home itself on Home.
+        for itself in ["$node", "Home.$node"] {
+            let sites = SITES.replace(
+                "allowFrom: [Home.lan, $node]",
+                &format!("allowFrom: {itself}"),
+            );
+            for node in ["Home", "Cabin"] {
+                let rules = placed(&sites, node);
+                assert!(of(&rules, "Home.printer ipp").is_empty(), "{rules:?}");
+            }
         }
+    }
+
+    #[test]
+    fn a_node_itself_is_let_in_from_the_mesh_on_the_others() {
+        // What Home sends over the mesh comes from its mesh IP (or from its
+        // address on a zone, for a program bound to one): Cabin lets it in from
+        // the mesh. On Home it leaves through the output: no rule lets it out.
+        let sites = SITES.replace(
+            "allowFrom: [Home.pc, Home.doorbell]",
+            "allowFrom: Home.$node",
+        );
+        assert_eq!(
+            of(&placed(&sites, "Cabin"), "Cabin.tv cast"),
+            [
+                "accept in Cabin.tv cast: tcp/8009 from mesh [10.100.0.1/32, 192.168.1.1/32, 192.168.3.1/32] to lan [192.168.2.30/32]"
+            ]
+        );
+        let rules = placed(&sites, "Home");
+        assert!(of(&rules, "Cabin.tv cast").is_empty(), "{rules:?}");
     }
 
     #[test]

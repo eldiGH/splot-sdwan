@@ -4,7 +4,8 @@
 # over ssh. It checks that an apply is confirmed only while the other router
 # still answers through the tunnel, and rolled back when the change cuts it off;
 # then runs across the mesh, both routers at once: all or nothing; then a Linux
-# node, Barn (Debian with wg-quick), joins, and runs across the three.
+# node, Barn (Debian with wg-quick), joins, and runs across the three; last, a
+# router itself (`Home.$node`) is let in to a service on the other.
 #
 #   scripts/mesh-check.sh [VERSION]     default: the newest version in use
 #
@@ -432,6 +433,35 @@ if [ "$status" -ne 0 ] && grep -q '^Checked Home: lost Cabin' <<<"$output" &&
 else
 	fail "with a Linux node: Home and Cabin cut off from each other, every node put back, Barn too" \
 		"exit $status: $output"$'\n'"barn: $(last barn)"
+fi
+
+# Whether node $1 reaches Cabin's ssh at its mesh IP: dropbear's banner.
+# OpenWrt's nc has no timeout, and the router no `timeout`: the shell ends it.
+probe_cabin() {
+	case $1 in
+	barn) run barn 'timeout 4 bash -c "exec 3<>/dev/tcp/10.100.0.2/22 && head -c 7 <&3"' ;;
+	*) run "$1" 'sleep 2 | nc 10.100.0.2 22 >/tmp/probe 2>/dev/null & sleep 4; kill $! 2>/dev/null
+		head -c 7 /tmp/probe; rm -f /tmp/probe' ;;
+	esac
+}
+reaches_cabin() {
+	local banner
+	banner=$(probe_cabin "$1" 2>/dev/null) || true
+	[[ $banner == SSH-* ]]
+}
+# A node itself over the mesh: what Home sends comes from its mesh IP, which
+# only `Home.$node` names. Cabin drops Home's connection to its ssh until a
+# service lets Home itself in, and then still drops Barn's.
+dropped_before=
+reaches_cabin home || dropped_before=1
+sed -i '/^  Cabin:$/,/^  Barn:$/ s/^    wanZone: wan$/&\n    services:\n      ssh: { port: 22, proto: tcp, allowFrom: Home.$node }/' "$work/splot.yml"
+output=$(splot apply --node Cabin --yes 2>&1) && status=0 || status=$?
+if [ -n "$dropped_before" ] && [ "$status" -eq 0 ] && grep -q '^Confirmed' <<<"$output" &&
+	reaches_cabin home && ! reaches_cabin barn; then
+	pass "a node itself over the mesh: Home let in to Cabin's ssh as Home.\$node, Barn still dropped"
+else
+	fail "a node itself over the mesh: Home let in to Cabin's ssh as Home.\$node, Barn still dropped" \
+		"dropped before: ${dropped_before:-no}; exit $status: $output"$'\n'"$(run cabin 'fw4 print | grep -i ssh' 2>&1)"$'\n'"home: $(probe_cabin home 2>&1)"$'\n'"barn: $(probe_cabin barn 2>&1)"
 fi
 
 if [ "${SPLOT_CHECK_KEEP:-}" = 1 ]; then

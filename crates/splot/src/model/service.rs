@@ -78,24 +78,24 @@ impl Source {
 /// is in it once.
 #[derive(Debug, Default)]
 pub struct Sources {
-    /// What its references name: the same on every node.
+    /// What its references name but nodes themselves: the same on every node.
     pub(super) everywhere: BTreeSet<Source>,
-    /// What `$node` names on each node: the node's own address on each of its
-    /// zones. Empty when `allowFrom` has no `$node`.
-    pub(super) this_node: BTreeMap<Identifier, BTreeSet<Source>>,
+    /// The nodes it names themselves (`{Node}.$node`), each with its own
+    /// addresses: its mesh IP and its address on each of its zones.
+    pub(super) nodes: BTreeMap<Identifier, BTreeSet<Source>>,
 }
 
 impl Sources {
-    /// What its references name, the same on every node: all but `$node`.
-    pub fn everywhere(&self) -> impl Iterator<Item = &Source> {
-        self.everywhere.iter()
-    }
-
-    /// The sources on `node`, where `$node` is that node.
-    pub fn on(&self, node: &Identifier) -> impl Iterator<Item = &Source> {
-        self.everywhere
+    /// The sources `node` lets in: all but its own addresses, since what the
+    /// node itself sends leaves through its output. `$node`, the node the rule
+    /// is on, names only those, so it adds nothing on any node.
+    pub fn on<'a>(&'a self, node: &'a Identifier) -> impl Iterator<Item = &'a Source> {
+        let others = self
+            .nodes
             .iter()
-            .chain(self.this_node.get(node).into_iter().flatten())
+            .filter(move |(name, _)| *name != node)
+            .flat_map(|(_, sources)| sources);
+        self.everywhere.iter().chain(others)
     }
 }
 
@@ -125,10 +125,10 @@ mod tests {
     }
 
     #[test]
-    fn this_node_is_the_node_asked_about() {
+    fn a_node_lets_in_every_node_named_but_itself() {
         let sources = Sources {
             everywhere: BTreeSet::from([source("192.168.3.0/24", "Cabin")]),
-            this_node: BTreeMap::from([
+            nodes: BTreeMap::from([
                 (
                     id("Home"),
                     BTreeSet::from([source("192.168.1.1/32", "Home")]),
@@ -139,9 +139,12 @@ mod tests {
                 ),
             ]),
         };
-        assert_eq!(on(&sources, "Home"), ["192.168.3.0/24", "192.168.1.1/32"]);
-        assert_eq!(on(&sources, "Cabin"), ["192.168.3.0/24", "192.168.3.1/32"]);
-        // A node that isn't in the table has no addresses of its own to add.
-        assert_eq!(on(&sources, "Attic"), ["192.168.3.0/24"]);
+        assert_eq!(on(&sources, "Home"), ["192.168.3.0/24", "192.168.3.1/32"]);
+        assert_eq!(on(&sources, "Cabin"), ["192.168.3.0/24", "192.168.1.1/32"]);
+        // A node it doesn't name lets in every one it does, by name.
+        assert_eq!(
+            on(&sources, "Attic"),
+            ["192.168.3.0/24", "192.168.3.1/32", "192.168.1.1/32"]
+        );
     }
 }

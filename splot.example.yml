@@ -148,6 +148,16 @@ nodes:
     meshIp: 10.100.0.2
     wanZone: wan
 
+    services:
+      # DNS on the router itself, for Home's resolver to forward Cabin's names
+      # to. What Home sends itself comes from its meshIp, which `Home` (its
+      # networks) doesn't cover: `Home.$node` is Home itself. On Home that
+      # traffic leaves through its output, so only Cabin gets a rule.
+      dns:
+        port: 53
+        proto: [udp, tcp]
+        allowFrom: Home.$node
+
     zones:
       lan:
         address: 192.168.2.1/24

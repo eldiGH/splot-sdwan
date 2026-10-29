@@ -421,6 +421,7 @@ A node's splot zones are its mesh zone and every zone `splot.yml` declares for i
 What follows:
 
 - **No internet through the mesh:** what comes from the mesh is dropped on its way to the WAN. Using a node as the way out for clients is planned.
+- **What a node sends itself over the mesh** (its DNS forwarding, a proxy on it) comes from its `meshIp`, which `allowFrom: Home` doesn't cover: let it in with `allowFrom: Home.$node` (see [A node itself](#a-node-itself-nodenode)).
 - **Your `forwarding` sections between splot zones stop working:** fw4 checks rules before forwardings, so splot's drop wins. Declare the flows they carried as services (`allowFrom: Home.lan` for a whole zone).
 - **Your `rule` sections there decide before splot's:** fw4 takes rules in the file's order, and splot's come last. One that accepts lets through what no service grants; one that drops or rejects stops what a service grants. Declare what they're for as services, and remove them.
 - **The dry run warns about both** (every `splot apply` shows it before asking): each forwarding or rule of yours between splot zones, out of the mesh zone (to the WAN too), or into the router from the mesh zone, saying what it does there and what to do instead. The router's stock sections (`lan` to `wan`, the WAN's rules) are none of these.
@@ -447,7 +448,8 @@ A reference is one of:
 
 - **Bare name** — resolves in the global namespace: an explicit tag, a node name, or a global client name
 - **Qualified `{NodeName}.{LocalName}`** — resolves in that node's per-node namespace: a zone, zone device, or hub client — or the hub itself, as `{NodeName}.hub`
-- **`$node`** — the current router being configured (context-dependent — resolves to a different router per node being generated)
+- **`{NodeName}.$node`** — that node itself, as a host, named from anywhere (see [A node itself](#a-node-itself-nodenode))
+- **`$node`** — the node the rule is on (context-dependent — resolves to a different node per node being generated)
 
 ### What a reference resolves to
 
@@ -462,15 +464,16 @@ Resolution always produces a set of IP addresses or subnets — never zone names
 | `{Node}.{ZoneDevice}` (e.g. `HomeRouter.Printer`) | The device's IP                                                          |
 | `{Node}.hub` (e.g. `HomeRouter.hub`)              | The node's hub network                                                   |
 | `{Node}.{HubClient}` (e.g. `HomeRouter.lte-cam`)  | The hub client's IP                                                      |
-| `$node`                                           | Union of the router's own IPs across all its `zones`                     |
+| `{Node}.$node` (e.g. `HomeRouter.$node`)          | The node itself: its `meshIp` and its own address on each of its `zones` |
+| `$node`                                           | The same, for the node the rule is on                                    |
 
 A single tag can group multiple objects if they share it. `allowFrom: admin` grants access from every device, client, or hub tagged `admin` — across multiple nodes.
 
 ### Subnets vs IPs
 
-Bare and qualified node-name forms (`HomeRouter`, `HomeRouter.lan`) resolve to **subnets** — broad, meaning "any device on those networks." `$node` resolves to **IPs** — narrow, meaning "the router itself as a host." These are complementary, not interchangeable.
+Bare and qualified node-name forms (`HomeRouter`, `HomeRouter.lan`) resolve to **subnets** — broad, meaning "any device on those networks." `HomeRouter.$node` and `$node` resolve to **IPs** — narrow, meaning "the node itself as a host." These are complementary, not interchangeable.
 
-Use the bare node name when you want any traffic from that node's downstream networks. `$node` means the router itself, which needs no rule (see `$node` below).
+Use the bare node name when you want any traffic from that node's downstream networks. It doesn't cover what the node sends itself over the mesh: name that `HomeRouter.$node` (see below).
 
 ### Examples
 
@@ -483,7 +486,8 @@ allowFrom: HomeRouter.hub                 # the node's hub network
 allowFrom: HomeRouter.lte-cam             # a hub client's IP
 allowFrom: Phone                          # global client's IPs
 allowFrom: [admin, HomeRouter.iot]        # admin-tagged things + the node's iot zone subnet
-allowFrom: $node                          # the router's own IPs across all its interfaces
+allowFrom: HomeRouter.$node               # the node itself: its meshIp and its address on each zone
+allowFrom: $node                          # the node the rule is on, which needs no rule (see below)
 ```
 
 ---
@@ -525,9 +529,25 @@ Every named object has an implicit tag equal to its name. Where that tag lives:
 
 The qualified `{NodeName}.{LocalName}` syntax is intentionally only **two levels deep** — the per-node namespace is flat. There is no `{NodeName}.{Zone}.{Device}` form; a device is referenced as `{NodeName}.{Device}` directly. This works because per-node names across all three categories are unique.
 
+### A node itself: `{Node}.$node`
+
+What a node sends itself, rather than forwards for a device behind it, leaves over the mesh from its `meshIp`: its resolver forwarding names to another node, a reverse proxy on it, its backups. `HomeRouter` (its networks) doesn't cover that address, so `allowFrom: HomeRouter` doesn't let it in. `HomeRouter.$node` names the node itself: its `meshIp`, and its own address on each of its `zones` (for a program bound to one).
+
+```yaml
+nodes:
+  Cabin:
+    services:
+      dns:
+        port: 53
+        proto: [udp, tcp]
+        allowFrom: Home.$node    # Home's resolver forwards Cabin's names here
+```
+
+Cabin lets it in from the mesh. Home itself gets no rule for it: what a node sends leaves through its output, which splot doesn't filter.
+
 ### `$node`
 
-`$node` is a special context-dependent tag that resolves to the router currently being configured. It produces the router's own IPs across all of its `zones`. No firewall rule is generated for it: what the router itself sends leaves through its output, which splot doesn't filter.
+`$node` is a special context-dependent tag that resolves to the node currently being configured: the same addresses as `{Node}.$node` for that node. No firewall rule is generated for it: what the node itself sends leaves through its output, which splot doesn't filter.
 
 ### Allowed characters
 
