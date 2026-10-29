@@ -304,6 +304,9 @@ pub enum ValidationWarning {
     /// of the operator's WireGuard.
     WireGuardLeftAlone {
         node: Identifier,
+        /// Services whose `allowFrom` the node would enforce for what crosses
+        /// the mesh, to a host on it or from its zones to a host elsewhere.
+        unenforced: Vec<String>,
         /// Services exposed through the node to a host reached over the mesh.
         unforwarded: Vec<String>,
         /// Others dial the node.
@@ -380,6 +383,7 @@ impl fmt::Display for ValidationWarning {
             }
             Self::WireGuardLeftAlone {
                 node,
+                unenforced,
                 unforwarded,
                 listen_port,
                 at,
@@ -390,6 +394,13 @@ impl fmt::Display for ValidationWarning {
                 )?;
                 if *listen_port {
                     write!(f, ", and your rule lets its listen port in from the WAN")?;
+                }
+                if !unenforced.is_empty() {
+                    write!(
+                        f,
+                        "; allowFrom isn't enforced for what crosses the mesh to {}",
+                        unenforced.join(", ")
+                    )?;
                 }
                 if !unforwarded.is_empty() {
                     write!(

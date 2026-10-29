@@ -63,6 +63,14 @@ impl Place {
             Self::Mesh => None,
         }
     }
+
+    /// The zone of `node` it is, when it's one of that node's zones.
+    pub fn zone_on(&self, node: &Identifier) -> Option<&Identifier> {
+        match self {
+            Self::Zone { node: on, zone } if on == node => Some(zone),
+            _ => None,
+        }
+    }
 }
 
 /// One of a host's addresses: its IP with the prefix of the subnet it's on

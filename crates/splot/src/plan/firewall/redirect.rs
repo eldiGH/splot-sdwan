@@ -4,11 +4,7 @@
 use std::{collections::BTreeSet, fmt, net::Ipv4Addr};
 
 use crate::{
-    model::{
-        Network,
-        host::{HostRef, Place},
-        node::Node,
-    },
+    model::{Network, host::HostRef, node::Node},
     plan::{firewall::zone_ref::ZoneRef, list, proto_port},
     types::{identifier::Identifier, ip::Ipv4Network, port::PortOrRange, protocol::Protocol},
 };
@@ -28,16 +24,6 @@ pub struct Redirect {
     pub dest_ip: Ipv4Addr,
     pub internal_port: PortOrRange,
     pub proto: BTreeSet<Protocol>,
-}
-
-/// The zone a target is in, on the node that forwards to it. Everything on the
-/// mesh or a hub arrives through the mesh zone. A zone is named as on its own
-/// node, which is right only when that node is this one.
-fn dest_zone(place: &Place) -> ZoneRef {
-    match place {
-        Place::Zone { zone, .. } => ZoneRef::Named(zone.clone()),
-        Place::Hub { .. } | Place::Mesh => ZoneRef::Mesh,
-    }
 }
 
 /// A redirect for every service exposed through this node, to what it forwards
@@ -61,7 +47,7 @@ pub(super) fn redirects(network: &Network, own: &Node) -> Vec<Redirect> {
                 wan_zone: wan_zone.clone(),
                 external_port: service.port().external(),
                 sources: wan.sources().iter().copied().collect(),
-                dest_zone: dest_zone(target.place()),
+                dest_zone: ZoneRef::on(own.name(), target.place()),
                 dest_ip: target.ip(),
                 internal_port: service.port().internal(),
                 proto: service.proto().clone(),
@@ -208,6 +194,21 @@ clients:
         );
         assert_eq!(
             targets(&redirects(EXPOSED, "Cabin")),
+            ["Cabin.nas https -> lan 192.168.2.20"]
+        );
+    }
+
+    #[test]
+    fn a_device_behind_another_node_is_forwarded_into_the_mesh() {
+        // Home reaches Cabin's nas over the mesh, though Home has a lan too.
+        let exposed = EXPOSED.replace("wan: { via: Cabin }", "wan: { via: [Cabin, Home] }");
+        let home = targets(&redirects(&exposed, "Home"));
+        assert!(
+            home.contains(&"Cabin.nas https -> mesh 192.168.2.20".to_owned()),
+            "{home:?}"
+        );
+        assert_eq!(
+            targets(&redirects(&exposed, "Cabin")),
             ["Cabin.nas https -> lan 192.168.2.20"]
         );
     }

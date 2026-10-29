@@ -1,13 +1,13 @@
 //! Rules as uci `rule` sections.
 
-use super::qualified_host_id;
+use super::{qualified_host_id, zone_name};
 use crate::{
     backend::openwrt::{
         naming,
         section::{UciSection, UciSectionBuilder},
     },
     model::host::HostRef,
-    plan::firewall::rules::{Direction, Rule},
+    plan::firewall::rules::{Destination, Direction, Rule},
 };
 
 fn direction(direction: Direction) -> &'static str {
@@ -31,29 +31,37 @@ impl UciSection for Rule {
         "rule"
     }
 
-    /// The direction is part of the id: one service can need an ingress and an
-    /// egress rule on the same node (a global client with IPs on two nodes).
+    /// The direction and the source zone are part of the id: one service can
+    /// need an ingress and an egress rule on the same node (a global client with
+    /// IPs on two nodes), and a rule for each zone its sources arrive in.
     fn id(&self) -> impl IntoIterator<Item = &str> {
         let mut id = vec![direction(self.direction)];
         id.extend(host_id(&self.host, self.direction));
-        id.push(self.service.as_ref());
+        id.extend([self.service.as_ref(), "from", zone_name(&self.from)]);
         id
     }
 
     /// The label is in the config's notation, so what LuCI shows can be searched
-    /// for in `splot.yml`: `[SPLOT] out: Cabin.camera rtsp`.
+    /// for in `splot.yml`: `[SPLOT] out: Cabin.camera rtsp, from lan`. Without a
+    /// `dest`, fw4 puts the rule in the source zone's input chain: to the node
+    /// itself.
     fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
+        let from = zone_name(&self.from);
         let label = format!(
-            "{}: {} {}",
+            "{}: {} {}, from {from}",
             direction(self.direction),
             self.host,
             self.service
         );
+        let dest = match &self.to {
+            Destination::Node => None,
+            Destination::Zone(zone) => Some(zone_name(zone)),
+        };
 
         section
             .set("name", naming::name_prefixed(&label))
-            .set("src", "*")
-            .set("dest", "*")
+            .set("src", from)
+            .set_if_some("dest", dest)
             .set("dest_port", self.port.to_string())
             .set("target", "ACCEPT")
             .extend_list("dest_ip", &self.destinations)
@@ -67,9 +75,13 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
-    use crate::{plan, test_support::checked};
+    use crate::{
+        plan::{self, firewall::zone_ref::ZoneRef},
+        test_support::checked,
+    };
 
-    fn camera_rule(direction: Direction) -> Rule {
+    /// Cabin's camera's rtsp, from `from` to `to`.
+    fn camera_rule(direction: Direction, from: ZoneRef, to: Destination) -> Rule {
         Rule {
             host: HostRef::Local {
                 node: "Cabin".parse().unwrap(),
@@ -77,43 +89,92 @@ mod tests {
             },
             service: "rtsp".parse().unwrap(),
             direction,
+            from,
             sources: vec!["192.168.1.0/24".parse().unwrap()],
+            to,
             destinations: vec!["192.168.2.30/32".parse().unwrap()],
             port: "554".parse().unwrap(),
             proto: BTreeSet::from([crate::types::protocol::Protocol::Tcp]),
         }
     }
 
-    /// A rendered rule's `name` option.
-    fn label(rule: &Rule) -> String {
+    fn lan() -> ZoneRef {
+        ZoneRef::Named("lan".parse().unwrap())
+    }
+
+    fn commands(rule: &Rule) -> Vec<String> {
         rule.to_section()
             .commands("firewall")
             .iter()
             .map(ToString::to_string)
-            .find(|command| command.contains(".name="))
-            .unwrap()
+            .collect()
+    }
+
+    /// A rendered rule's `option` line, if it has one.
+    fn option(rule: &Rule, option: &str) -> Option<String> {
+        commands(rule)
+            .into_iter()
+            .find(|command| command.contains(&format!(".{option}=")))
     }
 
     #[test]
-    fn a_rule_is_labelled_in_config_notation_with_its_direction() {
+    fn a_rule_is_labelled_in_config_notation_with_its_direction_and_source_zone() {
         // What LuCI shows can be searched for in splot.yml; the section names keep
         // uci's character set.
+        let out = camera_rule(Direction::Egress, lan(), Destination::Zone(ZoneRef::Mesh));
         assert_eq!(
-            label(&camera_rule(Direction::Egress)),
-            "set firewall.spl_rule_out_Cabin_camera_rtsp.name='[SPLOT] out: Cabin.camera rtsp'"
+            option(&out, "name").unwrap(),
+            "set firewall.spl_rule_out_Cabin_camera_rtsp_from_lan.name='[SPLOT] out: Cabin.camera rtsp, from lan'"
+        );
+        let into = camera_rule(Direction::Ingress, ZoneRef::Mesh, Destination::Zone(lan()));
+        assert_eq!(
+            option(&into, "name").unwrap(),
+            "set firewall.spl_rule_in_camera_rtsp_from_spl_mesh.name='[SPLOT] in: Cabin.camera rtsp, from spl_mesh'"
+        );
+    }
+
+    #[test]
+    fn a_rule_names_its_zones_as_fw4_knows_them() {
+        // fw4 puts a rule with a `dest` in the source zone's forward chain.
+        let into = camera_rule(Direction::Ingress, ZoneRef::Mesh, Destination::Zone(lan()));
+        let section = "set firewall.spl_rule_in_camera_rtsp_from_spl_mesh";
+        assert_eq!(
+            option(&into, "src").unwrap(),
+            format!("{section}.src='spl_mesh'")
         );
         assert_eq!(
-            label(&camera_rule(Direction::Ingress)),
-            "set firewall.spl_rule_in_camera_rtsp.name='[SPLOT] in: Cabin.camera rtsp'"
+            option(&into, "dest").unwrap(),
+            format!("{section}.dest='lan'")
         );
+
+        let out = camera_rule(Direction::Egress, lan(), Destination::Zone(ZoneRef::Mesh));
+        let section = "set firewall.spl_rule_out_Cabin_camera_rtsp_from_lan";
+        assert_eq!(option(&out, "src").unwrap(), format!("{section}.src='lan'"));
+        assert_eq!(
+            option(&out, "dest").unwrap(),
+            format!("{section}.dest='spl_mesh'")
+        );
+    }
+
+    #[test]
+    fn a_rule_to_the_node_itself_has_no_dest() {
+        // fw4 puts a rule without a `dest` in the source zone's input chain.
+        let to_node = camera_rule(Direction::Ingress, ZoneRef::Mesh, Destination::Node);
+        assert!(
+            option(&to_node, "src")
+                .unwrap()
+                .ends_with(".src='spl_mesh'")
+        );
+        assert_eq!(option(&to_node, "dest"), None, "{:?}", commands(&to_node));
     }
 
     #[test]
     fn ingress_and_egress_rule_of_one_service_get_distinct_sections() {
         // Laptop lives on both Home's and Cabin's LAN and offers ssh. From Home's
-        // view that's an ingress rule (its Home IP) and an egress rule (its Cabin
-        // IP). Both used to be `spl_Laptop_ssh`, and uci merged them into one rule
-        // allowing the cross-product of all sources and destinations.
+        // view that's an ingress rule (its Home IP, from Cabin's pc over the
+        // mesh) and an egress rule (its Cabin IP, from Home's lan). Both used to
+        // be `spl_Laptop_ssh`, and uci merged them into one rule allowing the
+        // cross-product of all sources and destinations.
         let yaml = "
 meshNetwork: 10.100.0.0/24
 nodes:
@@ -159,12 +220,15 @@ clients:
             .unwrap()
             .rules
             .iter()
-            .map(|rule| rule.to_section().commands("firewall")[0].to_string())
+            .map(|rule| commands(rule)[0].clone())
             .collect();
 
-        let laptop_in = "set firewall.spl_rule_in_Laptop_ssh='rule'".to_owned();
-        let laptop_out = "set firewall.spl_rule_out_Laptop_ssh='rule'".to_owned();
-        assert!(sections.contains(&laptop_in), "{sections:?}");
-        assert!(sections.contains(&laptop_out), "{sections:?}");
+        assert_eq!(
+            sections,
+            [
+                "set firewall.spl_rule_in_Laptop_ssh_from_spl_mesh='rule'",
+                "set firewall.spl_rule_out_Laptop_ssh_from_lan='rule'",
+            ]
+        );
     }
 }

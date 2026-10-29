@@ -15,7 +15,7 @@ peer Phone at 10.100.0.100: key ReplacePhonePublicKeyAAAAAAAAAAAAAAAAAAAAAA=, al
 mesh zone: input drop, output accept, forward drop
 ping 10.100.0.2 from [Barn 10.100.0.4, Home 10.100.0.1, Lake 10.100.0.3, Phone 10.100.0.100]
 listen port: wan udp/51820
-accept in Cabin.camera rtsp: tcp/554 from [10.100.0.100/32, 192.168.1.50/32] to [192.168.2.30/32]
+accept in Cabin.camera rtsp: tcp/554 from mesh [10.100.0.100/32, 192.168.1.50/32] to lan [192.168.2.30/32]
 
 [dhcp]
 lease Cabin.camera: 192.168.2.30 for [aa:bb:cc:00:00:04]

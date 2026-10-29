@@ -68,6 +68,10 @@ impl Source {
     pub fn network(&self) -> Ipv4Network {
         self.network
     }
+
+    pub fn place(&self) -> &Place {
+        &self.place
+    }
 }
 
 /// What a service's `allowFrom` lets in, resolved. A source two references name
@@ -82,6 +86,11 @@ pub struct Sources {
 }
 
 impl Sources {
+    /// What its references name, the same on every node: all but `$node`.
+    pub fn everywhere(&self) -> impl Iterator<Item = &Source> {
+        self.everywhere.iter()
+    }
+
     /// The sources on `node`, where `$node` is that node.
     pub fn on(&self, node: &Identifier) -> impl Iterator<Item = &Source> {
         self.everywhere

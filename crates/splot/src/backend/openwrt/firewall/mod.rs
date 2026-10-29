@@ -4,6 +4,8 @@ mod redirect;
 mod rules;
 mod zones;
 
+use std::sync::LazyLock;
+
 use log::{Level, debug, info, log_enabled};
 
 use super::{
@@ -27,12 +29,15 @@ fn qualified_host_id(host: &HostRef) -> Vec<&str> {
     }
 }
 
+/// splot's mesh zone as fw4 knows it, after the interface it covers.
+static MESH_ZONE: LazyLock<String> = LazyLock::new(|| naming::mesh_interface().to_string());
+
 /// A zone as fw4 knows it, by its `name`: splot's mesh zone after the interface
 /// it covers, one of the operator's by its key in `splot.yml`.
-fn zone_name(zone: &ZoneRef) -> String {
+fn zone_name(zone: &ZoneRef) -> &str {
     match zone {
-        ZoneRef::Mesh => naming::mesh_interface().to_string(),
-        ZoneRef::Named(zone) => zone.to_string(),
+        ZoneRef::Mesh => &MESH_ZONE,
+        ZoneRef::Named(zone) => zone.as_ref(),
     }
 }
 
@@ -138,5 +143,77 @@ nodes:
 
         assert_eq!(values(&sections, "zone", "name"), ["spl_mesh"]);
         assert_eq!(values(&sections, "redirect", "dest"), ["spl_mesh"]);
+    }
+
+    #[test]
+    fn every_rule_names_the_zones_it_crosses() {
+        // `*` would match every zone, the WAN and the operator's own included.
+        // Home: ssh on the router and a nas on its lan, both from Phone; a camera
+        // on its hub, forwarded from the WAN. Cabin's lan reaches the nas.
+        let network = checked(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    platform:
+      os: openwrt
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    wanZone: wan
+    services:
+      ssh: { port: 22, proto: tcp, allowFrom: Phone }
+    zones:
+      lan:
+        address: 192.168.1.1/24
+        devices:
+          nas:
+            ip: 192.168.1.20
+            macs: AA:BB:CC:DD:EE:01
+            services:
+              https: { port: 443, proto: tcp, allowFrom: [Phone, Cabin.lan] }
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+          services:
+            rtsp: { port: 554, proto: tcp, allowFrom: Phone, wan: { via: Home } }
+  Cabin:
+    platform:
+      os: openwrt
+    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
+    endpoint: 5.6.7.8
+    listenPort: 51820
+    meshIp: 10.100.0.2
+    wanZone: wan
+    zones:
+      lan:
+        address: 192.168.2.1/24
+clients:
+  Phone:
+    publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+    meshIp: 10.100.1.10
+",
+        );
+        for node in ["Home", "Cabin"] {
+            let plan = plan::plan(&network, &node.parse().unwrap()).unwrap();
+            let sections = render(&plan.firewall.unwrap());
+
+            // The ping, the listen port and the rules; Cabin's lets its lan out.
+            let rules = values(&sections, "rule", "src");
+            assert!(rules.len() >= 3, "{node}: {rules:?}");
+            for section in &sections {
+                for (option, value) in &section.options {
+                    let wildcard = match value {
+                        Value::Single(value) => value == "*",
+                        Value::List(values) => values.iter().any(|value| value == "*"),
+                    };
+                    assert!(!wildcard, "{node}: {}.{option} is '*'", section.name);
+                }
+            }
+        }
     }
 }

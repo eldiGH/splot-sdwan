@@ -90,15 +90,33 @@ pub(super) fn check_unmanaged(
         }
 
         if platform.wireguard().is_none() && platform.firewall().is_some() {
+            // What crosses the mesh gets no rule: to a host on the node from a
+            // source outside its zones, or from its zones to a host elsewhere.
+            let unenforced = hosts
+                .iter()
+                .flat_map(|host| {
+                    let here = host.addresses_on(|on| on == node).next().is_some();
+                    let elsewhere = host.addresses_on(|on| on != node).next().is_some();
+                    services_of(host)
+                        .filter(move |(_, service)| {
+                            service.sources().everywhere().any(|source| {
+                                let behind = source.place().zone_on(node).is_some();
+                                (here && !behind) || (elsewhere && behind)
+                            })
+                        })
+                        .map(|(name, _)| format!("{}.{name}", host.id()))
+                })
+                .collect();
             // A forward to a host reached over the mesh would name the mesh zone.
             let unforwarded = forwarded
                 .iter()
-                .filter(|(_, place)| !matches!(place, Place::Zone { .. }))
+                .filter(|(_, place)| place.zone_on(node).is_none())
                 .map(|(service, _)| service.clone())
                 .collect();
 
             report.warnings.push(ValidationWarning::WireGuardLeftAlone {
                 node: node.clone(),
+                unenforced,
                 unforwarded,
                 listen_port: dialled,
                 at: at(node, Concern::WireGuard),
@@ -116,7 +134,8 @@ mod tests {
 
     // Home: ssh on the router, from Phone; the printer on its lan, from Phone and
     // forwarded from the WAN; the camera on its hub, forwarded too. Phone's own
-    // http is forwarded to its mesh IP. Cabin's ssh is no concern of Home's.
+    // http is forwarded to its mesh IP. Cabin's ssh, from Phone and Home's lan,
+    // is Home's concern only on its way out.
     fn mesh(home_platform: &str) -> String {
         mesh_without_hub(home_platform).replacen(
             "    wanZone: wan\n",
@@ -170,7 +189,7 @@ nodes:
     listenPort: 51820
     meshIp: 10.100.0.2
     services:
-      ssh: {{ port: 22, proto: tcp, allowFrom: Phone }}
+      ssh: {{ port: 22, proto: tcp, allowFrom: [Phone, Home.lan] }}
 clients:
   Phone:
     publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
@@ -311,7 +330,9 @@ clients:
 
     #[test]
     fn wireguard_left_alone_leaves_the_firewall_without_a_mesh_zone() {
-        // The printer is on Home's own lan: its forward stays.
+        // The printer is on Home's own lan: its forward stays. What crosses the
+        // mesh gets no rule: from Phone to Home's ssh and printer, and from Home's
+        // lan out to Cabin's ssh.
         let r = report(&mesh_without_hub("      wireguard: none"));
         assert!(r.errors.is_empty(), "{:?}", r.errors);
 
@@ -320,16 +341,67 @@ clients:
             "nodes.Home.platform.wireguard",
             |w| matches!(
                 w,
-                ValidationWarning::WireGuardLeftAlone { unforwarded, listen_port: true, .. }
-                    if *unforwarded == strings(&["Phone.http"])
+                ValidationWarning::WireGuardLeftAlone { unenforced, unforwarded, listen_port: true, .. }
+                    if *unenforced == strings(&["Cabin.ssh", "Home.ssh", "Home.printer.ipp"])
+                        && *unforwarded == strings(&["Phone.http"])
             )
         ));
         assert_eq!(
             messages(&r.warnings),
             [
-                "nodes.Home.platform.wireguard: splot leaves Home's WireGuard alone, so its firewall has no mesh zone - mesh traffic arrives in your interface's zone, under your rules, and your rule lets its listen port in from the WAN; nothing is forwarded from its WAN to what's reached over the mesh: Phone.http"
+                "nodes.Home.platform.wireguard: splot leaves Home's WireGuard alone, so its firewall has no mesh zone - mesh traffic arrives in your interface's zone, under your rules, and your rule lets its listen port in from the WAN; allowFrom isn't enforced for what crosses the mesh to Cabin.ssh, Home.ssh, Home.printer.ipp; nothing is forwarded from its WAN to what's reached over the mesh: Phone.http"
             ]
         );
+    }
+
+    #[test]
+    fn wireguard_left_alone_enforces_what_stays_at_the_site() {
+        // The printer from Home's own lan: no mesh in between.
+        let yaml = mesh_without_hub("      wireguard: none").replace(
+            "allowFrom: Phone, wan: { via: Home }",
+            "allowFrom: Home.lan, wan: { via: Home }",
+        );
+        let r = report(&yaml);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(warning_at(
+            &r,
+            "nodes.Home.platform.wireguard",
+            |w| matches!(
+                w,
+                ValidationWarning::WireGuardLeftAlone { unenforced, .. }
+                    if *unenforced == strings(&["Cabin.ssh", "Home.ssh"])
+            )
+        ));
+    }
+
+    #[test]
+    fn wireguard_left_alone_forwards_nothing_to_another_nodes_zone() {
+        // Home reaches Cabin's nas over the mesh, though both have a lan.
+        let yaml = mesh_without_hub("      wireguard: none").replace(
+            "    meshIp: 10.100.0.2\n",
+            "    meshIp: 10.100.0.2
+    zones:
+      lan:
+        address: 192.168.2.1/24
+        devices:
+          nas:
+            ip: 192.168.2.20
+            macs: AA:BB:CC:DD:EE:02
+            services:
+              https: { port: 443, proto: tcp, wan: { via: Home } }
+",
+        );
+        let r = report(&yaml);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(warning_at(
+            &r,
+            "nodes.Home.platform.wireguard",
+            |w| matches!(
+                w,
+                ValidationWarning::WireGuardLeftAlone { unforwarded, .. }
+                    if *unforwarded == strings(&["Cabin.nas.https", "Phone.http"])
+            )
+        ));
     }
 
     #[test]

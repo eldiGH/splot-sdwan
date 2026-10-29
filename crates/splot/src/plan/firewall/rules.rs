@@ -1,8 +1,13 @@
 //! Rules: the flows this node lets through, to the services on it (ingress) and,
-//! from the networks behind it, to services elsewhere (egress).
+//! from the networks behind it, to services elsewhere (egress). One rule per
+//! flow and zone its sources arrive in.
 
-use std::{collections::BTreeSet, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
+use super::zone_ref::ZoneRef;
 use crate::{
     model::{
         Network,
@@ -24,8 +29,17 @@ pub enum Direction {
     Egress,
 }
 
+/// Where a rule lets traffic go on the node.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Destination {
+    /// The node itself.
+    Node,
+    /// Through the node, into one of its zones.
+    Zone(ZoneRef),
+}
+
 /// A flow this node accepts: to one service of one host, from the sources its
-/// `allowFrom` resolves to here.
+/// `allowFrom` resolves to here that arrive in one zone.
 #[derive(Debug)]
 pub struct Rule {
     pub host: HostRef,
@@ -33,106 +47,172 @@ pub struct Rule {
     /// One service can need both on one node (a global client with IPs on two
     /// nodes), so the direction is part of what tells two rules apart.
     pub direction: Direction,
+    /// The zone the sources arrive in. A flow has a rule per zone, so the zone
+    /// is part of what tells two rules apart too.
+    pub from: ZoneRef,
     pub sources: Vec<Ipv4Network>,
+    /// Follows from the rest: the node itself, the host's zone, or the mesh.
+    pub to: Destination,
     pub destinations: Vec<Ipv4Network>,
     pub port: PortOrRange,
     pub proto: BTreeSet<Protocol>,
 }
 
-fn rule(
-    direction: Direction,
-    host: &HostRef,
-    service_name: &Identifier,
-    service: &Service,
-    dest_addresses: &[&HostAddress],
-    own: &Node,
-    src_ip_filter: Option<&[Ipv4Network]>,
-) -> Option<Rule> {
-    let sources: Vec<Ipv4Network> = service
-        .sources()
-        .on(own.name())
-        .map(Source::network)
-        // skip same-LAN sources — they don't traverse this router's firewall
-        .filter(|network| {
-            dest_addresses
-                .iter()
-                .any(|dest_address| !dest_address.shares_link(network.ip()))
-        })
-        .filter(|network| {
-            let Some(src_ip_filter) = src_ip_filter else {
-                return true;
-            };
-
-            src_ip_filter
-                .iter()
-                .any(|address| address.contains(network.ip()))
-        })
-        .collect();
-
-    if sources.is_empty() {
-        return None;
-    }
-
-    Some(Rule {
-        host: host.clone(),
-        service: service_name.clone(),
-        direction,
-        sources,
-        destinations: dest_addresses
-            .iter()
-            .map(|address| Ipv4Network::host(address.ip()))
-            .collect(),
-        port: service.port().internal(),
-        proto: service.proto().clone(),
-    })
+/// One service of one host, and who its `allowFrom` lets in.
+struct Flow<'a> {
+    host: &'a HostRef,
+    name: &'a Identifier,
+    service: &'a Service,
 }
 
-/// A rule for each service of every host with addresses on this node (ingress)
-/// or on other nodes (egress), toward those addresses. A global client's mesh IP
-/// is on no node, so it gets no rule.
-fn host_rules(
-    network: &Network,
-    direction: Direction,
-    own: &Node,
-    src_ip_filter: Option<&[Ipv4Network]>,
-) -> Vec<Rule> {
-    let on = |node: &Identifier| match direction {
-        Direction::Ingress => node == own.name(),
-        Direction::Egress => node != own.name(),
-    };
-    let mut rules = Vec::new();
-
-    for host in network.hosts() {
-        let addresses: Vec<&HostAddress> = host.addresses_on(on).collect();
-
-        if addresses.is_empty() {
-            continue;
+impl Flow<'_> {
+    /// Into `own`, to the host's addresses `here` on it: its own to the node
+    /// itself, anyone else's into the zone it's in. Left out: sources in that
+    /// zone (their traffic never passes the node), and the node's own zones
+    /// toward the node itself (what reaches the router from them is the
+    /// operator's).
+    fn ingress(&self, own: &Node, here: &[&HostAddress]) -> Vec<Rule> {
+        let mut destinations: BTreeMap<Destination, Vec<Ipv4Network>> = BTreeMap::new();
+        for address in here {
+            let to = match self.host {
+                HostRef::Node(_) => Destination::Node,
+                _ => Destination::Zone(ZoneRef::on(own.name(), address.place())),
+            };
+            destinations
+                .entry(to)
+                .or_default()
+                .push(Ipv4Network::host(address.ip()));
         }
 
-        for (service_name, service) in network.services_of(host) {
-            rules.extend(rule(
-                direction,
-                host.id(),
-                service_name,
+        let sources = by_zone(own, self.service.sources().everywhere());
+        let mut rules = Vec::new();
+        for (to, destinations) in destinations {
+            for (from, sources) in &sources {
+                let crosses = match (from, &to) {
+                    (ZoneRef::Mesh, _) => true,
+                    (ZoneRef::Named(_), Destination::Node) => false,
+                    (ZoneRef::Named(_), Destination::Zone(zone)) => from != zone,
+                };
+                if crosses {
+                    rules.push(self.rule(
+                        Direction::Ingress,
+                        from.clone(),
+                        sources.clone(),
+                        to.clone(),
+                        destinations.clone(),
+                    ));
+                }
+            }
+        }
+        rules
+    }
+
+    /// Out of `own`, over the mesh, to the host's addresses `elsewhere`: from
+    /// the sources behind `own`, in its zones or on its hub.
+    fn egress(&self, own: &Node, elsewhere: &[&HostAddress]) -> Vec<Rule> {
+        if elsewhere.is_empty() {
+            return Vec::new();
+        }
+        let destinations: Vec<Ipv4Network> = elsewhere
+            .iter()
+            .map(|address| Ipv4Network::host(address.ip()))
+            .collect();
+        let behind = self
+            .service
+            .sources()
+            .everywhere()
+            .filter(|source| source.place().node() == Some(own.name()));
+
+        by_zone(own, behind)
+            .into_iter()
+            .map(|(from, sources)| {
+                self.rule(
+                    Direction::Egress,
+                    from,
+                    sources,
+                    Destination::Zone(ZoneRef::Mesh),
+                    destinations.clone(),
+                )
+            })
+            .collect()
+    }
+
+    fn rule(
+        &self,
+        direction: Direction,
+        from: ZoneRef,
+        sources: Vec<Ipv4Network>,
+        to: Destination,
+        destinations: Vec<Ipv4Network>,
+    ) -> Rule {
+        Rule {
+            host: self.host.clone(),
+            service: self.name.clone(),
+            direction,
+            from,
+            sources,
+            to,
+            destinations,
+            port: self.service.port().internal(),
+            proto: self.service.proto().clone(),
+        }
+    }
+}
+
+/// The sources, by the zone of `own` each arrives in.
+fn by_zone<'a>(
+    own: &Node,
+    sources: impl Iterator<Item = &'a Source>,
+) -> BTreeMap<ZoneRef, Vec<Ipv4Network>> {
+    let mut zones: BTreeMap<ZoneRef, Vec<Ipv4Network>> = BTreeMap::new();
+    for source in sources {
+        zones
+            .entry(ZoneRef::on(own.name(), source.place()))
+            .or_default()
+            .push(source.network());
+    }
+    zones
+}
+
+/// The rules on `own`: to the hosts on it first, then to hosts elsewhere. A
+/// global client's mesh IP is on no node, so it gets none. `mesh` says whether
+/// `own` has a mesh zone: without one, what comes from or goes to the mesh
+/// arrives in a zone of the operator's, and gets no rule.
+pub(super) fn rules(network: &Network, own: &Node, mesh: bool) -> Vec<Rule> {
+    let mut ingress = Vec::new();
+    let mut egress = Vec::new();
+
+    for host in network.hosts() {
+        let here: Vec<&HostAddress> = host.addresses_on(|node| node == own.name()).collect();
+        let elsewhere: Vec<&HostAddress> = host.addresses_on(|node| node != own.name()).collect();
+
+        for (name, service) in network.services_of(host) {
+            let flow = Flow {
+                host: host.id(),
+                name,
                 service,
-                &addresses,
-                own,
-                src_ip_filter,
-            ));
+            };
+            ingress.extend(flow.ingress(own, &here));
+            egress.extend(flow.egress(own, &elsewhere));
         }
     }
 
+    let mut rules = ingress;
+    rules.extend(egress);
+    if !mesh {
+        let mesh_zone = Destination::Zone(ZoneRef::Mesh);
+        rules.retain(|rule| rule.from != ZoneRef::Mesh && rule.to != mesh_zone);
+    }
     rules
 }
 
-pub(super) fn ingress_rules(network: &Network, own: &Node) -> Vec<Rule> {
-    host_rules(network, Direction::Ingress, own, None)
-}
-
-pub(super) fn egress_rules(network: &Network, own: &Node) -> Vec<Rule> {
-    let local_networks: Vec<Ipv4Network> = own.networks().collect();
-
-    host_rules(network, Direction::Egress, own, Some(&local_networks))
+impl fmt::Display for Destination {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Node => f.write_str("the node"),
+            Self::Zone(zone) => write!(f, "{zone}"),
+        }
+    }
 }
 
 impl fmt::Display for Rule {
@@ -144,11 +224,13 @@ impl fmt::Display for Rule {
 
         write!(
             f,
-            "accept {direction} {} {}: {} from {} to {}",
+            "accept {direction} {} {}: {} from {} {} to {} {}",
             self.host,
             self.service,
             proto_port(&self.proto, &self.port),
+            self.from,
             list(&self.sources),
+            self.to,
             list(&self.destinations)
         )
     }
@@ -163,17 +245,33 @@ mod tests {
         s.parse().unwrap()
     }
 
-    fn ingress(yaml: &str, own: &str) -> Vec<Rule> {
+    /// The rules on `own`, with a mesh zone or without, as the plan shows them.
+    fn placed_with(yaml: &str, own: &str, mesh: bool) -> Vec<String> {
         let network = checked(yaml);
-        ingress_rules(&network, network.node(&id(own)).unwrap())
+        rules(&network, network.node(&id(own)).unwrap(), mesh)
+            .iter()
+            .map(ToString::to_string)
+            .collect()
     }
 
-    #[test]
-    fn allowfrom_produces_ingress_rule() {
-        // Home node service ssh with allowFrom: Phone → rule with Phone's meshIp in src_ip.
-        let rules = ingress(
-            "
-meshNetwork: 10.100.0.0/24
+    fn placed(yaml: &str, own: &str) -> Vec<String> {
+        placed_with(yaml, own, true)
+    }
+
+    /// Those of one service, `Home.nas https`.
+    fn of(rules: &[String], service: &str) -> Vec<String> {
+        rules
+            .iter()
+            .filter(|rule| rule.contains(&format!(" {service}:")))
+            .cloned()
+            .collect()
+    }
+
+    // Home: ssh on the router; a lan with a pc and a nas, an iot zone with a
+    // printer; a hub with a camera and a doorbell. Cabin: a lan with a tv. Phone
+    // has a mesh IP and an IP on Home's lan.
+    const SITES: &str = "
+meshNetwork: 10.100.0.0/16
 nodes:
   Home:
     platform:
@@ -184,118 +282,36 @@ nodes:
     listenPort: 51820
     meshIp: 10.100.0.1
     services:
-      ssh:
-        port: 22
-        proto: tcp
-        allowFrom: Phone
-clients:
-  Phone:
-    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
-    meshIp: 10.100.0.100
-",
-            "Home",
-        );
-        let rule = rules
-            .iter()
-            .find(|r| r.service.as_ref() == "ssh")
-            .expect("ssh rule missing");
-        assert!(
-            rule.sources
-                .iter()
-                .any(|n| n.to_string() == "10.100.0.100/32"),
-            "Phone mesh IP missing from src_ip"
-        );
-    }
-
-    #[test]
-    fn same_lan_source_filtered_out() {
-        // LanClient is in the same /24 as printer → source filtered → no rule produced.
-        let rules = ingress(
-            "
-meshNetwork: 10.100.0.0/24
-nodes:
-  Home:
-    platform:
-      os: openwrt
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    wanZone: wan
-    listenPort: 51820
-    meshIp: 10.100.0.1
+      ssh: { port: 22, proto: tcp, allowFrom: [Phone, Home.lan] }
     zones:
       lan:
         address: 192.168.1.1/24
+        devices:
+          pc: { ip: 192.168.1.10, macs: AA:BB:CC:DD:EE:01 }
+          nas:
+            ip: 192.168.1.20
+            macs: AA:BB:CC:DD:EE:02
+            services:
+              https: { port: 443, proto: tcp, allowFrom: [Phone, Home.lan, Cabin.lan] }
+      iot:
+        address: 192.168.3.1/24
         devices:
           printer:
-            ip: 192.168.1.50
-            macs: AA:BB:CC:DD:EE:FF
+            ip: 192.168.3.20
+            macs: AA:BB:CC:DD:EE:03
             services:
-              print:
-                port: 9100
-                proto: tcp
-                allowFrom: LanClient
-clients:
-  LanClient:
-    macs: AA:BB:CC:DD:EE:01
-    ips:
-      Home:
-        lan: 192.168.1.60
-",
-            "Home",
-        );
-        assert!(
-            !rules.iter().any(|r| r.service.as_ref() == "print"),
-            "same-LAN source should not produce a rule"
-        );
-    }
-
-    #[test]
-    fn no_allowfrom_no_ingress_rule() {
-        // wan-only service — no allowFrom means no ingress firewall rule needed.
-        let rules = ingress(
-            "
-meshNetwork: 10.100.0.0/24
-nodes:
-  Home:
-    platform:
-      os: openwrt
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    listenPort: 51820
-    meshIp: 10.100.0.1
-    wanZone: wan
-    services:
-      http:
-        port: 80
-        proto: tcp
-        wan:
-          via: Home
-",
-            "Home",
-        );
-        assert!(rules.is_empty());
-    }
-
-    #[test]
-    fn cross_node_client_resolved_via_mesh_ip() {
-        // Phone lives on Cabin's lan but is reachable from Home via its meshIp.
-        let rules = ingress(
-            "
-meshNetwork: 10.100.0.0/24
-nodes:
-  Home:
-    platform:
-      os: openwrt
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    wanZone: wan
-    listenPort: 51820
-    meshIp: 10.100.0.1
-    services:
-      ssh:
-        port: 22
-        proto: tcp
-        allowFrom: Phone
+              ipp: { port: 631, proto: tcp, allowFrom: [Home.lan, $node] }
+    hub:
+      network: 10.100.49.0/24
+      clients:
+        camera:
+          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
+          ip: 10.100.49.10
+          services:
+            rtsp: { port: 554, proto: tcp, allowFrom: [Phone, Home.pc, Home.doorbell] }
+        doorbell:
+          publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
+          ip: 10.100.49.11
   Cabin:
     platform:
       os: openwrt
@@ -307,147 +323,130 @@ nodes:
     zones:
       lan:
         address: 192.168.2.1/24
+        devices:
+          tv:
+            ip: 192.168.2.30
+            macs: AA:BB:CC:DD:EE:04
+            services:
+              cast: { port: 8009, proto: tcp, allowFrom: [Home.pc, Home.doorbell] }
 clients:
   Phone:
-    publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
-    meshIp: 10.100.0.100
-",
-            "Home",
-        );
-        let rule = rules.iter().find(|r| r.service.as_ref() == "ssh").unwrap();
-        assert!(
-            rule.sources
-                .iter()
-                .any(|n| n.to_string() == "10.100.0.100/32")
-        );
-    }
-
-    fn egress(yaml: &str, own: &str) -> Vec<Rule> {
-        let network = checked(yaml);
-        egress_rules(&network, network.node(&id(own)).unwrap())
-    }
-
-    // Home-local workstation (tag `staff`) wants to reach Cabin's `web` service.
-    // From Home's perspective this is egress: Home must ACCEPT the local source
-    // toward the remote (mesh-reachable) destination.
-    const EGRESS_FIXTURE: &str = "
-meshNetwork: 10.100.0.0/24
-nodes:
-  Home:
-    platform:
-      os: openwrt
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    wanZone: wan
-    listenPort: 51820
-    meshIp: 10.100.0.1
-    zones:
-      lan:
-        address: 192.168.1.1/24
-        devices:
-          workstation:
-            ip: 192.168.1.10
-            macs: AA:BB:CC:DD:EE:01
-            tags: staff
-  Cabin:
-    platform:
-      os: openwrt
-    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
-    endpoint: 5.6.7.8
-    wanZone: wan
-    listenPort: 51820
-    meshIp: 10.100.0.2
-    zones:
-      lan:
-        address: 192.168.2.1/24
-    services:
-      web:
-        port: 80
-        proto: tcp
-        allowFrom: staff
+    publicKey: EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEA=
+    meshIp: 10.100.1.10
+    macs: AA:BB:CC:DD:EE:05
+    ips:
+      Home: { lan: 192.168.1.50 }
 ";
 
     #[test]
-    fn egress_rule_for_remote_service_from_local_source() {
-        let rules = egress(EGRESS_FIXTURE, "Home");
-        let rule = rules
-            .iter()
-            .find(|r| r.service.as_ref() == "web")
-            .expect("egress rule for Cabin web missing");
-        // src is the Home-local workstation; dest includes Cabin's mesh host IP.
-        assert!(
-            rule.sources
-                .iter()
-                .any(|n| n.to_string() == "192.168.1.10/32"),
-            "local source workstation missing from src_ip"
-        );
-        assert!(
-            rule.destinations
-                .iter()
-                .any(|n| n.to_string() == "10.100.0.2/32"),
-            "Cabin mesh host IP missing from dest_ip"
+    fn a_service_on_the_node_itself_is_let_in_from_the_mesh_alone() {
+        // Phone's lan IP and Home.lan reach the router from one of its own zones:
+        // that's the operator's.
+        assert_eq!(
+            of(&placed(SITES, "Home"), "Home ssh"),
+            [
+                "accept in Home ssh: tcp/22 from mesh [10.100.1.10/32] to the node [10.100.0.1/32, 192.168.3.1/32, 192.168.1.1/32]"
+            ]
         );
     }
 
     #[test]
-    fn egress_filters_non_local_sources() {
-        // Cabin's `web` is allowed from a Cabin-local device. From Home's perspective
-        // that source is not local, so Home emits no egress rule for it.
-        let rules = egress(
-            "
-meshNetwork: 10.100.0.0/24
-nodes:
-  Home:
-    platform:
-      os: openwrt
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    wanZone: wan
-    listenPort: 51820
-    meshIp: 10.100.0.1
-    zones:
-      lan:
-        address: 192.168.1.1/24
-  Cabin:
-    platform:
-      os: openwrt
-    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
-    endpoint: 5.6.7.8
-    wanZone: wan
-    listenPort: 51820
-    meshIp: 10.100.0.2
-    zones:
-      lan:
-        address: 192.168.2.1/24
-        devices:
-          cabinpc:
-            ip: 192.168.2.10
-            macs: AA:BB:CC:DD:EE:02
-            tags: locals
-    services:
-      web:
-        port: 80
-        proto: tcp
-        allowFrom: locals
-",
-            "Home",
-        );
-        assert!(
-            !rules.iter().any(|r| r.service.as_ref() == "web"),
-            "non-local source should not produce an egress rule on Home"
+    fn a_source_in_the_destinations_own_zone_gets_no_rule() {
+        // Phone's lan IP and Home.lan are on the nas's own link; Cabin.lan comes
+        // over the mesh.
+        assert_eq!(
+            of(&placed(SITES, "Home"), "Home.nas https"),
+            [
+                "accept in Home.nas https: tcp/443 from mesh [10.100.1.10/32, 192.168.2.0/24] to lan [192.168.1.20/32]"
+            ]
         );
     }
 
     #[test]
-    fn own_node_services_not_in_egress() {
-        // Egress only concerns *remote* nodes; the own node's own services are ingress.
-        let rules = egress(EGRESS_FIXTURE, "Cabin");
-        // From Cabin, `web` is local (ingress), so it must not appear in egress.
-        assert!(!rules.iter().any(|r| r.service.as_ref() == "web"));
+    fn a_flow_between_two_zones_of_a_site_goes_from_one_to_the_other() {
+        assert_eq!(
+            of(&placed(SITES, "Home"), "Home.printer ipp"),
+            [
+                "accept in Home.printer ipp: tcp/631 from lan [192.168.1.0/24] to iot [192.168.3.20/32]"
+            ]
+        );
     }
 
-    // Laptop lives on both Home's and Cabin's LAN and offers ssh.
-    const LAPTOP_ON_TWO_NODES: &str = "
+    #[test]
+    fn the_router_itself_needs_no_rule() {
+        // What the router sends leaves through its output, which splot leaves
+        // open: `$node` names no source that needs letting through.
+        let sites = SITES.replace("allowFrom: [Home.lan, $node]", "allowFrom: $node");
+        for node in ["Home", "Cabin"] {
+            let rules = placed(&sites, node);
+            assert!(of(&rules, "Home.printer ipp").is_empty(), "{rules:?}");
+        }
+    }
+
+    #[test]
+    fn sources_in_two_zones_get_a_rule_each() {
+        // The camera is on the hub, reached through the mesh zone: Phone comes
+        // from the mesh and from the lan. The doorbell, the camera's neighbour on
+        // the hub, still needs a rule: hub clients reach each other through the
+        // node.
+        assert_eq!(
+            of(&placed(SITES, "Home"), "Home.camera rtsp"),
+            [
+                "accept in Home.camera rtsp: tcp/554 from mesh [10.100.1.10/32, 10.100.49.11/32] to mesh [10.100.49.10/32]",
+                "accept in Home.camera rtsp: tcp/554 from lan [192.168.1.10/32, 192.168.1.50/32] to mesh [10.100.49.10/32]",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_flow_across_the_mesh_is_let_out_at_one_end_and_in_at_the_other() {
+        assert_eq!(
+            of(&placed(SITES, "Home"), "Cabin.tv cast"),
+            [
+                "accept out Cabin.tv cast: tcp/8009 from mesh [10.100.49.11/32] to mesh [192.168.2.30/32]",
+                "accept out Cabin.tv cast: tcp/8009 from lan [192.168.1.10/32] to mesh [192.168.2.30/32]",
+            ]
+        );
+        assert_eq!(
+            of(&placed(SITES, "Cabin"), "Cabin.tv cast"),
+            [
+                "accept in Cabin.tv cast: tcp/8009 from mesh [10.100.49.11/32, 192.168.1.10/32] to lan [192.168.2.30/32]"
+            ]
+        );
+    }
+
+    #[test]
+    fn only_sources_behind_the_node_are_let_out() {
+        // Phone reaches Home over the mesh on its own, and Home's pc and doorbell
+        // aren't behind Cabin: Cabin lets out only its lan, toward the nas.
+        assert_eq!(
+            placed(SITES, "Cabin"),
+            [
+                "accept in Cabin.tv cast: tcp/8009 from mesh [10.100.49.11/32, 192.168.1.10/32] to lan [192.168.2.30/32]",
+                "accept out Home.nas https: tcp/443 from lan [192.168.2.0/24] to mesh [192.168.1.20/32]",
+            ]
+        );
+    }
+
+    #[test]
+    fn without_a_mesh_zone_nothing_comes_from_or_goes_to_the_mesh() {
+        // As on a node whose WireGuard splot leaves alone: what crosses the mesh
+        // arrives in a zone of the operator's, under their rules.
+        assert_eq!(
+            placed_with(SITES, "Home", false),
+            [
+                "accept in Home.printer ipp: tcp/631 from lan [192.168.1.0/24] to iot [192.168.3.20/32]"
+            ]
+        );
+    }
+
+    #[test]
+    fn one_service_can_need_an_ingress_and_an_egress_rule_on_one_node() {
+        // Laptop lives on both Home's and Cabin's LAN and offers ssh. From Home's
+        // view that's an ingress rule (its Home IP, from Cabin's pc over the
+        // mesh) and an egress rule (its Cabin IP, from Home's lan): the same host
+        // and service, told apart by direction.
+        let yaml = "
 meshNetwork: 10.100.0.0/24
 nodes:
   Home:
@@ -485,111 +484,45 @@ clients:
     services:
       ssh: { port: 22, proto: tcp, allowFrom: [Cabin.pc, Home.lan] }
 ";
-
-    #[test]
-    fn one_service_can_need_an_ingress_and_an_egress_rule_on_one_node() {
-        // Laptop lives on both Home's and Cabin's LAN and offers ssh. From Home's
-        // view that's an ingress rule (its Home IP) and an egress rule (its Cabin
-        // IP): the same host and service, told apart by direction.
-        let ingress = ingress(LAPTOP_ON_TWO_NODES, "Home");
-        let egress = egress(LAPTOP_ON_TWO_NODES, "Home");
-
-        let laptop = |rules: &[Rule]| -> Vec<String> {
-            rules
-                .iter()
-                .filter(|rule| rule.host.to_string() == "Laptop")
-                .map(|rule| {
-                    format!(
-                        "{:?} {}",
-                        rule.direction,
-                        networks(&rule.destinations).join(" ")
-                    )
-                })
-                .collect()
-        };
-        assert_eq!(laptop(&ingress), ["Ingress 192.168.1.50/32"]);
-        assert_eq!(laptop(&egress), ["Egress 192.168.2.50/32"]);
+        assert_eq!(
+            of(&placed(yaml, "Home"), "Laptop ssh"),
+            [
+                "accept in Laptop ssh: tcp/22 from mesh [192.168.2.10/32] to lan [192.168.1.50/32]",
+                "accept out Laptop ssh: tcp/22 from lan [192.168.1.0/24] to mesh [192.168.2.50/32]",
+            ]
+        );
     }
 
-    // Home's hub has a camera (rtsp) and a doorbell. Cabin has a pc and a web
-    // service the doorbell may use.
-    const HUB_FIXTURE: &str = "
-meshNetwork: 10.100.0.0/16
+    #[test]
+    fn no_allowfrom_no_rule() {
+        // A service only forwarded from the WAN.
+        let rules = placed(
+            "
+meshNetwork: 10.100.0.0/24
 nodes:
   Home:
     platform:
       os: openwrt
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
-    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.1
-    hub:
-      network: 10.100.49.0/24
-      clients:
-        camera:
-          publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
-          ip: 10.100.49.10
-          services:
-            rtsp: { port: 554, proto: tcp, allowFrom: [Phone, Cabin.pc, Home.doorbell] }
-        doorbell:
-          publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
-          ip: 10.100.49.11
-  Cabin:
-    platform:
-      os: openwrt
-    publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
-    endpoint: 5.6.7.8
     wanZone: wan
-    listenPort: 51820
-    meshIp: 10.100.0.2
-    zones:
-      lan:
-        address: 192.168.2.1/24
-        devices:
-          pc: { ip: 192.168.2.10, macs: AA:BB:CC:DD:EE:01 }
     services:
-      web: { port: 80, proto: tcp, allowFrom: Home.doorbell }
-clients:
-  Phone:
-    publicKey: EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEA=
-    meshIp: 10.100.1.10
-";
-
-    fn networks(list: &[Ipv4Network]) -> Vec<String> {
-        list.iter().map(|network| network.to_string()).collect()
-    }
-
-    #[test]
-    fn hub_client_service_gets_an_ingress_rule_on_its_hub_node() {
-        let rules = ingress(HUB_FIXTURE, "Home");
-        let rule = rules
-            .iter()
-            .find(|r| r.host.to_string() == "Home.camera" && r.service.as_ref() == "rtsp")
-            .expect("ingress rule for the camera missing");
-        assert_eq!(networks(&rule.destinations), ["10.100.49.10/32"]);
-        let src = networks(&rule.sources);
-        assert!(src.contains(&"10.100.1.10/32".to_owned()), "{src:?}");
-        // Same hub, still a rule: hub clients reach each other through the node
-        // (routed, not bridged), so the same-network filter must keep them.
-        assert!(src.contains(&"10.100.49.11/32".to_owned()), "{src:?}");
-    }
-
-    #[test]
-    fn hub_client_service_gets_an_egress_rule_on_other_nodes() {
-        let rules = egress(HUB_FIXTURE, "Cabin");
-        let rule = rules
-            .iter()
-            .find(|r| r.host.to_string() == "Home.camera" && r.service.as_ref() == "rtsp")
-            .expect("egress rule for the camera missing");
-        assert_eq!(networks(&rule.destinations), ["10.100.49.10/32"]);
-        assert_eq!(networks(&rule.sources), ["192.168.2.10/32"]);
+      http:
+        port: 80
+        proto: tcp
+        wan:
+          via: Home
+",
+            "Home",
+        );
+        assert!(rules.is_empty(), "{rules:?}");
     }
 
     #[test]
     fn a_reference_with_nothing_behind_it_gives_no_rule() {
-        // Cabin has no zones and no hub: `Cabin` names no network. `$node` on Home,
-        // which has no zones either, names none.
+        // Cabin has no zones and no hub: `Cabin` names no network.
         let yaml = "
 meshNetwork: 10.100.0.0/24
 nodes:
@@ -603,7 +536,6 @@ nodes:
     meshIp: 10.100.0.1
     services:
       ssh: { port: 22, proto: tcp, allowFrom: Cabin }
-      dns: { port: 53, proto: udp, allowFrom: $node }
   Cabin:
     platform:
       os: openwrt
@@ -613,14 +545,14 @@ nodes:
     listenPort: 51820
     meshIp: 10.100.0.2
 ";
-        assert!(ingress(yaml, "Home").is_empty());
-        assert!(egress(yaml, "Cabin").is_empty());
+        assert!(placed(yaml, "Home").is_empty());
+        assert!(placed(yaml, "Cabin").is_empty());
     }
 
     #[test]
     fn a_source_two_references_name_is_listed_once() {
         // Phone is named directly and by its tag.
-        let rules = ingress(
+        let rules = placed(
             "
 meshNetwork: 10.100.0.0/24
 nodes:
@@ -642,20 +574,9 @@ clients:
 ",
             "Home",
         );
-        let [rule] = rules.as_slice() else {
-            panic!("expected one rule, got {}", rules.len());
-        };
-        assert_eq!(networks(&rule.sources), ["10.100.0.100/32"]);
-    }
-
-    #[test]
-    fn hub_clients_are_local_sources_of_their_hub_node() {
-        // The doorbell reaches Cabin's web through Home, so Home lets it out.
-        let rules = egress(HUB_FIXTURE, "Home");
-        let rule = rules
-            .iter()
-            .find(|r| r.host.to_string() == "Cabin" && r.service.as_ref() == "web")
-            .expect("egress rule for Cabin's web missing");
-        assert_eq!(networks(&rule.sources), ["10.100.49.11/32"]);
+        assert_eq!(
+            rules,
+            ["accept in Home ssh: tcp/22 from mesh [10.100.0.100/32] to the node [10.100.0.1/32]"]
+        );
     }
 }

@@ -77,15 +77,13 @@ pub(super) fn plan(
     own: &Node,
     wireguard: Option<&WireGuardPlan>,
 ) -> FirewallPlan {
-    let mut rules = rules::ingress_rules(network, own);
-    rules.extend(rules::egress_rules(network, own));
-
     // Access is granted only by rules.
     let mesh_zone = wireguard.map(|_| ZonePolicy {
         input: Verdict::Drop,
         output: Verdict::Accept,
         forward: Verdict::Drop,
     });
+    let rules = rules::rules(network, own, mesh_zone.is_some());
     let ping = wireguard.map(|wireguard| Ping {
         to: wireguard.address.ip(),
         from: wireguard
@@ -312,7 +310,8 @@ clients:
     fn without_splots_wireguard_nothing_points_into_the_mesh() {
         // The mesh arrives on the operator's own interface, in a zone of theirs
         // that splot doesn't know: no mesh zone, no forward to a host reached
-        // over the mesh. The rest stays. Such a node has no hub.
+        // over the mesh, no rule for what comes over it. The rest stays. Such a
+        // node has no hub.
         let hub_start = HOME.find("    hub:\n").unwrap();
         let hub_end = HOME.find("clients:\n  Phone").unwrap();
         let without_hub = format!("{}{}", &HOME[..hub_start], &HOME[hub_end..]);
@@ -325,13 +324,8 @@ clients:
         // The operator's interface listens there, not splot's.
         assert!(plan.listen_port.is_none());
         assert_eq!(forwards(&plan), ["Home.printer ipp"]);
-
-        let rules: Vec<String> = plan
-            .rules
-            .iter()
-            .map(|rule| format!("{} {}", rule.host, rule.service))
-            .collect();
-        assert_eq!(rules, ["Home.printer ipp"]);
+        // Phone reaches the printer over the mesh.
+        assert!(plan.rules.is_empty(), "{:?}", plan.rules);
         assert!(plan.to_string().contains("mesh zone: none"));
     }
 }

@@ -1,11 +1,12 @@
 //! The peers' ping as a uci `rule` section.
 
+use super::zone_name;
 use crate::{
     backend::openwrt::{
         naming,
         section::{UciSection, UciSectionBuilder},
     },
-    plan::firewall::Ping,
+    plan::firewall::{Ping, zone_ref::ZoneRef},
 };
 
 impl UciSection for Ping {
@@ -18,11 +19,12 @@ impl UciSection for Ping {
         ["ping"]
     }
 
-    /// To the node itself (no `dest`), from the peers' own addresses only.
+    /// To the node itself (no `dest`), from the peers' own addresses only: all
+    /// of them arrive over the mesh.
     fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
         section
             .set("name", naming::name_prefixed("ping from its peers"))
-            .set("src", "*")
+            .set("src", zone_name(&ZoneRef::Mesh))
             .set("family", "ipv4")
             .set("proto", "icmp")
             .extend_list("icmp_type", ["echo-request"])
@@ -64,7 +66,7 @@ mod tests {
             [
                 "set firewall.spl_rule_ping='rule'",
                 "set firewall.spl_rule_ping.name='[SPLOT] ping from its peers'",
-                "set firewall.spl_rule_ping.src='*'",
+                "set firewall.spl_rule_ping.src='spl_mesh'",
                 "set firewall.spl_rule_ping.family='ipv4'",
                 "set firewall.spl_rule_ping.proto='icmp'",
                 "add_list firewall.spl_rule_ping.icmp_type='echo-request'",

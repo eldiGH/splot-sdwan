@@ -307,6 +307,25 @@ EOF
 		fail "fw4 takes the peers' ping rule, and it's live" "$output"
 	fi
 
+	# Each rule sits where its zones put it: what's for the router itself in
+	# the mesh zone's input, what crosses the router in its source zone's
+	# forward chain.
+	misplaced=''
+	for placed in 'input_spl_mesh:ping from its peers' \
+		'input_spl_mesh:in: Home ssh, from spl_mesh' \
+		'forward_spl_mesh:in: Home.nas https, from spl_mesh' \
+		'forward_lan:out: Cabin.camera rtsp, from lan'; do
+		chain=${placed%%:*} rule=${placed#*:}
+		if ! grep -qF "[SPLOT] $rule" <<<"$(run "nft list chain inet fw4 $chain")"; then
+			misplaced+="not in $chain: $rule"$'\n'
+		fi
+	done
+	if [ -z "$misplaced" ]; then
+		pass "each rule in the chain its zones put it in"
+	else
+		fail "each rule in the chain its zones put it in" "$misplaced"
+	fi
+
 	# Others dial the router (the example's Home has an endpoint): fw4 takes the
 	# rule for its listen port, and the WAN lets the port in to the router.
 	output=$(run 'fw4 check 2>&1') || true

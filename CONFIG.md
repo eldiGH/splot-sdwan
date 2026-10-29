@@ -94,7 +94,7 @@ platform:
 - **`none`** leaves that concern to you: splot generates nothing for it and doesn't touch what's there, its own sections from before included (on OpenWrt that file isn't staged, committed or reloaded). What's then yours to do:
   - **`firewall: none`**, with WireGuard managed by splot: the mesh interface (`spl_mesh` on OpenWrt) is in none of splot's zones. Put it into one of yours (e.g. `lan`, as a hand-made `wg0` usually is) and, if the node has an `endpoint`, let its listen port in from the WAN. Nothing `allowFrom` says is enforced on that node, and nothing is forwarded from its WAN.
   - **`dhcp: none`**: the addresses the config gives devices and global clients are yours to make true, with a reservation in your DHCP server or a static address on the device. Firewall rules use them either way.
-  - **`wireguard: none`** (the node is in the mesh, its WireGuard set up by hand): splot keeps no key there, so `splot init` has nothing to create, and before it writes anything it checks the node by your WireGuard instead: one of the peer's interfaces must have the node's `publicKey` (and be up). With the firewall managed by splot, there's no mesh zone, so mesh traffic arrives in whichever zone your interface is in, and nothing is forwarded from the WAN to a host reached over the mesh. Its listen port is yours to let in from the WAN, as it is with your interface: splot opens only its own. The rules `allowFrom` grants are still written. Such a node can't have a [hub](#hub) (an error): hub clients are peers on splot's mesh interface. A WireGuard server of your own, with its own subnet, is a [zone](#zone) to splot.
+  - **`wireguard: none`** (the node is in the mesh, its WireGuard set up by hand): splot keeps no key there, so `splot init` has nothing to create, and before it writes anything it checks the node by your WireGuard instead: one of the peer's interfaces must have the node's `publicKey` (and be up). With the firewall managed by splot, there's no mesh zone, so mesh traffic arrives in whichever zone your interface is in, and nothing is forwarded from the WAN to a host reached over the mesh. Its listen port is yours to let in from the WAN, as it is with your interface: splot opens only its own. The rules `allowFrom` grants between the node's zones are still written; what crosses the mesh is under your rules, and the node's warning names those services. Such a node can't have a [hub](#hub) (an error): hub clients are peers on splot's mesh interface. A WireGuard server of your own, with its own subnet, is a [zone](#zone) to splot.
   - `firewall: none` and `dhcp: none` together: splot manages the mesh alone.
 - **`splot check` warns**, once per node and concern, where a concern left alone leaves part of the config undone, naming what (the services whose `allowFrom` isn't enforced there, those not forwarded from its WAN) and what's yours to do. A concern left alone with nothing asked of it gets no warning.
 - **`ssh`** is where splot reaches the node over ssh: `root@192.168.1.1`, a host of your `~/.ssh/config`, `ssh://root@router:2222`, given to the system `ssh` as it is (so your ssh config and agent apply). It can't start with `-` (ssh would read it as an option) or hold spaces or control characters. `splot apply` without `--node` reaches every node splot manages here, so each needs one (a node where every concern is `none` is left out). A command on one node (`--node`) reaches it at `--ssh <destination>` when given, else here; with neither, or with `--local`, splot acts on the machine it runs on, and refuses if that isn't the node. An address over the mesh (its `meshIp`) works once the node is in the mesh, but not for a node that isn't yet, or whose tunnel is down.
@@ -396,6 +396,7 @@ Where splot runs a node's firewall, it decides what crosses between zones, at on
 
 - **A zone is the smallest unit.** Inside a zone (one subnet) everything reaches everything, and that traffic never passes the router. Sources in a service's own zone get no rule: `allowFrom: admin` on a device doesn't keep out the other devices of its zone. A device that needs protecting from its neighbours needs a zone of its own (a VLAN).
 - **Only what passes a node splot manages.** Mesh traffic always does (it goes through the node's WireGuard), so splot enforces mesh access even on a node that isn't its site's router. Traffic between two zones of a site does only when the node is their router: a switch must not route between VLANs.
+- **On the router itself, what comes over the mesh.** For a service on the router (`node.services`), `allowFrom` decides what reaches it over the mesh. What reaches the router from its own zones (DHCP, DNS, LuCI, ssh from the LAN) is yours, so a source in one of them gets no rule there.
 - **No VLAN IDs, no L2 across the mesh.** A VLAN ID is local to its site, and nothing splot generates depends on one. Zones at different sites are grouped with tags (`iot`). splot routes between distinct subnets; it never bridges a network across the mesh.
 
 ### Who owns what
@@ -429,7 +430,6 @@ What follows:
 splot doesn't enforce all of this yet. On Linux it doesn't run the firewall at all so far (see [Platform](#platform)). On OpenWrt today:
 
 - What arrives over the mesh for the router itself is dropped, and so is what's forwarded from the mesh back into it. But fw4 applies a zone's `forward` policy only within the zone: traffic between the mesh and your zones (either way), from the mesh to the WAN, and between your own zones, ends in fw4's `defaults` and your `forwarding` sections when no rule of splot's accepts it. splot's rules only add to what those allow (stock OpenWrt's `defaults` reject the rest).
-- splot's rules name no zone (`src` and `dest` are `*`), so they apply to forwarded traffic only: a service on the router itself (`node.services`) isn't reached over the mesh.
 
 ---
 
@@ -470,7 +470,7 @@ A single tag can group multiple objects if they share it. `allowFrom: admin` gra
 
 Bare and qualified node-name forms (`HomeRouter`, `HomeRouter.lan`) resolve to **subnets** — broad, meaning "any device on those networks." `$node` resolves to **IPs** — narrow, meaning "the router itself as a host." These are complementary, not interchangeable.
 
-Use the bare node name when you want any traffic from that node's downstream networks. Use `$node` (on that node's own rules) when you specifically want the router's interface IPs as source or destination.
+Use the bare node name when you want any traffic from that node's downstream networks. `$node` means the router itself, which needs no rule (see `$node` below).
 
 ### Examples
 
@@ -527,7 +527,7 @@ The qualified `{NodeName}.{LocalName}` syntax is intentionally only **two levels
 
 ### `$node`
 
-`$node` is a special context-dependent tag that resolves to the router currently being configured. It produces the router's own IPs across all of its `zones`.
+`$node` is a special context-dependent tag that resolves to the router currently being configured. It produces the router's own IPs across all of its `zones`. No firewall rule is generated for it: what the router itself sends leaves through its output, which splot doesn't filter.
 
 ### Allowed characters
 
