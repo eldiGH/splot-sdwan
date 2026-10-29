@@ -14,6 +14,7 @@ use splot_core::{
     uci::{
         export::{self, ParseError},
         naming,
+        section::Section,
         slot::Slot,
     },
 };
@@ -322,13 +323,7 @@ fn changeset(rendered: &Rendered) -> Result<Changeset, Error> {
     let mut fresh = Vec::new();
 
     for (file, sections) in &rendered.files {
-        let current = match uci::export(file)? {
-            Some(text) => export::parse(&text).map_err(|cause| Error::Export {
-                file: file.clone(),
-                cause,
-            })?,
-            None => Vec::new(),
-        };
+        let current = current(file)?;
         let diff = diff::diff(&current, sections);
         fresh.extend(diff::psk_changed(&diff));
         // Spelled in uci here, while the sections the changes point at are alive.
@@ -345,6 +340,18 @@ fn changeset(rendered: &Rendered) -> Result<Changeset, Error> {
         changes,
         fresh,
     })
+}
+
+/// The sections of uci file `file` as they are now, in order: none when
+/// there's no such file.
+pub(super) fn current(file: &str) -> Result<Vec<Section>, Error> {
+    match uci::export(file)? {
+        Some(text) => export::parse(&text).map_err(|cause| Error::Export {
+            file: file.to_owned(),
+            cause,
+        }),
+        None => Ok(Vec::new()),
+    }
 }
 
 /// Everything `apply` sends to uci: the changes and the files they touch. The
@@ -434,7 +441,6 @@ pub fn find_duplicate_sections(rendered: &Rendered) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use splot_core::uci::section::Section;
 
     fn set(path: &str, value: &str) -> UciBatchCommand {
         UciBatchCommand::set(path, value)

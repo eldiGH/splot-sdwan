@@ -77,3 +77,7 @@ set firewall.spl_rule_deny_lan_to_spl_mesh.src='lan'
 set firewall.spl_rule_deny_lan_to_spl_mesh.dest='spl_mesh'
 set firewall.spl_rule_deny_lan_to_spl_mesh.proto='all'
 set firewall.spl_rule_deny_lan_to_spl_mesh.target='DROP'
+# owned
+from spl_mesh to any zone
+from lan to spl_mesh
+from spl_mesh to the node

@@ -62,11 +62,11 @@ pub(super) fn psk_changed(changes: &[Change]) -> Vec<String> {
         .collect()
 }
 
-fn is_splot(section: &Section) -> bool {
+pub(super) fn is_splot(section: &Section) -> bool {
     section.name.starts_with(consts::SPLOT_SECTION_PREFIX)
 }
 
-fn value_of<'a>(section: &'a Section, option: &str) -> Option<&'a Value> {
+pub(super) fn value_of<'a>(section: &'a Section, option: &str) -> Option<&'a Value> {
     section
         .options
         .iter()

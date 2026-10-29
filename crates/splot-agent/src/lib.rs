@@ -231,14 +231,17 @@ fn check_os(rendered: &Rendered) -> Result<(), Error> {
     Ok(node::check_os(node, os)?)
 }
 
-/// What making this peer hold `rendered` would change.
+/// What making this peer hold `rendered` would change, and what of the
+/// peer's own config decides some of what splot does.
 fn dry_run(rendered: &Rendered) -> Result<Reply, Error> {
     check_os(rendered)?;
 
-    Ok(Reply::DryRun(match rendered {
+    let (changes, warnings) = match rendered {
         Rendered::OpenWrt(rendered) => openwrt::dry_run(rendered)?,
-        Rendered::Linux(rendered) => linux::dry_run(rendered)?,
-    }))
+        Rendered::Linux(rendered) => (linux::dry_run(rendered)?, Vec::new()),
+    };
+
+    Ok(Reply::DryRun { changes, warnings })
 }
 
 /// When this process was started to keep a run's deadline, keeps it and ends
@@ -374,6 +377,7 @@ mod tests {
                 wireguard: true,
                 files: Vec::new(),
                 secrets: Vec::new(),
+                owned: Vec::new(),
             }),
             Os::OpenWrt => Rendered::Linux(linux_protocol::Rendered {
                 node,

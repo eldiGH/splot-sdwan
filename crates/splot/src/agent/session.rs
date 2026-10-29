@@ -234,7 +234,7 @@ mod tests {
 while IFS= read -r line; do
     case $line in
     '{{"Hello"'*) echo '{hello}' ;;
-    *) printf '{{"DryRun":{{"summary":[],"text":"%s"}}}}\n' "$0" ;;
+    *) printf '{{"DryRun":{{"changes":{{"summary":[],"text":"%s"}},"warnings":[]}}}}\n' "$0" ;;
     esac
 done
 "#
@@ -254,7 +254,10 @@ done
         let agent = fake_agent(&dir, &hello());
 
         let mut session = Session::start(here(), "here", Some(&agent)).unwrap();
-        let Reply::DryRun(ran_from) = session.ask(&Request::Os).unwrap() else {
+        let Reply::DryRun {
+            changes: ran_from, ..
+        } = session.ask(&Request::Os).unwrap()
+        else {
             panic!("not the fake agent's answer");
         };
 
@@ -277,7 +280,7 @@ done
         // It answers each request in turn.
         assert!(matches!(
             session.ask(&Request::Os).unwrap(),
-            Reply::DryRun(_)
+            Reply::DryRun { .. }
         ));
 
         drop(session);

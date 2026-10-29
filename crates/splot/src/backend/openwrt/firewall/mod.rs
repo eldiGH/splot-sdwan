@@ -8,6 +8,7 @@ mod zones;
 use std::sync::LazyLock;
 
 use log::{Level, debug, info, log_enabled};
+use splot_core::protocol::openwrt::{Crossing, Dest};
 
 use super::{
     naming,
@@ -93,6 +94,24 @@ pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
         .chain(rules)
         .chain(denies)
         .chain(redirects)
+        .collect()
+}
+
+/// What splot decides in the node's firewall, as fw4 names the zones: what
+/// its deny drops unless a service grants it, and the node's input from the
+/// mesh zone, whose policy is splot's. The agent warns about the operator's own
+/// sections there.
+pub(super) fn owned(firewall: &FirewallPlan) -> Vec<Crossing> {
+    let denied = deny::denies(&firewall.default_policy);
+    let input = firewall.mesh_zone.as_ref().map(|_| Crossing {
+        from: MESH_ZONE.clone(),
+        to: Dest::Node,
+    });
+
+    denied
+        .iter()
+        .map(|deny| deny.crossing())
+        .chain(input)
         .collect()
 }
 
@@ -287,5 +306,86 @@ clients:
         for zone in splots {
             assert!(dests.contains(&zone), "{zone}: {dests:?}");
         }
+    }
+
+    /// Each crossing in a few words: `lan -> iot`, `spl_mesh -> *`,
+    /// `spl_mesh -> node`.
+    fn crossings(owned: &[Crossing]) -> Vec<String> {
+        owned
+            .iter()
+            .map(|crossing| {
+                let to = match &crossing.to {
+                    Dest::Zone(zone) => zone,
+                    Dest::AnyZone => "*",
+                    Dest::Node => "node",
+                };
+                format!("{} -> {to}", crossing.from)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn splot_owns_where_its_deny_drops_and_the_nodes_input_from_the_mesh() {
+        let plan = plan::plan(&checked(SITES), &"Home".parse().unwrap()).unwrap();
+        let firewall = plan.firewall.unwrap();
+        let owned = crossings(&owned(&firewall));
+        assert_eq!(
+            owned,
+            [
+                "spl_mesh -> *",
+                "iot -> spl_mesh",
+                "iot -> lan",
+                "lan -> spl_mesh",
+                "lan -> iot",
+                "spl_mesh -> node",
+            ]
+        );
+
+        // Exactly where a deny rule drops: an operator's forwarding there
+        // forwards nothing.
+        let sections = render(&firewall);
+        let denies: Vec<&Section> = sections
+            .iter()
+            .filter(|section| section.name.starts_with("spl_rule_deny_"))
+            .collect();
+        let denied: Vec<String> = denies
+            .iter()
+            .map(|deny| {
+                let option = |option| values(std::slice::from_ref(*deny), "rule", option)[0];
+                format!("{} -> {}", option("src"), option("dest"))
+            })
+            .collect();
+        assert_eq!(denied, owned[..owned.len() - 1]);
+    }
+
+    #[test]
+    fn without_its_mesh_zone_splot_owns_what_crosses_between_the_declared_zones() {
+        // Its WireGuard left alone, the mesh arrives in a zone of the
+        // operator's.
+        let network = checked(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    platform:
+      os: openwrt
+      wireguard: none
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.1/24
+      iot:
+        address: 192.168.10.1/24
+",
+        );
+        let plan = plan::plan(&network, &"Home".parse().unwrap()).unwrap();
+
+        assert_eq!(
+            crossings(&owned(&plan.firewall.unwrap())),
+            ["iot -> lan", "lan -> iot"]
+        );
     }
 }

@@ -2,6 +2,7 @@
 //! live by reloading the services.
 
 mod apply;
+mod contested;
 mod diff;
 pub(crate) mod key_store;
 mod reload;
@@ -67,9 +68,22 @@ fn confirmed(rendered: &Rendered) -> Result<Rendered, Error> {
     }
 }
 
-/// What `apply` would change on this peer, changing nothing.
-pub fn dry_run(rendered: &Rendered) -> Result<Changes, Error> {
-    apply::print(&confirmed(rendered)?)
+/// What `apply` would change on this peer, changing nothing, and a warning
+/// for each of the operator's own firewall sections that decides some of what
+/// splot owns there.
+pub fn dry_run(rendered: &Rendered) -> Result<(Changes, Vec<String>), Error> {
+    let rendered = confirmed(rendered)?;
+    let warnings = if rendered.owned.is_empty() {
+        Vec::new()
+    } else {
+        let current = apply::current(contested::FIREWALL)?;
+        contested::contested(&rendered.node, &current, &rendered.owned)
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    };
+
+    Ok((apply::print(&rendered)?, warnings))
 }
 
 /// Begins `run` to make `rendered` live on this peer, changing nothing yet.
@@ -97,6 +111,7 @@ fn empty() -> Rendered {
         wireguard: true,
         files: Vec::new(),
         secrets: Vec::new(),
+        owned: Vec::new(),
     }
 }
 

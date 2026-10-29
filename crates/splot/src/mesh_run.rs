@@ -98,19 +98,29 @@ fn run(mut mesh: Mesh, dry_run: bool, confirm_within: u32, yes: bool) -> anyhow:
         match agent.ask(Request::DryRun {
             rendered: member.rendered.clone(),
         })? {
-            Reply::DryRun(changes) => Ok(changes),
+            Reply::DryRun { changes, warnings } => Ok((changes, warnings)),
             reply => Err(agent::unexpected(reply)),
         }
     });
-    let planned = mesh.all(
-        planned,
-        &mesh.worded(
-            |node| format!("splot couldn't plan {node}, so it changed nothing"),
-            "splot couldn't plan every node, so it changed nothing",
-        ),
-    )?;
+    let (planned, warnings): (Vec<Changes>, Vec<Vec<String>>) = mesh
+        .all(
+            planned,
+            &mesh.worded(
+                |node| format!("splot couldn't plan {node}, so it changed nothing"),
+                "splot couldn't plan every node, so it changed nothing",
+            ),
+        )?
+        .into_iter()
+        .unzip();
 
     print!("{}", plan_view(&mesh.members, &planned));
+    // What each node's own config decides of what splot does: the operator's
+    // to look at before agreeing, so after the plan.
+    for (member, warnings) in mesh.members.iter().zip(&warnings) {
+        for warning in warnings {
+            eprintln!("warning: {}: {warning}", member.name);
+        }
+    }
     if planned.iter().all(Changes::is_empty) {
         println!("Nothing to change.");
         return Ok(());

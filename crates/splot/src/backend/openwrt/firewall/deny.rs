@@ -1,5 +1,7 @@
 //! splot's default policy as uci `rule` sections, after its accepts.
 
+use splot_core::protocol::openwrt::{Crossing, Dest};
+
 use super::{target, zone_name};
 use crate::{
     backend::openwrt::{
@@ -41,6 +43,18 @@ pub(super) fn denies(policy: &DefaultPolicy) -> Vec<Deny<'_>> {
                 .collect(),
         })
         .collect()
+}
+
+impl Deny<'_> {
+    /// What it drops, as fw4 names the zones.
+    pub(super) fn crossing(&self) -> Crossing {
+        Crossing {
+            from: zone_name(self.from).to_owned(),
+            to: self
+                .to
+                .map_or(Dest::AnyZone, |to| Dest::Zone(zone_name(to).to_owned())),
+        }
+    }
 }
 
 impl UciSection for Deny<'_> {

@@ -17,7 +17,7 @@ use crate::{
 
 /// The protocol's version: splot and an agent talk only when theirs are the
 /// same. A change to a request or a reply bumps it.
-pub const PROTOCOL: u32 = 6;
+pub const PROTOCOL: u32 = 7;
 
 /// What splot asks of the agent.
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,7 +42,8 @@ pub enum Request {
         key: WgPresharedKey,
     },
     /// What making the node hold `rendered` would change, changing nothing:
-    /// `DryRun`, as `Prepare` would find it.
+    /// `DryRun`, as `Prepare` would find it, with what the operator should
+    /// know about the node's own config.
     DryRun { rendered: Rendered },
     /// Begin `run` to make the node hold `rendered`, changing nothing yet: the
     /// node keeps what it had, notes which peers answer, and puts it back by
@@ -112,8 +113,12 @@ pub enum Reply {
     },
     Confirmed,
     RolledBack,
-    /// What apply would change.
-    DryRun(Changes),
+    /// What apply would change, and a warning for each of the node's own
+    /// settings that decides some of what splot does.
+    DryRun {
+        changes: Changes,
+        warnings: Vec<String>,
+    },
     /// Why the agent didn't do what it was asked.
     Failed(Failure),
 }
@@ -173,6 +178,7 @@ mod tests {
     use super::*;
     use crate::{
         host::HostRef,
+        protocol::openwrt::{Crossing, Dest},
         secret::Secret,
         uci::{
             section::{Section, Value},
@@ -210,6 +216,20 @@ mod tests {
                 option: "preshared_key".to_owned(),
                 secret: Secret::Psk(HostRef::Node("Cabin".parse().unwrap())),
             }],
+            owned: vec![
+                Crossing {
+                    from: "lan".to_owned(),
+                    to: Dest::Zone("iot".to_owned()),
+                },
+                Crossing {
+                    from: "spl_mesh".to_owned(),
+                    to: Dest::AnyZone,
+                },
+                Crossing {
+                    from: "spl_mesh".to_owned(),
+                    to: Dest::Node,
+                },
+            ],
         })
     }
 
@@ -334,7 +354,10 @@ mod tests {
                 text: "set network.spl_mesh=interface\n".to_owned(),
             }),
             Reply::Applied(vec!["network".to_owned()]),
-            Reply::DryRun(Changes::none()),
+            Reply::DryRun {
+                changes: Changes::none(),
+                warnings: vec!["firewall.@forwarding[1] carries nothing".to_owned()],
+            },
             Reply::Failed(Failure(vec!["it failed".to_owned(), "because".to_owned()])),
         ] {
             assert_eq!(sent(&reply), reply);

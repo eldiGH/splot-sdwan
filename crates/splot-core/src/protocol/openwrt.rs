@@ -22,6 +22,27 @@ pub struct Rendered {
     pub files: Vec<(String, Vec<Section>)>,
     /// Where its secrets go: the agent fills them in from the key store.
     pub secrets: Vec<Slot>,
+    /// What splot decides in the node's firewall: what its deny drops unless a
+    /// service grants it, and the node's input from the mesh zone. None where
+    /// splot leaves the firewall alone. The dry run warns about the operator's
+    /// own sections that decide some of it too.
+    pub owned: Vec<Crossing>,
+}
+
+/// Traffic from one zone to where it goes, as fw4 names the zones.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Crossing {
+    pub from: String,
+    pub to: Dest,
+}
+
+/// Where traffic from a zone goes: into a zone, into any zone, or to the node
+/// itself (its input).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Dest {
+    Zone(String),
+    AnyZone,
+    Node,
 }
 
 impl Rendered {

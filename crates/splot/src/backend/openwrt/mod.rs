@@ -20,6 +20,7 @@ pub fn render(plan: &NodePlan) -> Rendered {
     info!("Rendering the uci config of node '{}'", plan.node);
     let mut files = Vec::new();
     let mut secrets = Vec::new();
+    let mut owned = Vec::new();
 
     if let Some(wireguard) = &plan.wireguard {
         let (network, slots) = network::render(wireguard);
@@ -28,6 +29,7 @@ pub fn render(plan: &NodePlan) -> Rendered {
     }
     if let Some(firewall) = &plan.firewall {
         files.push((firewall::FILE.to_owned(), firewall::render(firewall)));
+        owned = firewall::owned(firewall);
     }
     if let Some(dhcp) = &plan.dhcp {
         files.push((dhcp::FILE.to_owned(), dhcp::render(dhcp)));
@@ -39,6 +41,7 @@ pub fn render(plan: &NodePlan) -> Rendered {
         wireguard: plan.wireguard.is_some(),
         files,
         secrets,
+        owned,
     }
 }
 
@@ -46,9 +49,12 @@ pub fn render(plan: &NodePlan) -> Rendered {
 mod tests {
     use std::fmt::Write;
 
-    use splot_core::uci::{
-        export,
-        section::{Section, Value},
+    use splot_core::{
+        protocol::openwrt::Dest,
+        uci::{
+            export,
+            section::{Section, Value},
+        },
     };
 
     use super::*;
@@ -80,6 +86,8 @@ mod tests {
     // of the generated router config (`cargo insta review`). It records today's
     // output as-is, known-wrong parts included: a fix shows up as a snapshot diff.
     // Keys are fakes; the delete/commit lines need uci and are not part of it.
+    // After the files, what splot owns in the firewall, where the agent warns
+    // about the operator's own sections.
 
     #[test]
     fn a_concern_splot_leaves_alone_has_no_file() {
@@ -109,14 +117,15 @@ nodes:
         assert_eq!(all.files(), ["network", "firewall", "dhcp"]);
         assert_eq!(all.secrets.len(), 1);
         assert!(all.wireguard);
+        assert!(!all.owned.is_empty());
 
         let network_only = rendered("      firewall: none\n      dhcp: none");
         assert_eq!(network_only.files(), ["network"]);
         assert_eq!(network_only.secrets.len(), 1);
-        assert_eq!(
-            rendered("      firewall: none").files(),
-            ["network", "dhcp"]
-        );
+        // Nor anything splot owns there: the operator's sections decide.
+        let no_firewall = rendered("      firewall: none");
+        assert_eq!(no_firewall.files(), ["network", "dhcp"]);
+        assert!(no_firewall.owned.is_empty());
         assert_eq!(
             rendered("      dhcp: none").files(),
             ["network", "firewall"]
@@ -228,12 +237,22 @@ nodes:
         for node in openwrt_nodes(&network) {
             let plan = plan::plan(&network, node.name()).unwrap();
 
+            let rendered = render(&plan);
             let mut output = String::new();
-            for (file, sections) in &render(&plan).files {
+            for (file, sections) in &rendered.files {
                 writeln!(output, "# {file}").unwrap();
                 for command in sections.iter().flat_map(|section| section.commands(file)) {
                     writeln!(output, "{command}").unwrap();
                 }
+            }
+            writeln!(output, "# owned").unwrap();
+            for crossing in &rendered.owned {
+                let to = match &crossing.to {
+                    Dest::Zone(zone) => zone,
+                    Dest::AnyZone => "any zone",
+                    Dest::Node => "the node",
+                };
+                writeln!(output, "from {} to {to}", crossing.from).unwrap();
             }
 
             insta::assert_snapshot!(format!("example_{}", node.name()), output);

@@ -422,12 +422,14 @@ What follows:
 
 - **No internet through the mesh:** what comes from the mesh is dropped on its way to the WAN. Using a node as the way out for clients is planned.
 - **Your `forwarding` sections between splot zones stop working:** fw4 checks rules before forwardings, so splot's drop wins. Declare the flows they carried as services (`allowFrom: Home.lan` for a whole zone).
+- **Your `rule` sections there decide before splot's:** fw4 takes rules in the file's order, and splot's come last. One that accepts lets through what no service grants; one that drops or rejects stops what a service grants. Declare what they're for as services, and remove them.
+- **The dry run warns about both** (every `splot apply` shows it before asking): each forwarding or rule of yours between splot zones, out of the mesh zone (to the WAN too), or into the router from the mesh zone, saying what it does there and what to do instead. The router's stock sections (`lan` to `wan`, the WAN's rules) are none of these.
 - **Switching it on stops every flow nobody declared**, all at once. Move a site over with `firewall: none` first (see [Platform](#platform)): declare its flows, then let splot run its firewall.
 - A node that isn't its zones' router enforces only what passes through it.
 
 ### Not yet
 
-On Linux splot doesn't run the firewall at all so far (see [Platform](#platform)). On OpenWrt all of the above is enforced, but splot doesn't warn yet about `forwarding` sections of yours between splot zones: check for them before you let splot run a site's firewall.
+On Linux splot doesn't run the firewall at all so far (see [Platform](#platform)). On OpenWrt all of the above is enforced.
 
 ---
 

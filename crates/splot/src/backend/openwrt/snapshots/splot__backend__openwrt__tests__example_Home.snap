@@ -191,3 +191,10 @@ set dhcp.spl_host_Phone='host'
 set dhcp.spl_host_Phone.name='[SPLOT] Phone'
 set dhcp.spl_host_Phone.ip='192.168.1.50'
 add_list dhcp.spl_host_Phone.mac='aa:bb:cc:00:00:01'
+# owned
+from spl_mesh to any zone
+from iot to spl_mesh
+from iot to lan
+from lan to spl_mesh
+from lan to iot
+from spl_mesh to the node

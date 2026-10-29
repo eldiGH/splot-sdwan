@@ -475,6 +475,29 @@ EOF
 			"$output"$'\n'"before: $before"$'\n'"after: $after"$'\n'"$(run 'ls /tmp/splot' 2>&1)"
 	fi
 
+	# The operator's own sections where splot decides: a forwarding from lan
+	# into the mesh forwards nothing any more, and a rule accepting from iot to
+	# lan decides before splot's deny. The dry run warns about each; not about
+	# the router's stock sections (lan to wan, the WAN's rules).
+	local forwarding rule warnings
+	forwarding=$(run 'uci add firewall forwarding')
+	rule=$(run 'uci add firewall rule')
+	run "uci set firewall.$forwarding.src=lan; uci set firewall.$forwarding.dest=spl_mesh
+		uci set firewall.$rule.name=Allow-Sensors; uci set firewall.$rule.src=iot
+		uci set firewall.$rule.dest=lan; uci set firewall.$rule.proto=tcp
+		uci set firewall.$rule.dest_port=1883; uci set firewall.$rule.target=ACCEPT
+		uci commit firewall"
+	output=$(splot --config "$work/splot.yml" apply --node Home --dry-run 2>&1 >/dev/null) || true
+	run "uci delete firewall.$forwarding; uci delete firewall.$rule; uci commit firewall"
+	warnings=$(grep '^warning: Home: firewall\.' <<<"$output") || true
+	if grep -q 'forwards nothing from lan to spl_mesh any more' <<<"$warnings" &&
+		grep -q "('Allow-Sensors') accepts from iot to lan before splot's rules" <<<"$warnings" &&
+		[ "$(wc -l <<<"$warnings")" = 2 ]; then
+		pass "dry run warns about the operator's forwarding and rule where splot decides"
+	else
+		fail "dry run warns about the operator's forwarding and rule where splot decides" "$output"
+	fi
+
 	# A peer change: Cabin's endpoint moves. WireGuard must see it without a reboot.
 	local renew
 	renew=$(run 'ubus call network get_proto_handlers | jsonfilter -e @.wireguard.renew_available')
