@@ -24,7 +24,7 @@ accept in Home.lte-cam rtsp: tcp/554 from mesh [10.100.0.100/32] to mesh [10.100
 accept in Home.lte-cam rtsp: tcp/554 from lan [192.168.1.50/32] to mesh [10.100.10.10/32]
 accept out Cabin.camera rtsp: tcp/554 from lan [192.168.1.50/32] to mesh [192.168.2.30/32]
 otherwise drop: between [mesh, iot, lan], and from mesh to any zone
-forward Home.nas https: wan tcp/8443 from [198.51.100.0/24] to lan 192.168.1.20:443
+forward Home.nas https: wan tcp/8443 from [198.51.100.0/24, 203.0.113.7/32] to lan 192.168.1.20:443
 
 [dhcp]
 lease Home.tv: 192.168.10.20 for [aa:bb:cc:00:00:05]

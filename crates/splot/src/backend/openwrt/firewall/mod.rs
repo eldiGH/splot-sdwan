@@ -53,7 +53,7 @@ fn target(verdict: Verdict) -> &'static str {
 
 /// The plan's firewall section as the `firewall` file's sections: the mesh zone,
 /// the peers' ping and the listen port (if any), then the rules, splot's deny
-/// after them, then the redirects.
+/// after them, then the redirects, one for each WAN source of a forward.
 pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
     info!("Generating firewall config");
     info!(
@@ -86,6 +86,7 @@ pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
     let redirects = firewall
         .redirects
         .iter()
+        .flat_map(redirect::per_source)
         .map(|redirect| redirect.to_section());
 
     zone.into_iter()

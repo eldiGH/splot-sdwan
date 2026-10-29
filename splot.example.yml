@@ -85,15 +85,16 @@ nodes:
             services:
               # Reachable from admin devices on the mesh AND published to the
               # public internet. "8443:443" forwards external 8443 to the
-              # NAS's internal 443; `sources` restricts the WAN side to one
-              # office CIDR (omit `sources` to expose it publicly).
+              # NAS's internal 443; `sources` restricts the WAN side to an
+              # office CIDR and one more address (omit `sources` to expose it
+              # publicly).
               https:
                 port: "8443:443"
                 proto: tcp
                 allowFrom: admin
                 wan:
                   via: [Home]
-                  sources: ["198.51.100.0/24"]
+                  sources: ["198.51.100.0/24", "203.0.113.7/32"]
 
       # A network of its own (a VLAN on the router) for what shouldn't reach
       # the rest. splot drops whatever no service lets through between the

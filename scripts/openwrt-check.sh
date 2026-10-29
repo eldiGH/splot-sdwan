@@ -147,6 +147,20 @@ EOF
 	# DNS for it, and a name that doesn't resolve keeps the mesh interface down.
 	run "echo '$CABIN_ADDRESS $CABIN_ENDPOINT' >>/etc/hosts"
 
+	# The LAN up, as on a real router: its bridge's one port, eth0, isn't in
+	# the container, and a bridge without ports stays down unless told to come
+	# up empty. fw4 takes a port forward's NAT reflection from the LAN's
+	# address, and warns without one. Here, not in prepare.sh: the mesh check's
+	# routers share the image, and Cabin routes Home's LAN over the mesh.
+	run "for device in \$(uci show network | grep -F \".name='br-lan'\" | cut -d. -f2); do
+		uci set network.\$device.bridge_empty=1
+	done
+	uci commit network && ifup lan"
+	for _ in $(seq 30); do
+		[ "$(run 'ifstatus lan | jsonfilter -e @.up')" = true ] && break
+		sleep 1
+	done
+
 	local log_lines output
 	# Only init writes the router's key: until it has run, the dry run says so
 	# and creates nothing.
@@ -363,6 +377,32 @@ EOF
 	else
 		fail "fw4 takes the listen port rule, and the WAN lets the port in" \
 			"$output"$'\n'"$(run 'nft list chain inet fw4 input_wan' 2>&1)"
+	fi
+
+	# The example forwards the nas's https from two WAN sources. fw4 takes a
+	# single src_ip on a redirect (and skips one with a list): each source has
+	# a redirect of its own, live in the WAN's dstnat chain, and none lets in
+	# the rest of the internet.
+	output=$(run 'fw4 check 2>&1') || true
+	chain=$(run 'nft list chain inet fw4 dstnat_wan' 2>&1) || true
+	forwards=''
+	if grep -q spl_redirect_ <<<"$output"; then
+		forwards+="$output"$'\n'
+	fi
+	for source in 198.51.100.0/24 203.0.113.7/32; do
+		line=$(grep -F "[SPLOT] Home.nas https from $source\"" <<<"$chain") || true
+		if ! grep -qF "ip saddr ${source%/32} tcp dport 8443 " <<<"$line" ||
+			! grep -qF 'dnat ip to 192.168.1.20:443 ' <<<"$line"; then
+			forwards+="no forward from $source"$'\n'
+		fi
+	done
+	if [ "$(grep -cF '[SPLOT] Home.nas https' <<<"$chain")" -ne 2 ]; then
+		forwards+="not one forward per source"$'\n'
+	fi
+	if [ -z "$forwards" ]; then
+		pass "a port forward from each WAN source, and from nowhere else"
+	else
+		fail "a port forward from each WAN source, and from nowhere else" "$forwards$chain"
 	fi
 
 	if output=$(run 'for conf in /var/etc/dnsmasq.conf.*; do dnsmasq --test -C "$conf" 2>&1 || exit 1; done'); then
