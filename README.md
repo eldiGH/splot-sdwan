@@ -7,7 +7,7 @@ Declarative WireGuard mesh networking for OpenWRT routers. You describe your net
 ## What it does
 
 - Builds a **WireGuard mesh** between your OpenWRT routers — interfaces, peers, and keys are generated from the config.
-- **Zero-trust by default**: splot-managed firewall zones drop all input; access is granted only through explicit per-service rules. There is no broad zone-to-zone forwarding.
+- **Zero-trust by default**: between the zones splot knows, and out of its mesh zone, splot drops whatever no service grants; access is granted only through explicit per-service rules. There is no broad zone-to-zone forwarding.
 - **Tag-based access control**: every service declares `allowFrom` using tags or names (nodes, zones, devices, clients). Splot resolves these to IPs/subnets and emits scoped firewall rules.
 - **Static DHCP leases** for devices and roaming clients with declared MACs.
 - **WAN exposure** declared on the service itself — port forwards with optional CIDR allowlists, including cross-node forwarding over the mesh.

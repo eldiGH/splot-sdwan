@@ -1,5 +1,5 @@
 ---
-source: src/backend/linux/mod.rs
+source: crates/splot/src/backend/linux/mod.rs
 expression: config.masked()
 ---
 # The mesh interface of node Barn, written by splot. `splot apply`
@@ -20,7 +20,7 @@ Endpoint = cabin.example.net:51820
 [Peer]
 PublicKey = ReplaceHomePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
 PresharedKey = <preshared key>
-AllowedIPs = 10.100.0.1/32, 192.168.1.0/24, 10.100.10.0/24
+AllowedIPs = 10.100.0.1/32, 192.168.10.0/24, 192.168.1.0/24, 10.100.10.0/24
 Endpoint = 203.0.113.10:51820
 
 # Lake

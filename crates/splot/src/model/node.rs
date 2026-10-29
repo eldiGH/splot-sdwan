@@ -67,6 +67,11 @@ impl Node {
         self.zones.values().copied().chain(self.hub)
     }
 
+    /// Its zones, by name.
+    pub fn zones(&self) -> impl Iterator<Item = &Identifier> {
+        self.zones.keys()
+    }
+
     pub fn wan_zone(&self) -> Option<&Identifier> {
         self.wan_zone.as_ref()
     }

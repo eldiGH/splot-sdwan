@@ -44,6 +44,28 @@ uci set network.wan.proto=dhcp
 uci commit network
 EOF
 
+# A second zone of the operator's, as splot.example.yml's Home has: a network on
+# a bridge with no ports (it comes up all the same), and its firewall zone.
+cat >/etc/uci-defaults/99-splot-test-iot <<'EOF'
+uci set network.br_iot=device
+uci set network.br_iot.type=bridge
+uci set network.br_iot.name=br-iot
+uci set network.br_iot.bridge_empty=1
+uci set network.iot=interface
+uci set network.iot.device=br-iot
+uci set network.iot.proto=static
+uci set network.iot.ipaddr=192.168.10.1
+uci set network.iot.netmask=255.255.255.0
+uci commit network
+uci add firewall zone
+uci set firewall.@zone[-1].name=iot
+uci set firewall.@zone[-1].input=REJECT
+uci set firewall.@zone[-1].output=ACCEPT
+uci set firewall.@zone[-1].forward=REJECT
+uci add_list firewall.@zone[-1].network=iot
+uci commit firewall
+EOF
+
 # splot reaches the router over ssh (dropbear), on the port podman publishes,
 # which arrives on the WAN: let it in there, as an operator's own rule.
 cat >/etc/uci-defaults/99-splot-test-ssh <<'EOF'

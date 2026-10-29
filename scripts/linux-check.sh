@@ -245,9 +245,9 @@ fi
 
 # wg-quick's routes: the networks behind the other nodes; the mesh's own
 # addresses are on the interface's network.
-routes() { run "ip -4 route show dev spl_mesh | grep -v 'proto kernel' | cut -d' ' -f1 | sort | paste -sd' '"; }
+routes() { run "ip -4 route show dev spl_mesh | grep -v 'proto kernel' | cut -d' ' -f1 | LC_ALL=C sort | paste -sd' '"; }
 output=$(routes)
-if [ "$output" = "192.168.1.0/24 192.168.2.0/24 192.168.3.0/24" ]; then
+if [ "$output" = "192.168.1.0/24 192.168.10.0/24 192.168.2.0/24 192.168.3.0/24" ]; then
 	pass "routes: the zones behind Home, Cabin and Lake, nothing else"
 else
 	fail "routes: the zones behind Home, Cabin and Lake, nothing else" "$output"
@@ -289,7 +289,7 @@ output=$(splot apply --node Barn --yes)
 again=$(splot apply --node Barn --yes)
 if printf '%s' "$dry" | grep -qF "#   systemctl restart $UNIT  (routes to add: 192.168.5.0/24)" &&
 	applied "$output" "$CONF, $UNIT restarted (routes to add: 192.168.5.0/24)" &&
-	[ "$(routes)" = "192.168.1.0/24 192.168.2.0/24 192.168.3.0/24 192.168.5.0/24" ] &&
+	[ "$(routes)" = "192.168.1.0/24 192.168.10.0/24 192.168.2.0/24 192.168.3.0/24 192.168.5.0/24" ] &&
 	[ "$again" = "$NOTHING" ]; then
 	pass "route change: restarted, saying why; the new route live; then nothing to do"
 else
@@ -401,7 +401,7 @@ reachable || true
 state=$(run "systemctl is-active $UNIT" || true)
 output=$(splot apply --node Barn --yes)
 if [ "$state" = active ] &&
-	[ "$(routes)" = "192.168.1.0/24 192.168.2.0/24 192.168.3.0/24 192.168.5.0/24" ] &&
+	[ "$(routes)" = "192.168.1.0/24 192.168.10.0/24 192.168.2.0/24 192.168.3.0/24 192.168.5.0/24" ] &&
 	[ "$output" = "$NOTHING" ]; then
 	pass "reboot: the mesh comes back as splot left it"
 else

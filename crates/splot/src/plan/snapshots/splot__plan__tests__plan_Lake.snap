@@ -8,12 +8,13 @@ expression: plan.to_string()
 interface: listen 51820, address 10.100.0.3/16
 peer Barn at 10.100.0.4: key ReplaceBarnPublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.4/32, 192.168.4.0/24], routed, endpoint 203.0.113.30:51820, keepalive 25s, psk
 peer Cabin at 10.100.0.2: key ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.2/32, 192.168.2.0/24], routed, endpoint cabin.example.net:51820, keepalive 25s, psk
-peer Home at 10.100.0.1: key ReplaceHomePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.1/32, 192.168.1.0/24, 10.100.10.0/24], routed, endpoint 203.0.113.10:51820, keepalive 25s, psk
+peer Home at 10.100.0.1: key ReplaceHomePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.1/32, 192.168.10.0/24, 192.168.1.0/24, 10.100.10.0/24], routed, endpoint 203.0.113.10:51820, keepalive 25s, psk
 peer Phone at 10.100.0.100: key ReplacePhonePublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.100/32], psk
 
 [firewall]
 mesh zone: input drop, output accept, forward drop
 ping 10.100.0.3 from [Barn 10.100.0.4, Cabin 10.100.0.2, Home 10.100.0.1, Phone 10.100.0.100]
+otherwise drop: between [mesh, lan], and from mesh to any zone
 
 [dhcp]
 none: left alone

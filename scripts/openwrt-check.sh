@@ -314,7 +314,8 @@ EOF
 	for placed in 'input_spl_mesh:ping from its peers' \
 		'input_spl_mesh:in: Home ssh, from spl_mesh' \
 		'forward_spl_mesh:in: Home.nas https, from spl_mesh' \
-		'forward_lan:out: Cabin.camera rtsp, from lan'; do
+		'forward_lan:out: Cabin.camera rtsp, from lan' \
+		'forward_lan:in: Home.tv cast, from lan'; do
 		chain=${placed%%:*} rule=${placed#*:}
 		if ! grep -qF "[SPLOT] $rule" <<<"$(run "nft list chain inet fw4 $chain")"; then
 			misplaced+="not in $chain: $rule"$'\n'
@@ -324,6 +325,33 @@ EOF
 		pass "each rule in the chain its zones put it in"
 	else
 		fail "each rule in the chain its zones put it in" "$misplaced"
+	fi
+
+	# splot's deny: fw4 takes every rule of it (all protocols), each sits in
+	# its source zone's forward chain, and after splot's accepts there, since
+	# fw4 keeps the order of the file: a deny first would drop what a service
+	# grants. The example's Home has two zones of its own, lan and iot.
+	output=$(run 'fw4 check 2>&1') || true
+	denies=''
+	if grep -q spl_rule_deny_ <<<"$output"; then
+		denies+="$output"$'\n'
+	fi
+	for denied in 'spl_mesh:spl_mesh to any zone' 'lan:lan to spl_mesh' 'lan:lan to iot' \
+		'iot:iot to spl_mesh' 'iot:iot to lan'; do
+		zone=${denied%%:*} deny=${denied#*:}
+		chain=$(run "nft list chain inet fw4 forward_$zone" 2>&1) || true
+		at=$(grep -nF "[SPLOT] deny: $deny" <<<"$chain" | cut -d: -f1) || true
+		accept=$(grep -nE '\[SPLOT\] (in|out): ' <<<"$chain" | tail -1 | cut -d: -f1) || true
+		if [ -z "$at" ]; then
+			denies+="not in forward_$zone: deny: $deny"$'\n'
+		elif [ -n "$accept" ] && [ "$at" -lt "$accept" ]; then
+			denies+="before an accept in forward_$zone: deny: $deny"$'\n'"$chain"$'\n'
+		fi
+	done
+	if [ -z "$denies" ]; then
+		pass "splot's deny in each zone's forward chain, after its accepts"
+	else
+		fail "splot's deny in each zone's forward chain, after its accepts" "$denies"
 	fi
 
 	# Others dial the router (the example's Home has an endpoint): fw4 takes the

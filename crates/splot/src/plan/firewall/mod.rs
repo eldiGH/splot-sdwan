@@ -1,11 +1,11 @@
-//! The node's firewall: the mesh zone splot owns, the flows it lets through, and
-//! the port forwards from the internet.
+//! The node's firewall: the mesh zone splot owns, the flows it lets through, its
+//! verdict on the rest, and the port forwards from the internet.
 
 pub mod redirect;
 pub mod rules;
 pub mod zone_ref;
 
-use std::{fmt, net::Ipv4Addr};
+use std::{collections::BTreeSet, fmt, net::Ipv4Addr};
 
 use super::wireguard::WireGuardPlan;
 use crate::{
@@ -28,6 +28,8 @@ pub struct FirewallPlan {
     pub listen_port: Option<ListenPort>,
     /// Ingress rules first, then egress.
     pub rules: Vec<Rule>,
+    /// What becomes of what no rule accepts.
+    pub default_policy: DefaultPolicy,
     /// Without a mesh zone, none to a host reached over the mesh.
     pub redirects: Vec<Redirect>,
 }
@@ -41,6 +43,18 @@ pub struct ZonePolicy {
     pub output: Verdict,
     /// Through the node, within the zone.
     pub forward: Verdict,
+}
+
+/// splot's verdict on what no rule accepts: whatever is forwarded between two
+/// of the node's splot zones, or out of the mesh zone (to the WAN too). What
+/// else the WAN and the zones `splot.yml` doesn't declare send is the
+/// operator's, and so is what reaches the node from its own zones.
+#[derive(Debug)]
+pub struct DefaultPolicy {
+    /// The node's splot zones: the mesh zone (when it has one) and every zone
+    /// `splot.yml` declares for it.
+    pub zones: BTreeSet<ZoneRef>,
+    pub verdict: Verdict,
 }
 
 /// Every WireGuard peer of the node may ping it: an echo request from the peer's
@@ -84,6 +98,15 @@ pub(super) fn plan(
         forward: Verdict::Drop,
     });
     let rules = rules::rules(network, own, mesh_zone.is_some());
+    let declared = own.zones().map(|zone| ZoneRef::Named(zone.clone()));
+    let default_policy = DefaultPolicy {
+        zones: mesh_zone
+            .map(|_| ZoneRef::Mesh)
+            .into_iter()
+            .chain(declared)
+            .collect(),
+        verdict: Verdict::Drop,
+    };
     let ping = wireguard.map(|wireguard| Ping {
         to: wireguard.address.ip(),
         from: wireguard
@@ -109,6 +132,7 @@ pub(super) fn plan(
         ping,
         listen_port,
         rules,
+        default_policy,
         redirects,
     }
 }
@@ -119,6 +143,17 @@ impl fmt::Display for Verdict {
             Self::Accept => write!(f, "accept"),
             Self::Drop => write!(f, "drop"),
         }
+    }
+}
+
+impl fmt::Display for DefaultPolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { zones, verdict } = self;
+        write!(f, "otherwise {verdict}: between {}", super::list(zones))?;
+        if zones.contains(&ZoneRef::Mesh) {
+            write!(f, ", and from {} to any zone", ZoneRef::Mesh)?;
+        }
+        Ok(())
     }
 }
 
@@ -148,6 +183,7 @@ impl fmt::Display for FirewallPlan {
         for rule in &self.rules {
             writeln!(f, "{rule}")?;
         }
+        writeln!(f, "{}", self.default_policy)?;
         for redirect in &self.redirects {
             writeln!(f, "{redirect}")?;
         }
@@ -207,6 +243,19 @@ clients:
             .wireguard()
             .map(|_| super::super::wireguard::plan(&network, home));
         plan(&network, home, wireguard.as_ref())
+    }
+
+    /// `yaml` with a second zone on Home, before its hub.
+    fn with_iot(yaml: &str) -> String {
+        yaml.replace(
+            "    hub:\n",
+            "      iot:\n        address: 192.168.10.1/24\n    hub:\n",
+        )
+    }
+
+    fn zones(plan: &FirewallPlan) -> Vec<String> {
+        let zones = &plan.default_policy.zones;
+        zones.iter().map(ToString::to_string).collect()
     }
 
     fn forwards(plan: &FirewallPlan) -> Vec<String> {
@@ -307,6 +356,20 @@ clients:
     }
 
     #[test]
+    fn what_no_rule_accepts_between_splot_zones_is_dropped() {
+        // The mesh zone and every zone splot.yml declares; not the WAN.
+        let plan = home(&with_iot(HOME));
+        assert_eq!(zones(&plan), ["mesh", "iot", "lan"]);
+        assert_eq!(plan.default_policy.verdict, Verdict::Drop);
+        assert!(
+            plan.to_string().contains(
+                "\notherwise drop: between [mesh, iot, lan], and from mesh to any zone\n"
+            ),
+            "{plan}"
+        );
+    }
+
+    #[test]
     fn without_splots_wireguard_nothing_points_into_the_mesh() {
         // The mesh arrives on the operator's own interface, in a zone of theirs
         // that splot doesn't know: no mesh zone, no forward to a host reached
@@ -326,6 +389,13 @@ clients:
         assert_eq!(forwards(&plan), ["Home.printer ipp"]);
         // Phone reaches the printer over the mesh.
         assert!(plan.rules.is_empty(), "{:?}", plan.rules);
+        // What's dropped is between its declared zones alone.
+        assert_eq!(zones(&plan), ["lan"]);
         assert!(plan.to_string().contains("mesh zone: none"));
+        assert!(
+            plan.to_string()
+                .contains("\notherwise drop: between [lan]\n"),
+            "{plan}"
+        );
     }
 }

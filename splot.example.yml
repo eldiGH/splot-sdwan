@@ -95,6 +95,23 @@ nodes:
                   via: [Home]
                   sources: ["198.51.100.0/24"]
 
+      # A network of its own (a VLAN on the router) for what shouldn't reach
+      # the rest. splot drops whatever no service lets through between the
+      # zones it knows, and between them and the mesh.
+      iot:
+        address: 192.168.10.1/24
+        devices:
+          tv:
+            ip: 192.168.10.20
+            macs: aa:bb:cc:00:00:05
+            services:
+              # Cast to it from anything on Home's lan; the tv itself reaches
+              # nothing beyond its zone.
+              cast:
+                port: 8009
+                proto: tcp
+                allowFrom: Home.lan
+
     # Devices that reach the mesh through Home alone (e.g. behind an LTE
     # modem's NAT): peers on Home's mesh interface only. Every other node routes
     # the whole hub network through Home; `Home.hub` refers to it.

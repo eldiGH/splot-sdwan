@@ -1,3 +1,4 @@
+mod deny;
 mod listen_port;
 mod ping;
 mod redirect;
@@ -50,8 +51,8 @@ fn target(verdict: Verdict) -> &'static str {
 }
 
 /// The plan's firewall section as the `firewall` file's sections: the mesh zone,
-/// the peers' ping and the listen port (if any), then the rules, then the
-/// redirects.
+/// the peers' ping and the listen port (if any), then the rules, splot's deny
+/// after them, then the redirects.
 pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
     info!("Generating firewall config");
     info!(
@@ -79,6 +80,8 @@ pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
         .as_ref()
         .map(|listen_port| listen_port.to_section());
     let rules = firewall.rules.iter().map(|rule| rule.to_section());
+    let denies = deny::denies(&firewall.default_policy);
+    let denies = denies.iter().map(|deny| deny.to_section());
     let redirects = firewall
         .redirects
         .iter()
@@ -88,6 +91,7 @@ pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
         .chain(ping)
         .chain(listen_port)
         .chain(rules)
+        .chain(denies)
         .chain(redirects)
         .collect()
 }
@@ -145,13 +149,9 @@ nodes:
         assert_eq!(values(&sections, "redirect", "dest"), ["spl_mesh"]);
     }
 
-    #[test]
-    fn every_rule_names_the_zones_it_crosses() {
-        // `*` would match every zone, the WAN and the operator's own included.
-        // Home: ssh on the router and a nas on its lan, both from Phone; a camera
-        // on its hub, forwarded from the WAN. Cabin's lan reaches the nas.
-        let network = checked(
-            "
+    // Home: ssh on the router and a nas on its lan, both from Phone; a camera on
+    // its hub, forwarded from the WAN; an iot zone. Cabin's lan reaches the nas.
+    const SITES: &str = "
 meshNetwork: 10.100.0.0/16
 nodes:
   Home:
@@ -173,6 +173,8 @@ nodes:
             macs: AA:BB:CC:DD:EE:01
             services:
               https: { port: 443, proto: tcp, allowFrom: [Phone, Cabin.lan] }
+      iot:
+        address: 192.168.10.1/24
     hub:
       network: 10.100.49.0/24
       clients:
@@ -196,24 +198,94 @@ clients:
   Phone:
     publicKey: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=
     meshIp: 10.100.1.10
-",
-        );
+";
+
+    fn sections(node: &str) -> Vec<Section> {
+        let plan = plan::plan(&checked(SITES), &node.parse().unwrap()).unwrap();
+        render(&plan.firewall.unwrap())
+    }
+
+    #[test]
+    fn every_rule_names_the_zones_it_crosses() {
+        // `*` would match every zone, the WAN and the operator's own included:
+        // only what leaves the mesh zone is splot's wherever it goes.
         for node in ["Home", "Cabin"] {
-            let plan = plan::plan(&network, &node.parse().unwrap()).unwrap();
-            let sections = render(&plan.firewall.unwrap());
+            let sections = sections(node);
 
             // The ping, the listen port and the rules; Cabin's lets its lan out.
             let rules = values(&sections, "rule", "src");
             assert!(rules.len() >= 3, "{node}: {rules:?}");
+            let mut wildcards = Vec::new();
             for section in &sections {
                 for (option, value) in &section.options {
                     let wildcard = match value {
                         Value::Single(value) => value == "*",
                         Value::List(values) => values.iter().any(|value| value == "*"),
                     };
-                    assert!(!wildcard, "{node}: {}.{option} is '*'", section.name);
+                    if wildcard {
+                        wildcards.push(format!("{}.{option}", section.name));
+                    }
                 }
             }
+            assert_eq!(wildcards, ["spl_rule_deny_spl_mesh_to_any.dest"], "{node}");
+        }
+    }
+
+    #[test]
+    fn splots_deny_comes_after_its_accepts() {
+        // fw4 takes a chain's rules in the order of the file: a deny first would
+        // drop what a service grants.
+        let sections = sections("Home");
+        let rules: Vec<&str> = sections
+            .iter()
+            .filter(|section| section.section_type == "rule")
+            .map(|section| section.name.as_str())
+            .collect();
+        let first_deny = rules
+            .iter()
+            .position(|rule| rule.starts_with("spl_rule_deny_"))
+            .unwrap();
+        assert!(
+            rules[first_deny..]
+                .iter()
+                .all(|rule| rule.starts_with("spl_rule_deny_")),
+            "{rules:?}"
+        );
+        assert!(
+            rules[..first_deny]
+                .iter()
+                .any(|rule| rule.starts_with("spl_rule_in_")),
+            "{rules:?}"
+        );
+    }
+
+    #[test]
+    fn the_wan_and_undeclared_zones_get_no_splot_rule() {
+        // Every rule's zones are splot's: the mesh zone and the ones splot.yml
+        // declares; `*` only where the mesh zone's traffic goes. The WAN only for
+        // the listen port, as a redirect's source.
+        let sections = sections("Home");
+        let splots = ["spl_mesh", "lan", "iot", "*"];
+        let mut others = Vec::new();
+        for section in sections
+            .iter()
+            .filter(|section| section.section_type == "rule")
+        {
+            for (option, value) in &section.options {
+                if let Value::Single(value) = value
+                    && ["src", "dest"].contains(&option.as_str())
+                    && !splots.contains(&value.as_str())
+                {
+                    others.push(format!("{}.{option}={value}", section.name));
+                }
+            }
+        }
+        assert_eq!(others, ["spl_rule_listen_port.src=wan"]);
+        assert_eq!(values(&sections, "redirect", "src"), ["wan"]);
+        // All of Home's splot zones are in it, so none is missing from `splots`.
+        let dests = values(&sections, "rule", "dest");
+        for zone in splots {
+            assert!(dests.contains(&zone), "{zone}: {dests:?}");
         }
     }
 }
