@@ -241,6 +241,11 @@ Phone:
 | `services`  | map of name → Service                               | no       | Services exposed by this client.                                                                                                     |
 | `tags`      | string or list of strings                           | no       | Explicit tags assigned to this client.                                                                                               |
 
+**Its services** are reached at its `meshIp`, through its tunnel wherever it is, and at its IPs on the zones (at home with the tunnel off, say):
+
+- It's a peer on every node, so each node sends what's behind it (its zones, its hub) straight to the `meshIp`, and lets out what `allowFrom` names there. Each node is the only gate between what's behind it and the client: one whose firewall or WireGuard splot leaves alone lets its networks through as your own rules do, and `splot check` names the service in that node's warning.
+- Another global client can't reach it at its `meshIp`: no node relays between clients, so `allowFrom: Laptop` on a phone's service lets nothing in there.
+
 ---
 
 ## Preshared keys
@@ -283,7 +288,7 @@ Services may be declared on:
 - A **node** (`node.services`) — the router itself hosts the service
 - A **zone device** (`zone.devices.<name>.services`) — the device hosts the service
 - A **hub client** (`hub.clients.<name>.services`) — the client hosts the service
-- A **global client** (`client.services`) — the client hosts the service, reachable on any node where it has an IP
+- A **global client** (`client.services`) — the client hosts the service, reached at its `meshIp` and at its IPs on the zones (see [Client (global)](#client-global))
 
 ---
 
@@ -396,6 +401,7 @@ Where splot runs a node's firewall, it decides what crosses between zones, at on
 
 - **A zone is the smallest unit.** Inside a zone (one subnet) everything reaches everything, and that traffic never passes the router. Sources in a service's own zone get no rule: `allowFrom: admin` on a device doesn't keep out the other devices of its zone. A device that needs protecting from its neighbours needs a zone of its own (a VLAN).
 - **Only what passes a node splot manages.** Mesh traffic always does (it goes through the node's WireGuard), so splot enforces mesh access even on a node that isn't its site's router. Traffic between two zones of a site does only when the node is their router: a switch must not route between VLANs.
+- **A global client's `meshIp`, at each node.** The client is a peer on every node, so what's behind a node reaches it through that node alone: each node lets out what `allowFrom` names there. One whose firewall splot leaves alone lets the rest through too, as your rules do.
 - **On the router itself, what comes over the mesh.** For a service on the router (`node.services`), `allowFrom` decides what reaches it over the mesh. What reaches the router from its own zones (DHCP, DNS, LuCI, ssh from the LAN) is yours, so a source in one of them gets no rule there.
 - **No VLAN IDs, no L2 across the mesh.** A VLAN ID is local to its site, and nothing splot generates depends on one. Zones at different sites are grouped with tags (`iot`). splot routes between distinct subnets; it never bridges a network across the mesh.
 

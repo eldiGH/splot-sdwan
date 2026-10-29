@@ -142,17 +142,18 @@ impl Host {
         &self.addresses
     }
 
-    /// Its addresses on the nodes `pick` chooses. An address is on a node when it's
-    /// in the node's zone or hub, or when it's the node's own. A global client's
-    /// mesh IP is on none: it's a peer on every node, so behind none of them in
-    /// particular.
+    /// Its addresses `pick` chooses, by the node each is on. An address is on a
+    /// node when it's in the node's zone or hub, or when it's the node's own. A
+    /// global client's mesh IP is on none (`None`): it's a peer on every node, so
+    /// behind none of them in particular, and every node reaches it over the
+    /// mesh.
     pub fn addresses_on(
         &self,
-        pick: impl Fn(&Identifier) -> bool,
+        pick: impl Fn(Option<&Identifier>) -> bool,
     ) -> impl Iterator<Item = &HostAddress> {
         self.addresses
             .iter()
-            .filter(move |address| self.node_of(address).is_some_and(&pick))
+            .filter(move |address| pick(self.node_of(address)))
     }
 
     /// The node `address`, one of this host's own, is on.
@@ -234,8 +235,8 @@ mod tests {
         }
     }
 
-    /// The IPs of `host`'s addresses on the nodes `pick` chooses.
-    fn ips_on(host: &Host, pick: impl Fn(&Identifier) -> bool) -> Vec<String> {
+    /// The IPs of `host`'s addresses `pick` chooses, by the node each is on.
+    fn ips_on(host: &Host, pick: impl Fn(Option<&Identifier>) -> bool) -> Vec<String> {
         host.addresses_on(pick)
             .map(|address| address.ip().to_string())
             .collect()
@@ -252,10 +253,10 @@ mod tests {
             ],
         );
         assert_eq!(
-            ips_on(&home, |node| *node == id("Home")),
+            ips_on(&home, |node| node == Some(&id("Home"))),
             ["10.100.0.1", "192.168.1.1"]
         );
-        assert!(ips_on(&home, |node| *node != id("Home")).is_empty());
+        assert!(ips_on(&home, |node| node != Some(&id("Home"))).is_empty());
     }
 
     #[test]
@@ -268,15 +269,16 @@ mod tests {
             vec![address("10.100.49.10/24", Place::Hub { node: id("Home") })],
         );
         assert_eq!(
-            ips_on(&camera, |node| *node == id("Home")),
+            ips_on(&camera, |node| node == Some(&id("Home"))),
             ["10.100.49.10"]
         );
-        assert!(ips_on(&camera, |node| *node != id("Home")).is_empty());
+        assert!(ips_on(&camera, |node| node != Some(&id("Home"))).is_empty());
     }
 
     #[test]
     fn a_global_clients_mesh_ip_is_on_no_node() {
-        // A peer on every node, so behind none of them in particular.
+        // A peer on every node, so behind none of them in particular: every node
+        // but Home reaches it there, or on their own zones.
         let phone = host(
             HostRef::Client(id("Phone")),
             vec![
@@ -285,8 +287,14 @@ mod tests {
                 address("192.168.2.60/24", zone("Cabin", "lan")),
             ],
         );
-        assert_eq!(ips_on(&phone, |node| *node == id("Home")), ["192.168.1.60"]);
-        assert_eq!(ips_on(&phone, |node| *node != id("Home")), ["192.168.2.60"]);
-        assert_eq!(ips_on(&phone, |_| true), ["192.168.1.60", "192.168.2.60"]);
+        assert_eq!(
+            ips_on(&phone, |node| node == Some(&id("Home"))),
+            ["192.168.1.60"]
+        );
+        assert_eq!(ips_on(&phone, |node| node.is_none()), ["10.100.1.10"]);
+        assert_eq!(
+            ips_on(&phone, |node| node != Some(&id("Home"))),
+            ["10.100.1.10", "192.168.2.60"]
+        );
     }
 }

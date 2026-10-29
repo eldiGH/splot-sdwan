@@ -37,6 +37,16 @@ clients:
     ips:
       Home:
         lan: 192.168.1.50
+    services:
+      # Syncthing on the phone, for the nas to sync with. A client's service
+      # is reached at its meshIp, through its tunnel wherever the phone is,
+      # and at its IPs on the zones (at home with the tunnel off). The phone
+      # is a peer of every node, so each lets out what's behind it: here
+      # Home, its nas.
+      sync:
+        port: 22000
+        proto: tcp
+        allowFrom: Home.nas
 
 nodes:
   # Internet-facing router. Hosts services and exposes some to the WAN

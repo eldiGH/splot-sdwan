@@ -97,6 +97,11 @@ impl Sources {
             .flat_map(|(_, sources)| sources);
         self.everywhere.iter().chain(others)
     }
+
+    /// Whether it lets in nothing, on any node.
+    pub fn is_empty(&self) -> bool {
+        self.everywhere.is_empty() && self.nodes.values().all(BTreeSet::is_empty)
+    }
 }
 
 #[cfg(test)]

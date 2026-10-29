@@ -55,18 +55,22 @@ pub(super) fn check_unmanaged(
         if platform.firewall().is_none() {
             // What the node's firewall would let in: its ingress rules, from the
             // sources whose traffic crosses it (not one on the same link as the
-            // host).
+            // host). And every service at a global client's mesh IP: each node is
+            // the only gate between what's behind it and the client.
             let unenforced: Vec<String> = hosts
                 .iter()
                 .flat_map(|host| {
-                    let addresses: Vec<&HostAddress> = host.addresses_on(|on| on == node).collect();
+                    let addresses: Vec<&HostAddress> =
+                        host.addresses_on(|on| on == Some(node)).collect();
+                    let roaming = host.addresses_on(|on| on.is_none()).next().is_some();
                     services_of(host)
                         .filter(move |(_, service)| {
-                            service.sources().on(node).any(|source| {
-                                addresses
-                                    .iter()
-                                    .any(|address| !address.shares_link(source.network().ip()))
-                            })
+                            (roaming && !service.sources().is_empty())
+                                || service.sources().on(node).any(|source| {
+                                    addresses
+                                        .iter()
+                                        .any(|address| !address.shares_link(source.network().ip()))
+                                })
                         })
                         .map(|(name, _)| format!("{}.{name}", host.id()))
                 })
@@ -92,17 +96,21 @@ pub(super) fn check_unmanaged(
         if platform.wireguard().is_none() && platform.firewall().is_some() {
             // What crosses the mesh gets no rule: to a host on the node from a
             // source outside its zones, or from its zones to a host elsewhere.
+            // What its zones send a global client's mesh IP goes into the
+            // operator's interface zone, past splot's deny too.
             let unenforced = hosts
                 .iter()
                 .flat_map(|host| {
-                    let here = host.addresses_on(|on| on == node).next().is_some();
-                    let elsewhere = host.addresses_on(|on| on != node).next().is_some();
+                    let here = host.addresses_on(|on| on == Some(node)).next().is_some();
+                    let elsewhere = host.addresses_on(|on| on != Some(node)).next().is_some();
+                    let roaming = host.addresses_on(|on| on.is_none()).next().is_some();
                     services_of(host)
                         .filter(move |(_, service)| {
-                            service.sources().on(node).any(|source| {
-                                let behind = source.place().zone_on(node).is_some();
-                                (here && !behind) || (elsewhere && behind)
-                            })
+                            (roaming && !service.sources().is_empty())
+                                || service.sources().on(node).any(|source| {
+                                    let behind = source.place().zone_on(node).is_some();
+                                    (here && !behind) || (elsewhere && behind)
+                                })
                         })
                         .map(|(name, _)| format!("{}.{name}", host.id()))
                 })
@@ -230,6 +238,32 @@ clients:
         );
     }
 
+    /// Phone's http, let in from Cabin itself: from nothing behind Home.
+    fn with_phone_http_from_cabin(yaml: &str) -> String {
+        yaml.replace(
+            "http: { port: 8080, proto: tcp, wan: { via: Home } }",
+            "http: { port: 8080, proto: tcp, allowFrom: Cabin.$node, wan: { via: Home } }",
+        )
+    }
+
+    #[test]
+    fn a_firewall_left_alone_leaves_a_global_clients_mesh_ip_open_from_behind_it() {
+        // Phone is a peer on every node, so Home is the only gate between what's
+        // behind it and Phone's mesh IP: without Home's deny, its lan reaches
+        // Phone as your rules let it, though allowFrom names nothing there.
+        let r = report(&with_phone_http_from_cabin(&mesh("      firewall: none")));
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(warning_at(
+            &r,
+            "nodes.Home.platform.firewall",
+            |w| matches!(
+                w,
+                ValidationWarning::FirewallLeftAlone { unenforced, .. }
+                    if *unenforced == strings(&["Home.ssh", "Home.printer.ipp", "Phone.http"])
+            )
+        ));
+    }
+
     #[test]
     fn a_firewall_left_alone_on_a_node_nobody_dials_has_no_listen_port_to_let_in() {
         let r = report(
@@ -352,6 +386,25 @@ clients:
                 "nodes.Home.platform.wireguard: splot leaves Home's WireGuard alone, so its firewall has no mesh zone - mesh traffic arrives in your interface's zone, under your rules, and your rule lets its listen port in from the WAN; allowFrom isn't enforced for what crosses the mesh to Cabin.ssh, Home.ssh, Home.printer.ipp; nothing is forwarded from its WAN to what's reached over the mesh: Phone.http"
             ]
         );
+    }
+
+    #[test]
+    fn wireguard_left_alone_leaves_a_global_clients_mesh_ip_open_from_behind_it() {
+        // What Home's lan sends Phone goes into your interface's zone, which
+        // splot's deny doesn't cover.
+        let r = report(&with_phone_http_from_cabin(&mesh_without_hub(
+            "      wireguard: none",
+        )));
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(warning_at(
+            &r,
+            "nodes.Home.platform.wireguard",
+            |w| matches!(
+                w,
+                ValidationWarning::WireGuardLeftAlone { unenforced, .. }
+                    if *unenforced == strings(&["Cabin.ssh", "Home.ssh", "Home.printer.ipp", "Phone.http"])
+            )
+        ));
     }
 
     #[test]

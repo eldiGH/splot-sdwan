@@ -323,12 +323,13 @@ EOF
 
 	# Each rule sits where its zones put it: what's for the router itself in
 	# the mesh zone's input, what crosses the router in its source zone's
-	# forward chain.
+	# forward chain (out to a global client's mesh IP too).
 	misplaced=''
 	for placed in 'input_spl_mesh:ping from its peers' \
 		'input_spl_mesh:in: Home ssh, from spl_mesh' \
 		'forward_spl_mesh:in: Home.nas https, from spl_mesh' \
 		'forward_lan:out: Cabin.camera rtsp, from lan' \
+		'forward_lan:out: Phone sync, from lan' \
 		'forward_lan:in: Home.tv cast, from lan'; do
 		chain=${placed%%:*} rule=${placed#*:}
 		if ! grep -qF "[SPLOT] $rule" <<<"$(run "nft list chain inet fw4 $chain")"; then

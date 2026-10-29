@@ -181,7 +181,7 @@ Zones are first-class in the config (under each node's `zones` map). They repres
 
 Beyond user-declared zones, splot also creates and manages one zone of its own: the mesh interface's (`spl_mesh`). Everything that arrives over WireGuard is in it — other nodes, global clients, and hub clients. It defaults to `input` and `forward` `DROP` (and `output ACCEPT`); access is granted only via explicit service rules. One exception, by default: every WireGuard peer of the node (other nodes, global clients, hub clients) may ping the node's own mesh IP, echo request only, from the peer's own address, to the router itself and never forwarded. It's how the health check of an apply probes the peers.
 
-Generated firewall rules are scoped per-zone in both `src` and `dest`: one rule per flow and zone its sources arrive in, with that zone in `src` and only that zone's IPs in `src_ip`. On a node a source is in one of its own zones, or else in the mesh zone: everything that comes over WireGuard (global clients, its hub, the networks behind other nodes). `dest` is the zone of the host the service is on, the mesh for a host behind another node, or none for the router itself (its input). No rule for:
+Generated firewall rules are scoped per-zone in both `src` and `dest`: one rule per flow and zone its sources arrive in, with that zone in `src` and only that zone's IPs in `src_ip`. On a node a source is in one of its own zones, or else in the mesh zone: everything that comes over WireGuard (global clients, its hub, the networks behind other nodes). `dest` is the zone of the host the service is on, the mesh for a host behind another node or a global client's `meshIp`, or none for the router itself (its input). No rule for:
 
 - sources in the destination's own zone: that traffic never passes the node (see "Trust model");
 - the router's own zones toward the router itself: that input is the operator's, so `allowFrom` on a node's own service governs what comes over the mesh;
@@ -244,6 +244,13 @@ The only mechanism for access control. Each service declares:
 A service must grant access in at least one direction — either `allowFrom` or `wan` must be set. Otherwise the service declaration is operationally meaningless (a warning).
 
 Services can be declared at multiple levels: on a node (router-hosted), on a device, on a hub client, or on a global client.
+
+**A global client's services** (decided) are reached at its `meshIp` and at each of its zone IPs: away through its tunnel, at home (the tunnel off) on its zone.
+
+- The `meshIp` is on no node. The client is a peer on every node, so each node sends what's behind it (its zones, its hub) straight there, and lets out those of them `allowFrom` names, over the mesh. No node lets anything in for it.
+- So each node is the only gate between what's behind it and the client: a node that leaves its firewall or its WireGuard alone lets its sources through as the operator's own rules do, and its warning names every service at a client's `meshIp` that lets anyone in.
+- Another global client has no path to it: a client's profile (planned) routes each node's own networks, so no node relays between clients, and none lets one out there.
+- Rejected: the zone IPs alone (a client away from its zones couldn't be reached, though it sends keepalives so that it can be, and its WAN forwards go to its `meshIp`); the `meshIp` alone when it has one, as `wan.via` picks (at home with the tunnel off it couldn't be reached).
 
 ### WAN exposure
 

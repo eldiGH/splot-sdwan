@@ -25,7 +25,8 @@ pub enum Direction {
     /// A host on this node: its own services, its devices and hub clients, and
     /// global clients in its zones.
     Ingress,
-    /// A host on another node, reached from sources local to this node.
+    /// A host on another node, or a global client at its mesh IP, reached from
+    /// sources local to this node.
     Egress,
 }
 
@@ -175,16 +176,18 @@ fn by_zone<'a>(
 }
 
 /// The rules on `own`: to the hosts on it first, then to hosts elsewhere. A
-/// global client's mesh IP is on no node, so it gets none. `mesh` says whether
-/// `own` has a mesh zone: without one, what comes from or goes to the mesh
-/// arrives in a zone of the operator's, and gets no rule.
+/// global client's mesh IP is on no node, so it's elsewhere on every node: the
+/// client is a peer on each, which lets the sources behind it out there. `mesh`
+/// says whether `own` has a mesh zone: without one, what comes from or goes to
+/// the mesh arrives in a zone of the operator's, and gets no rule.
 pub(super) fn rules(network: &Network, own: &Node, mesh: bool) -> Vec<Rule> {
     let mut ingress = Vec::new();
     let mut egress = Vec::new();
 
     for host in network.hosts() {
-        let here: Vec<&HostAddress> = host.addresses_on(|node| node == own.name()).collect();
-        let elsewhere: Vec<&HostAddress> = host.addresses_on(|node| node != own.name()).collect();
+        let here: Vec<&HostAddress> = host.addresses_on(|node| node == Some(own.name())).collect();
+        let elsewhere: Vec<&HostAddress> =
+            host.addresses_on(|node| node != Some(own.name())).collect();
 
         for (name, service) in network.services_of(host) {
             let flow = Flow {
@@ -451,6 +454,86 @@ clients:
                 "accept out Home.nas https: tcp/443 from lan [192.168.2.0/24] to mesh [192.168.1.20/32]",
             ]
         );
+    }
+
+    /// SITES, with `rest` in place of Phone's IP on Home's lan.
+    fn phone_with(rest: &str) -> String {
+        SITES.replace("    ips:\n      Home: { lan: 192.168.1.50 }\n", rest)
+    }
+
+    #[test]
+    fn a_global_client_is_let_out_to_at_its_mesh_ip_from_behind_each_node() {
+        // Phone is a peer on every node, so each sends what's behind it (its
+        // zones, its hub) straight to Phone's mesh IP: each lets its own out
+        // there, and none lets anything in for it.
+        let sites = phone_with(
+            "
+    services:
+      sync: { port: 22000, proto: tcp, allowFrom: [Home.iot, Home.camera, Cabin.lan] }
+",
+        );
+        assert_eq!(
+            of(&placed(&sites, "Home"), "Phone sync"),
+            [
+                "accept out Phone sync: tcp/22000 from mesh [10.100.49.10/32] to mesh [10.100.1.10/32]",
+                "accept out Phone sync: tcp/22000 from iot [192.168.3.0/24] to mesh [10.100.1.10/32]",
+            ]
+        );
+        assert_eq!(
+            of(&placed(&sites, "Cabin"), "Phone sync"),
+            ["accept out Phone sync: tcp/22000 from lan [192.168.2.0/24] to mesh [10.100.1.10/32]"]
+        );
+    }
+
+    #[test]
+    fn a_global_client_is_reached_at_its_zone_ips_too() {
+        // At home with its tunnel off, Phone is on Home's lan: Home lets in what
+        // comes to it there, as for any host on the lan. Cabin lets its own lan
+        // out to both of Phone's addresses.
+        let sites = phone_with(
+            "
+    ips:
+      Home: { lan: 192.168.1.50 }
+    services:
+      sync: { port: 22000, proto: tcp, allowFrom: [Home.iot, Home.camera, Cabin.lan] }
+",
+        );
+        assert_eq!(
+            of(&placed(&sites, "Home"), "Phone sync"),
+            [
+                "accept in Phone sync: tcp/22000 from mesh [10.100.49.10/32, 192.168.2.0/24] to lan [192.168.1.50/32]",
+                "accept in Phone sync: tcp/22000 from iot [192.168.3.0/24] to lan [192.168.1.50/32]",
+                "accept out Phone sync: tcp/22000 from mesh [10.100.49.10/32] to mesh [10.100.1.10/32]",
+                "accept out Phone sync: tcp/22000 from iot [192.168.3.0/24] to mesh [10.100.1.10/32]",
+            ]
+        );
+        assert_eq!(
+            of(&placed(&sites, "Cabin"), "Phone sync"),
+            [
+                "accept out Phone sync: tcp/22000 from lan [192.168.2.0/24] to mesh [10.100.1.10/32, 192.168.1.50/32]"
+            ]
+        );
+    }
+
+    #[test]
+    fn another_global_client_has_no_path_to_its_mesh_ip() {
+        // A client's profile routes each node's own networks only, so no node
+        // relays Laptop to Phone: none lets it out there. Home's iot still is.
+        let sites = phone_with(
+            "
+    services:
+      sync: { port: 22000, proto: tcp, allowFrom: [Laptop, Home.iot] }
+  Laptop:
+    publicKey: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFA=
+    meshIp: 10.100.1.20
+",
+        );
+        assert_eq!(
+            of(&placed(&sites, "Home"), "Phone sync"),
+            ["accept out Phone sync: tcp/22000 from iot [192.168.3.0/24] to mesh [10.100.1.10/32]"]
+        );
+        let rules = placed(&sites, "Cabin");
+        assert!(of(&rules, "Phone sync").is_empty(), "{rules:?}");
     }
 
     #[test]
