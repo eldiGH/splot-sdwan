@@ -33,22 +33,32 @@ impl UciSection for Rule {
 
     /// The direction and the source zone are part of the id: one service can
     /// need an ingress and an egress rule on the same node (a global client with
-    /// IPs on two nodes), and a rule for each zone its sources arrive in.
+    /// IPs on two nodes), and a rule for each zone its sources arrive in. A
+    /// forward from another node's WAN goes by that node instead, one rule each.
     fn id(&self) -> impl IntoIterator<Item = &str> {
         let mut id = vec![direction(self.direction)];
         id.extend(host_id(&self.host, self.direction));
-        id.extend([self.service.as_ref(), "from", zone_name(&self.from)]);
+        id.push(self.service.as_ref());
+        match &self.via {
+            Some(via) => id.extend(["via", via.as_ref()]),
+            None => id.extend(["from", zone_name(&self.from)]),
+        }
         id
     }
 
     /// The label is in the config's notation, so what LuCI shows can be searched
-    /// for in `splot.yml`: `[SPLOT] out: Cabin.camera rtsp, from lan`. Without a
+    /// for in `splot.yml`: `[SPLOT] out: Cabin.camera rtsp, from lan`, and
+    /// `[SPLOT] in: Cabin.camera rtsp, via Home` for Home's forward. Without a
     /// `dest`, fw4 puts the rule in the source zone's input chain: to the node
     /// itself.
     fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
         let from = zone_name(&self.from);
+        let whence = match &self.via {
+            Some(via) => format!("via {via}"),
+            None => format!("from {from}"),
+        };
         let label = format!(
-            "{}: {} {}, from {from}",
+            "{}: {} {}, {whence}",
             direction(self.direction),
             self.host,
             self.service
@@ -95,6 +105,7 @@ mod tests {
             destinations: vec!["192.168.2.30/32".parse().unwrap()],
             port: "554".parse().unwrap(),
             proto: BTreeSet::from([crate::types::protocol::Protocol::Tcp]),
+            via: None,
         }
     }
 
@@ -130,6 +141,27 @@ mod tests {
         assert_eq!(
             option(&into, "name").unwrap(),
             "set firewall.spl_rule_in_camera_rtsp_from_spl_mesh.name='[SPLOT] in: Cabin.camera rtsp, from spl_mesh'"
+        );
+    }
+
+    #[test]
+    fn a_forward_from_another_nodes_wan_is_a_rule_of_its_own() {
+        // Beside what allowFrom grants from the mesh, and named after the node
+        // that forwards it, as `wan.via` names it.
+        let granted = camera_rule(Direction::Ingress, ZoneRef::Mesh, Destination::Zone(lan()));
+        let forwarded = Rule {
+            via: Some("Home".parse().unwrap()),
+            ..camera_rule(Direction::Ingress, ZoneRef::Mesh, Destination::Zone(lan()))
+        };
+        assert_eq!(
+            option(&forwarded, "name").unwrap(),
+            "set firewall.spl_rule_in_camera_rtsp_via_Home.name='[SPLOT] in: Cabin.camera rtsp, via Home'"
+        );
+        assert_ne!(commands(&granted)[0], commands(&forwarded)[0]);
+        assert!(
+            option(&forwarded, "src")
+                .unwrap()
+                .ends_with(".src='spl_mesh'")
         );
     }
 

@@ -184,6 +184,21 @@ nodes:
                 proto: tcp
                 allowFrom: admin
 
+          weather:
+            ip: 192.168.2.40
+            macs: aa:bb:cc:00:00:06
+            services:
+              # A weather station's page, published at Home's fixed address
+              # (Cabin's changes). Home forwards it over the mesh as itself,
+              # from its meshIp, so the replies come back through Home: the
+              # station sees Home, not who's asking. Restrict who may with
+              # `sources`, here on the WAN side.
+              http:
+                port: "8080:80"
+                proto: tcp
+                wan:
+                  via: [Home]
+
   # Behind its ISP's NAT with no port forward, so nobody can dial it: no
   # endpoint. It dials the others, and keeps its NAT mapping open with
   # keepalives so they can reach it too. A node without an endpoint can't

@@ -279,7 +279,8 @@ pub enum ValidationWarning {
     /// there for the operator to put into a zone, and its listen port to let in.
     FirewallLeftAlone {
         node: Identifier,
-        /// Services whose `allowFrom` splot would enforce on the node.
+        /// Services whose `allowFrom` splot would enforce on the node, and those
+        /// another node forwards to a host on it from its WAN.
         unenforced: Vec<String>,
         /// Services exposed through the node.
         unforwarded: Vec<String>,
@@ -293,7 +294,8 @@ pub enum ValidationWarning {
     WireGuardLeftAlone {
         node: Identifier,
         /// Services whose `allowFrom` the node would enforce for what crosses
-        /// the mesh, to a host on it or from its zones to a host elsewhere.
+        /// the mesh, to a host on it or from its zones to a host elsewhere, and
+        /// those another node forwards to a host on it from its WAN.
         unenforced: Vec<String>,
         /// Services exposed through the node to a host reached over the mesh.
         unforwarded: Vec<String>,

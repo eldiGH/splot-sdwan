@@ -1,6 +1,7 @@
 //! Rules: the flows this node lets through, to the services on it (ingress) and,
 //! from the networks behind it, to services elsewhere (egress). One rule per
-//! flow and zone its sources arrive in.
+//! flow and zone its sources arrive in, and one for each other node that
+//! forwards a service on it from its WAN.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -57,6 +58,10 @@ pub struct Rule {
     pub destinations: Vec<Ipv4Network>,
     pub port: PortOrRange,
     pub proto: BTreeSet<Protocol>,
+    /// The other node whose WAN forwards the service here, over the mesh from its
+    /// mesh IP; none for what `allowFrom` grants. A rule for each such node, so
+    /// it's part of what tells two rules apart too.
+    pub via: Option<Identifier>,
 }
 
 /// One service of one host, and who its `allowFrom` lets in.
@@ -75,12 +80,8 @@ impl Flow<'_> {
     fn ingress(&self, own: &Node, here: &[&HostAddress]) -> Vec<Rule> {
         let mut destinations: BTreeMap<Destination, Vec<Ipv4Network>> = BTreeMap::new();
         for address in here {
-            let to = match self.host {
-                HostRef::Node(_) => Destination::Node,
-                _ => Destination::Zone(ZoneRef::on(own.name(), address.place())),
-            };
             destinations
-                .entry(to)
+                .entry(self.destination(own, address))
                 .or_default()
                 .push(Ipv4Network::host(address.ip()));
         }
@@ -106,6 +107,41 @@ impl Flow<'_> {
             }
         }
         rules
+    }
+
+    /// Into `own`, to the host's addresses `here` that another node forwards the
+    /// service to from its WAN: that node sends it over the mesh as itself, from
+    /// its mesh IP, so the replies come back through it.
+    fn forwarded(&self, network: &Network, own: &Node, here: &[&HostAddress]) -> Vec<Rule> {
+        let Some(wan) = self.service.wan() else {
+            return Vec::new();
+        };
+        wan.targets()
+            .filter(|(via, target)| *via != own.name() && here.contains(target))
+            .filter_map(|(via, target)| {
+                let entry = network.node(via)?;
+                let rule = self.rule(
+                    Direction::Ingress,
+                    ZoneRef::Mesh,
+                    vec![Ipv4Network::host(entry.mesh_address().ip())],
+                    self.destination(own, target),
+                    vec![Ipv4Network::host(target.ip())],
+                );
+                Some(Rule {
+                    via: Some(via.clone()),
+                    ..rule
+                })
+            })
+            .collect()
+    }
+
+    /// Where the host's `address` on `own` is: the node itself for its own
+    /// services, else the zone the address is in.
+    fn destination(&self, own: &Node, address: &HostAddress) -> Destination {
+        match self.host {
+            HostRef::Node(_) => Destination::Node,
+            _ => Destination::Zone(ZoneRef::on(own.name(), address.place())),
+        }
     }
 
     /// Out of `own`, over the mesh, to the host's addresses `elsewhere`: from
@@ -156,6 +192,7 @@ impl Flow<'_> {
             destinations,
             port: self.service.port().internal(),
             proto: self.service.proto().clone(),
+            via: None,
         }
     }
 }
@@ -175,7 +212,8 @@ fn by_zone<'a>(
     zones
 }
 
-/// The rules on `own`: to the hosts on it first, then to hosts elsewhere. A
+/// The rules on `own`: to the hosts on it first (what `allowFrom` grants, then
+/// what other nodes forward from their WAN), then to hosts elsewhere. A
 /// global client's mesh IP is on no node, so it's elsewhere on every node: the
 /// client is a peer on each, which lets the sources behind it out there. `mesh`
 /// says whether `own` has a mesh zone: without one, what comes from or goes to
@@ -196,6 +234,7 @@ pub(super) fn rules(network: &Network, own: &Node, mesh: bool) -> Vec<Rule> {
                 service,
             };
             ingress.extend(flow.ingress(own, &here));
+            ingress.extend(flow.forwarded(network, own, &here));
             egress.extend(flow.egress(own, &elsewhere));
         }
     }
@@ -225,11 +264,13 @@ impl fmt::Display for Rule {
             Direction::Egress => "out",
         };
 
+        write!(f, "accept {direction} {} {}", self.host, self.service)?;
+        if let Some(via) = &self.via {
+            write!(f, " via {via}")?;
+        }
         write!(
             f,
-            "accept {direction} {} {}: {} from {} {} to {} {}",
-            self.host,
-            self.service,
+            ": {} from {} {} to {} {}",
             proto_port(&self.proto, &self.port),
             self.from,
             list(&self.sources),
@@ -261,11 +302,14 @@ mod tests {
         placed_with(yaml, own, true)
     }
 
-    /// Those of one service, `Home.nas https`.
+    /// Those of one service, `Home.nas https`, the forwards from other nodes'
+    /// WAN included.
     fn of(rules: &[String], service: &str) -> Vec<String> {
+        let granted = format!(" {service}:");
+        let forwarded = format!(" {service} via ");
         rules
             .iter()
-            .filter(|rule| rule.contains(&format!(" {service}:")))
+            .filter(|rule| rule.contains(&granted) || rule.contains(&forwarded))
             .cloned()
             .collect()
     }
@@ -534,6 +578,123 @@ clients:
         );
         let rules = placed(&sites, "Cabin");
         assert!(of(&rules, "Phone sync").is_empty(), "{rules:?}");
+    }
+
+    /// SITES, with Cabin's tv's cast forwarded from the WAN `via` these nodes.
+    fn cast_via(via: &str) -> String {
+        SITES.replace(
+            "allowFrom: [Home.pc, Home.doorbell] }",
+            &format!("allowFrom: [Home.pc, Home.doorbell], wan: {{ via: {via} }} }}"),
+        )
+    }
+
+    #[test]
+    fn a_forward_from_another_nodes_wan_is_let_in_from_its_mesh_ip() {
+        // Home sends what it forwards over the mesh as itself, so the replies
+        // come back through it: Cabin lets it in from Home's mesh IP, beside
+        // what allowFrom grants. Cabin's own forward stays on its lan.
+        let sites = cast_via("[Home, Cabin]");
+        assert_eq!(
+            of(&placed(&sites, "Cabin"), "Cabin.tv cast"),
+            [
+                "accept in Cabin.tv cast: tcp/8009 from mesh [10.100.49.11/32, 192.168.1.10/32] to lan [192.168.2.30/32]",
+                "accept in Cabin.tv cast via Home: tcp/8009 from mesh [10.100.0.1/32] to lan [192.168.2.30/32]",
+            ]
+        );
+        // Home lets out only what allowFrom grants: the forward is its WAN's.
+        assert_eq!(
+            of(&placed(&sites, "Home"), "Cabin.tv cast"),
+            of(&placed(SITES, "Home"), "Cabin.tv cast")
+        );
+    }
+
+    #[test]
+    fn a_forward_to_a_node_or_a_hub_client_elsewhere_is_let_in_there() {
+        // Cabin forwards Home's own ssh and its camera on the hub.
+        let sites = SITES
+            .replace(
+                "allowFrom: [Phone, Home.lan] }",
+                "allowFrom: [Phone, Home.lan], wan: { via: Cabin } }",
+            )
+            .replace(
+                "allowFrom: [Phone, Home.pc, Home.doorbell] }",
+                "allowFrom: [Phone, Home.pc, Home.doorbell], wan: { via: Cabin } }",
+            );
+        let rules = placed(&sites, "Home");
+        assert!(
+            of(&rules, "Home ssh").contains(
+                &"accept in Home ssh via Cabin: tcp/22 from mesh [10.100.0.2/32] to the node [10.100.0.1/32]"
+                    .to_owned()
+            ),
+            "{rules:?}"
+        );
+        assert!(
+            of(&rules, "Home.camera rtsp").contains(
+                &"accept in Home.camera rtsp via Cabin: tcp/554 from mesh [10.100.0.2/32] to mesh [10.100.49.10/32]"
+                    .to_owned()
+            ),
+            "{rules:?}"
+        );
+        let rules = placed(&sites, "Cabin");
+        assert!(
+            !rules.iter().any(|rule| rule.contains(" via ")),
+            "{rules:?}"
+        );
+    }
+
+    #[test]
+    fn a_forward_through_the_node_itself_needs_no_rule() {
+        // Home forwards to a device on its own lan, and to its own ssh: what
+        // comes from its WAN is fw4's to let in (as a port forward).
+        let sites = SITES
+            .replace(
+                "allowFrom: [Phone, Home.lan] }",
+                "allowFrom: [Phone, Home.lan], wan: { via: Home } }",
+            )
+            .replace(
+                "allowFrom: [Phone, Home.lan, Cabin.lan] }",
+                "allowFrom: [Phone, Home.lan, Cabin.lan], wan: { via: Home } }",
+            );
+        for node in ["Home", "Cabin"] {
+            let rules = placed(&sites, node);
+            assert!(
+                !rules.iter().any(|rule| rule.contains(" via ")),
+                "{rules:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_forward_to_a_global_clients_mesh_ip_needs_no_rule() {
+        // Phone is a peer on Home: nothing between them to let it in. Its mesh IP
+        // wins over its address on Home's lan.
+        let sites = phone_with(
+            "
+    ips:
+      Home: { lan: 192.168.1.50 }
+    services:
+      web: { port: 8080, proto: tcp, wan: { via: [Home, Cabin] } }
+",
+        );
+        for node in ["Home", "Cabin"] {
+            let rules = placed(&sites, node);
+            assert!(of(&rules, "Phone web").is_empty(), "{rules:?}");
+        }
+    }
+
+    #[test]
+    fn without_a_mesh_zone_a_forward_from_elsewhere_gets_no_rule() {
+        // It arrives over the mesh, in a zone of the operator's.
+        let rules = placed_with(&cast_via("Home"), "Cabin", false);
+        assert!(
+            !rules.iter().any(|rule| rule.contains(" via ")),
+            "{rules:?}"
+        );
+        assert!(
+            placed(&cast_via("Home"), "Cabin")
+                .iter()
+                .any(|rule| rule.contains(" via "))
+        );
     }
 
     #[test]

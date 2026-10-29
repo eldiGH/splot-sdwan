@@ -406,6 +406,26 @@ EOF
 		fail "a port forward from each WAN source, and from nowhere else" "$forwards$chain"
 	fi
 
+	# The example forwards Cabin's weather station from Home's WAN, over the
+	# mesh: Home sends it as itself, from its mesh IP, so that Cabin lets it in
+	# and the replies come back through Home. fw4 takes the nat section, and
+	# puts its SNAT in the mesh zone's srcnat chain, where it sees the address
+	# and port the redirect translated to.
+	output=$(run 'fw4 check 2>&1') || true
+	chain=$(run 'nft list chain inet fw4 srcnat_spl_mesh' 2>&1) || true
+	local dnat snat
+	dnat=$(run 'nft list chain inet fw4 dstnat_wan' 2>&1 | grep -F '[SPLOT] Cabin.weather http"') || true
+	snat=$(grep -F '[SPLOT] snat: Cabin.weather http"' <<<"$chain") || true
+	if ! grep -q spl_nat_ <<<"$output" &&
+		grep -qF 'tcp dport 8080 ' <<<"$dnat" && grep -qF 'dnat ip to 192.168.2.40:80 ' <<<"$dnat" &&
+		grep -qF 'ip daddr 192.168.2.40 tcp dport 80 ' <<<"$snat" &&
+		grep -qF 'snat ip to 10.100.0.1 ' <<<"$snat"; then
+		pass "a forward into the mesh is sent as the router's mesh IP"
+	else
+		fail "a forward into the mesh is sent as the router's mesh IP" \
+			"$output"$'\n'"dnat: $dnat"$'\n'"$chain"
+	fi
+
 	if output=$(run 'for conf in /var/etc/dnsmasq.conf.*; do dnsmasq --test -C "$conf" 2>&1 || exit 1; done'); then
 		pass "dnsmasq --test on the generated config"
 	else

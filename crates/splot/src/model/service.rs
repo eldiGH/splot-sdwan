@@ -52,6 +52,11 @@ impl Wan {
         self.targets.get(node)
     }
 
+    /// Each node it's exposed through, and what that node forwards it to.
+    pub fn targets(&self) -> impl Iterator<Item = (&Identifier, &HostAddress)> {
+        self.targets.iter()
+    }
+
     pub fn sources(&self) -> &BTreeSet<Ipv4Network> {
         &self.sources
     }

@@ -24,6 +24,13 @@ pub struct Redirect {
     pub dest_ip: Ipv4Addr,
     pub internal_port: PortOrRange,
     pub proto: BTreeSet<Protocol>,
+    /// The address the forward leaves as when it goes into the mesh to another
+    /// host: the node's mesh IP. WireGuard takes from a peer only that peer's own
+    /// addresses, and the host would answer the internet by its own route; from
+    /// the mesh IP, the host's node lets it in, and the replies come back through
+    /// this node. None to a host in one of the node's zones, or to the node
+    /// itself.
+    pub snat: Option<Ipv4Addr>,
 }
 
 /// A redirect for every service exposed through this node, to what it forwards
@@ -40,6 +47,9 @@ pub(super) fn redirects(network: &Network, own: &Node) -> Vec<Redirect> {
             let Some(target) = wan.target(own.name()) else {
                 continue;
             };
+            let dest_zone = ZoneRef::on(own.name(), target.place());
+            let itself = matches!(host.id(), HostRef::Node(node) if node == own.name());
+            let snat = (dest_zone == ZoneRef::Mesh && !itself).then(|| own.mesh_address().ip());
 
             redirects.push(Redirect {
                 host: host.id().clone(),
@@ -47,10 +57,11 @@ pub(super) fn redirects(network: &Network, own: &Node) -> Vec<Redirect> {
                 wan_zone: wan_zone.clone(),
                 external_port: service.port().external(),
                 sources: wan.sources().iter().copied().collect(),
-                dest_zone: ZoneRef::on(own.name(), target.place()),
+                dest_zone,
                 dest_ip: target.ip(),
                 internal_port: service.port().internal(),
                 proto: service.proto().clone(),
+                snat,
             });
         }
     }
@@ -71,7 +82,11 @@ impl fmt::Display for Redirect {
             self.dest_zone,
             self.dest_ip,
             self.internal_port
-        )
+        )?;
+        if let Some(snat) = self.snat {
+            write!(f, " as {snat}")?;
+        }
+        Ok(())
     }
 }
 
@@ -122,6 +137,9 @@ nodes:
         assert_eq!(redirect.dest_ip.to_string(), "10.100.49.10");
         assert_eq!(redirect.external_port.to_string(), "8080");
         assert_eq!(redirect.internal_port.to_string(), "80");
+        // The camera is a peer of Home's: it answers through its tunnel only
+        // what comes from the mesh.
+        assert_eq!(redirect.snat.unwrap().to_string(), "10.100.0.1");
     }
 
     // Home and Cabin both have a WAN. Home exposes its own ssh, Cabin its nas's
@@ -196,6 +214,35 @@ clients:
             targets(&redirects(EXPOSED, "Cabin")),
             ["Cabin.nas https -> lan 192.168.2.20"]
         );
+    }
+
+    /// Each redirect as `host service`, and the address it leaves as.
+    fn snats(redirects: &[Redirect]) -> Vec<String> {
+        redirects
+            .iter()
+            .map(|r| match r.snat {
+                Some(snat) => format!("{} {} as {snat}", r.host, r.service),
+                None => format!("{} {}", r.host, r.service),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_forward_into_the_mesh_to_another_host_leaves_as_the_nodes_mesh_ip() {
+        // Cabin's nas and Phone's mesh IP are reached over the mesh: the replies
+        // must come back through Home. Home's own ssh and Laptop on its lan are
+        // Home's to reach.
+        let exposed = EXPOSED.replace("wan: { via: Cabin }", "wan: { via: [Cabin, Home] }");
+        assert_eq!(
+            snats(&redirects(&exposed, "Home")),
+            [
+                "Cabin.nas https as 10.100.0.1",
+                "Home ssh",
+                "Laptop game",
+                "Phone web as 10.100.0.1",
+            ]
+        );
+        assert_eq!(snats(&redirects(&exposed, "Cabin")), ["Cabin.nas https"]);
     }
 
     #[test]

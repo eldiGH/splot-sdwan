@@ -96,7 +96,7 @@ platform:
   - **`dhcp: none`**: the addresses the config gives devices and global clients are yours to make true, with a reservation in your DHCP server or a static address on the device. Firewall rules use them either way.
   - **`wireguard: none`** (the node is in the mesh, its WireGuard set up by hand): splot keeps no key there, so `splot init` has nothing to create, and before it writes anything it checks the node by your WireGuard instead: one of the peer's interfaces must have the node's `publicKey` (and be up). With the firewall managed by splot, there's no mesh zone, so mesh traffic arrives in whichever zone your interface is in, and nothing is forwarded from the WAN to a host reached over the mesh. Its listen port is yours to let in from the WAN, as it is with your interface: splot opens only its own. The rules `allowFrom` grants between the node's zones are still written, and so is splot's drop between them; what crosses the mesh is under your rules, and the node's warning names those services. Keep your interface in a zone `splot.yml` doesn't declare: in one it declares, splot's drop between its zones covers what arrives over the mesh too, and nothing from the mesh is let through. Such a node can't have a [hub](#hub) (an error): hub clients are peers on splot's mesh interface. A WireGuard server of your own, with its own subnet, is a [zone](#zone) to splot.
   - `firewall: none` and `dhcp: none` together: splot manages the mesh alone.
-- **`splot check` warns**, once per node and concern, where a concern left alone leaves part of the config undone, naming what (the services whose `allowFrom` isn't enforced there, those not forwarded from its WAN) and what's yours to do. A concern left alone with nothing asked of it gets no warning.
+- **`splot check` warns**, once per node and concern, where a concern left alone leaves part of the config undone, naming what (the services whose `allowFrom` isn't enforced there or that another node forwards to it from its WAN, those not forwarded from its own WAN) and what's yours to do. A concern left alone with nothing asked of it gets no warning.
 - **`ssh`** is where splot reaches the node over ssh: `root@192.168.1.1`, a host of your `~/.ssh/config`, `ssh://root@router:2222`, given to the system `ssh` as it is (so your ssh config and agent apply). It can't start with `-` (ssh would read it as an option) or hold spaces or control characters. `splot apply` without `--node` reaches every node splot manages here, so each needs one (a node where every concern is `none` is left out). A command on one node (`--node`) reaches it at `--ssh <destination>` when given, else here; with neither, or with `--local`, splot acts on the machine it runs on, and refuses if that isn't the node. An address over the mesh (its `meshIp`) works once the node is in the mesh, but not for a node that isn't yet, or whose tunnel is down.
 - **On Linux, WireGuard only so far:** splot runs the mesh with wg-quick through systemd (see [Linux](#linux)), and `splot apply` refuses a Linux node whose `firewall` or `dhcp` names a program until splot manages it there: set it to `none` to apply the rest. `splot check` validates the node either way.
 
@@ -331,7 +331,7 @@ A port forward needs a single DNAT destination IP. Splot picks the target per WA
 | **Hub client service** (`hub.clients.*.services`) | The client's `ip` | Any node with `wanZone` |
 | **Global client service** (`config.clients.*.services`) | See priority rule below | Restricted — see below |
 
-For the first three host types, the host has exactly one canonical address. The mesh routing reaches that address from every router, so any node with `wanZone` can expose them via cross-node DNAT. No restrictions.
+For the first three host types, the host has exactly one canonical address. The mesh routing reaches that address from every router, so any node with `wanZone` can expose them via cross-node DNAT (see [Cross-node WAN exposure](#cross-node-wan-exposure)). No restrictions.
 
 **Global client priority rule, per WAN-providing router R (bare `via` entry):**
 
@@ -370,22 +370,34 @@ For global client services, a `via` entry may use the qualified form `{Node}.{Ne
 
 ### Cross-node WAN exposure
 
-A service on a global client can be forwarded by any router that can reach the client. For example, a service on `Phone` (with a mesh IP) can be exposed via `HomeRouter`'s WAN:
+A router can forward a service it reaches over the mesh: a device or a router at another site, a hub client, a global client's mesh IP. For example, a device behind `Cabin`, published at `HomeRouter`'s fixed address:
 
 ```yaml
-clients:
-  Phone:
-    meshIp: 10.0.0.100
-    publicKey: ...
-    services:
-      webApp:
-        port: 8080
-        proto: tcp
-        wan:
-          via: [HomeRouter] # HomeRouter forwards 8080 → Phone's mesh IP:8080
+nodes:
+  Cabin:
+    zones:
+      lan:
+        address: 192.168.2.1/24
+        devices:
+          weather:
+            ip: 192.168.2.40
+            services:
+              http:
+                port: "8080:80"
+                proto: tcp
+                wan:
+                  via: [HomeRouter] # HomeRouter forwards 8080 → 192.168.2.40:80, over the mesh
 ```
 
-`Phone`'s config doesn't reference `HomeRouter`. If `WorkRouter` should also expose Phone's service, just add it to `via`. The two forwards are independent.
+The host's config doesn't reference `HomeRouter`. If `WorkRouter` should also expose it, just add it to `via`. The two forwards are independent.
+
+**The forward crosses the mesh as the router.** `HomeRouter` sends it from its own `meshIp`, and `Cabin` lets that address in to the service (a rule of its own, `[SPLOT] in: Cabin.weather http, via HomeRouter`). It has to: WireGuard at `Cabin` takes from `HomeRouter` only `HomeRouter`'s own addresses, so the internet's address would be dropped there, and the station would answer the internet by its own route anyway. From the router's `meshIp`, the replies come back through `HomeRouter`. A global client's mesh IP, or a hub client of the router itself, is reached straight from the router: nothing in between to let in.
+
+**What the host sees is the router, not who's asking.** Its logs show `HomeRouter`'s `meshIp`, and `allowFrom` on the service can't tell internet clients apart (it doesn't need to name `HomeRouter` either: the forward is let in on its own). Say who may come on the WAN side, with `sources`.
+
+On OpenWrt the router can't tell what it forwarded from what else goes to the same place, so when the forward is public (no `sources`), what its own networks send that service over the mesh goes as the router too: the host sees the router for them as well. They still reach it only where `allowFrom` lets them out of the router.
+
+Where the host's router leaves its firewall alone (`firewall: none`), let the forward in from the forwarding router's `meshIp` yourself; where the forwarding router does, forward it yourself, from its `meshIp`. `splot check` warns about the first.
 
 ### Security note
 

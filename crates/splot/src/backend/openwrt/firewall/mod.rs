@@ -5,7 +5,7 @@ mod redirect;
 mod rules;
 mod zones;
 
-use std::sync::LazyLock;
+use std::{iter, sync::LazyLock};
 
 use log::{Level, debug, info, log_enabled};
 use splot_core::protocol::openwrt::{Crossing, Dest};
@@ -53,7 +53,8 @@ fn target(verdict: Verdict) -> &'static str {
 
 /// The plan's firewall section as the `firewall` file's sections: the mesh zone,
 /// the peers' ping and the listen port (if any), then the rules, splot's deny
-/// after them, then the redirects, one for each WAN source of a forward.
+/// after them, then the redirects, one for each WAN source of a forward, each
+/// followed by its source NAT when it goes into the mesh to another host.
 pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
     info!("Generating firewall config");
     info!(
@@ -87,7 +88,10 @@ pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
         .redirects
         .iter()
         .flat_map(redirect::per_source)
-        .map(|redirect| redirect.to_section());
+        .flat_map(|redirect| {
+            let snat = redirect.snat().map(|snat| snat.to_section());
+            iter::once(redirect.to_section()).chain(snat)
+        });
 
     zone.into_iter()
         .chain(ping)

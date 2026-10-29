@@ -55,8 +55,9 @@ pub(super) fn check_unmanaged(
         if platform.firewall().is_none() {
             // What the node's firewall would let in: its ingress rules, from the
             // sources whose traffic crosses it (not one on the same link as the
-            // host). And every service at a global client's mesh IP: each node is
-            // the only gate between what's behind it and the client.
+            // host), and from the other nodes that forward a service on it. And
+            // every service at a global client's mesh IP: each node is the only
+            // gate between what's behind it and the client.
             let unenforced: Vec<String> = hosts
                 .iter()
                 .flat_map(|host| {
@@ -66,6 +67,7 @@ pub(super) fn check_unmanaged(
                     services_of(host)
                         .filter(move |(_, service)| {
                             (roaming && !service.sources().is_empty())
+                                || forwarded_from_elsewhere(service, node, &addresses)
                                 || service.sources().on(node).any(|source| {
                                     addresses
                                         .iter()
@@ -95,18 +97,22 @@ pub(super) fn check_unmanaged(
 
         if platform.wireguard().is_none() && platform.firewall().is_some() {
             // What crosses the mesh gets no rule: to a host on the node from a
-            // source outside its zones, or from its zones to a host elsewhere.
-            // What its zones send a global client's mesh IP goes into the
-            // operator's interface zone, past splot's deny too.
+            // source outside its zones or from another node that forwards it, or
+            // from its zones to a host elsewhere. What its zones send a global
+            // client's mesh IP goes into the operator's interface zone, past
+            // splot's deny too.
             let unenforced = hosts
                 .iter()
                 .flat_map(|host| {
-                    let here = host.addresses_on(|on| on == Some(node)).next().is_some();
+                    let addresses: Vec<&HostAddress> =
+                        host.addresses_on(|on| on == Some(node)).collect();
+                    let here = !addresses.is_empty();
                     let elsewhere = host.addresses_on(|on| on != Some(node)).next().is_some();
                     let roaming = host.addresses_on(|on| on.is_none()).next().is_some();
                     services_of(host)
                         .filter(move |(_, service)| {
                             (roaming && !service.sources().is_empty())
+                                || forwarded_from_elsewhere(service, node, &addresses)
                                 || service.sources().on(node).any(|source| {
                                     let behind = source.place().zone_on(node).is_some();
                                     (here && !behind) || (elsewhere && behind)
@@ -131,6 +137,19 @@ pub(super) fn check_unmanaged(
             });
         }
     }
+}
+
+/// Whether another node forwards `service` from its WAN to one of `addresses`,
+/// the host's on `node`: it arrives over the mesh, from that node's mesh IP.
+fn forwarded_from_elsewhere(
+    service: &Service,
+    node: &Identifier,
+    addresses: &[&HostAddress],
+) -> bool {
+    service.wan().is_some_and(|wan| {
+        wan.targets()
+            .any(|(via, target)| via != node && addresses.contains(&target))
+    })
 }
 
 #[cfg(test)]
@@ -262,6 +281,67 @@ clients:
                     if *unenforced == strings(&["Home.ssh", "Home.printer.ipp", "Phone.http"])
             )
         ));
+    }
+
+    /// The printer, let in from its own lan only (nothing for a firewall), and
+    /// forwarded from the WAN of these nodes.
+    fn with_printer_forwarded_via(yaml: &str, via: &str) -> String {
+        yaml.replace(
+            "allowFrom: Phone, wan: { via: Home }",
+            &format!("allowFrom: Home.lan, wan: {{ via: {via} }}"),
+        )
+    }
+
+    #[test]
+    fn a_firewall_left_alone_lets_in_what_another_node_forwards_as_your_rules_do() {
+        // Cabin's forward arrives over the mesh from Cabin's mesh IP; Home's own
+        // is fw4's port forward, which stays the operator's either way.
+        for (via, unenforced) in [
+            ("[Home, Cabin]", &["Home.ssh", "Home.printer.ipp"][..]),
+            ("Home", &["Home.ssh"][..]),
+        ] {
+            let r = report(&with_printer_forwarded_via(
+                &mesh_without_hub("      firewall: none"),
+                via,
+            ));
+            assert!(r.errors.is_empty(), "{:?}", r.errors);
+            assert!(
+                warning_at(&r, "nodes.Home.platform.firewall", |w| matches!(
+                    w,
+                    ValidationWarning::FirewallLeftAlone { unenforced: listed, .. }
+                        if *listed == strings(unenforced)
+                )),
+                "{via}: {:?}",
+                messages(&r.warnings)
+            );
+        }
+    }
+
+    #[test]
+    fn wireguard_left_alone_lets_in_what_another_node_forwards_as_your_rules_do() {
+        // Cabin's forward crosses the mesh into your interface's zone.
+        for (via, unenforced) in [
+            (
+                "[Home, Cabin]",
+                &["Cabin.ssh", "Home.ssh", "Home.printer.ipp"][..],
+            ),
+            ("Home", &["Cabin.ssh", "Home.ssh"][..]),
+        ] {
+            let r = report(&with_printer_forwarded_via(
+                &mesh_without_hub("      wireguard: none"),
+                via,
+            ));
+            assert!(r.errors.is_empty(), "{:?}", r.errors);
+            assert!(
+                warning_at(&r, "nodes.Home.platform.wireguard", |w| matches!(
+                    w,
+                    ValidationWarning::WireGuardLeftAlone { unenforced: listed, .. }
+                        if *listed == strings(unenforced)
+                )),
+                "{via}: {:?}",
+                messages(&r.warnings)
+            );
+        }
     }
 
     #[test]
