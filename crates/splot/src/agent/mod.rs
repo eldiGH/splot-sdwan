@@ -20,7 +20,8 @@ pub enum Agent {
     /// In splot: it acts on the machine splot runs on.
     Local(splot_agent::Agent),
     /// On the node at `destination`, reached over ssh: it gets `agent`, or the
-    /// one splot carries for its CPU. The session opens at the first request.
+    /// one splot carries for its CPU. The session opens at the first request,
+    /// or at `connect`.
     Remote {
         destination: SshDestination,
         agent: Option<PathBuf>,
@@ -49,21 +50,29 @@ impl Agent {
         }
     }
 
+    /// Opens the session, if there's none: the next request goes over it.
+    pub fn connect(&mut self) -> anyhow::Result<()> {
+        if let Self::Remote {
+            destination,
+            agent,
+            session: session @ None,
+        } = self
+        {
+            *session = Some(Session::open(destination.as_str(), agent.as_deref())?);
+        }
+
+        Ok(())
+    }
+
     /// The agent's answer to `request`; its failure as an error.
     pub fn ask(&mut self, request: Request) -> anyhow::Result<Reply> {
+        self.connect()?;
         let reply = match self {
             Self::Local(agent) => agent.handle(request),
-            Self::Remote {
-                destination,
-                agent,
-                session,
-            } => {
-                let session = match session {
-                    Some(session) => session,
-                    None => session.insert(Session::open(destination.as_str(), agent.as_deref())?),
-                };
-                session.ask(&request)?
-            }
+            Self::Remote { session, .. } => session
+                .as_mut()
+                .expect("connect opened the session")
+                .ask(&request)?,
         };
 
         match reply {

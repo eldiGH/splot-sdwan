@@ -1,15 +1,15 @@
 //! A run, all or nothing: across the mesh (`splot apply`), every node splot
 //! manages, each reached at its platform.ssh; on one node (`--node`), the same
 //! run on a mesh of one. splot plans every node and asks before it applies
-//! anything. Then it prepares every node (each keeps what it has and starts its
-//! own rollback timer), and once all are prepared, gives each the go, all at
-//! once. It reaches every node again and has each check its peers: when all
-//! still answer, every node is confirmed; anything else, every node puts back
-//! what it had.
+//! anything. Then it prepares every node, one at a time (each keeps what it has
+//! and starts its own rollback timer), and once all are prepared, gives each
+//! the go, all at once. It reaches every node again and has each check its
+//! peers, one at a time: when all still answer, every node is confirmed;
+//! anything else, every node puts back what it had.
 
 use std::{
     io::{self, IsTerminal, Write},
-    thread,
+    mem, thread,
     time::{Duration, Instant},
 };
 
@@ -137,10 +137,11 @@ fn run(mut mesh: Mesh, dry_run: bool, confirm_within: u32, yes: bool) -> anyhow:
     let deadline = Instant::now() + Duration::from_secs(confirm_within.into());
     let mut stages = vec![Stage::Untouched; mesh.members.len()];
 
-    // Prepare every node: each keeps what it has, and puts it back by itself
-    // unless confirmed in time. Nothing is applied until all are.
-    let prepared = mesh.each(|_, member, agent| {
-        match agent.ask(Request::Prepare {
+    // Prepare every node, one at a time, since each pings its peers then (see
+    // the check): each keeps what it has, and puts it back by itself unless
+    // confirmed in time. Nothing is applied until all are.
+    let prepared = mesh.in_turn(
+        |_, member, agent| match agent.ask(Request::Prepare {
             rendered: member.rendered.clone(),
             run: Run {
                 id: id.clone(),
@@ -150,8 +151,9 @@ fn run(mut mesh: Mesh, dry_run: bool, confirm_within: u32, yes: bool) -> anyhow:
         })? {
             Reply::Prepared(changes) => Ok(changes),
             reply => Err(agent::unexpected(reply)),
-        }
-    });
+        },
+        |_| false,
+    );
     let mut problems = Vec::new();
     for (index, result) in prepared.into_iter().enumerate() {
         match result {
@@ -209,13 +211,24 @@ fn run(mut mesh: Mesh, dry_run: bool, confirm_within: u32, yes: bool) -> anyhow:
         mesh.names(|index| !planned[index].is_empty())
     );
 
-    // Each node reached again, over a session of its own, and its peers checked.
+    // Each node reached again, over a session of its own, all at once; then
+    // its peers checked, one node at a time. Two ends that ping each other at
+    // once, neither with a session (a changed preshared key drops it), both
+    // start a handshake, and WireGuard, which keeps one per peer, drops both
+    // answers and tries again only seconds later. One at a time, a node finds
+    // the session the nodes before it opened. The first node that isn't
+    // healthy ends the checks: no node keeps the change then.
     mesh.reconnect();
-    let checked = mesh.each(
-        |_, _, agent| match agent.ask(Request::Check { run: id.clone() })? {
-            Reply::Checked { still, lost } => Ok((still, lost)),
-            reply => Err(agent::unexpected(reply)),
+    let mut connected = mesh.each(|_, _, agent| agent.connect());
+    let checked = mesh.in_turn(
+        |index, _, agent| {
+            mem::replace(&mut connected[index], Ok(()))?;
+            match agent.ask(Request::Check { run: id.clone() })? {
+                Reply::Checked { still, lost } => Ok((still, lost)),
+                reply => Err(agent::unexpected(reply)),
+            }
         },
+        |checked| !matches!(checked, Ok((_, lost)) if lost.is_empty()),
     );
     let mut cut = Vec::new();
     let mut unchecked = Vec::new();
@@ -236,6 +249,12 @@ fn run(mut mesh: Mesh, dry_run: bool, confirm_within: u32, yes: bool) -> anyhow:
                 unchecked.push(name.to_string());
             }
         }
+    }
+    if checked.len() < mesh.members.len() {
+        println!(
+            "Didn't check {}: no node keeps the change anyway",
+            mesh.names(|index| index >= checked.len())
+        );
     }
     if !cut.is_empty() || !unchecked.is_empty() {
         mesh.put_back(&id, &stages, &planned, deadline);
@@ -349,6 +368,26 @@ impl Mesh {
                 })
                 .collect()
         })
+    }
+
+    /// `f` on one node at a time, in the nodes' order, until `stop` says so of
+    /// a result: the results so far, in that order.
+    fn in_turn<T>(
+        &mut self,
+        mut f: impl FnMut(usize, &Member, &mut Agent) -> T,
+        stop: impl Fn(&T) -> bool,
+    ) -> Vec<T> {
+        let mut results = Vec::new();
+        for (index, (member, agent)) in self.members.iter().zip(&mut self.agents).enumerate() {
+            let result = f(index, member, agent);
+            let stopped = stop(&result);
+            results.push(result);
+            if stopped {
+                break;
+            }
+        }
+
+        results
     }
 
     /// Every node's result, or an error naming each node that failed and why.
@@ -829,6 +868,28 @@ nodes:
             Mesh::new(members(network).unwrap()),
             Mesh::new(vec![(home, alone)]),
         )
+    }
+
+    #[test]
+    fn in_turn_asks_one_node_after_another_until_a_result_stops_it() {
+        let (mut several, _) = runs(&mesh(HOME_SSH, CABIN));
+
+        let mut asked = Vec::new();
+        let results = several.in_turn(
+            |index, member, _| {
+                asked.push(member.name.to_string());
+                index
+            },
+            |_| false,
+        );
+        assert_eq!(results, [0, 1]);
+        assert_eq!(asked, ["Cabin", "Home"]);
+
+        // The node whose result stops it is the last one asked.
+        let results = several.in_turn(|index, _, _| index, |&index| index == 0);
+        assert_eq!(results, [0]);
+        let results = several.in_turn(|index, _, _| index, |&index| index == 1);
+        assert_eq!(results, [0, 1]);
     }
 
     #[test]

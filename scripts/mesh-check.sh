@@ -307,16 +307,18 @@ else
 		"exit $status: $output"$'\n'"again: $again"
 fi
 
-# Each router dials the other where nothing answers: both lose the other, so
-# both put back what they had, and the tunnel works again.
+# Each router dials the other where nothing answers: Cabin, checked first,
+# loses Home, so the checks end there, both put back what they had, and the
+# tunnel works again.
 cp "$work/splot.yml" "$work/splot.yml.good"
 sed -i 's/endpoint: home.example.net/endpoint: 192.0.2.1/; s/endpoint: cabin.example.net/endpoint: 192.0.2.2/' "$work/splot.yml"
 before="$(held home)$(held cabin)"
 output=$(splot apply --yes 2>&1) && status=0 || status=$?
 cp "$work/splot.yml.good" "$work/splot.yml"
-if [ "$status" -ne 0 ] && grep -q '^Checked Home: lost Cabin$' <<<"$output" &&
+if [ "$status" -ne 0 ] && grep -q '^Checked Cabin: lost Home$' <<<"$output" &&
+	grep -q "^Didn't check Home: no node keeps the change anyway$" <<<"$output" &&
 	grep -q '^  Home   put back$' <<<"$output" && grep -q '^  Cabin  put back$' <<<"$output" &&
-	grep -q 'the change cut Cabin off from Home, and Home off from Cabin, so no node kept it' <<<"$output" &&
+	grep -q 'the change cut Cabin off from Home, so no node kept it' <<<"$output" &&
 	[ "$(held home)$(held cabin)" = "$before" ] &&
 	grep -q "rolled back" <<<"$(last home)" && grep -q "rolled back" <<<"$(last cabin)" &&
 	run home 'ping -c 3 -W 2 10.100.0.2 >/dev/null'; then
@@ -416,14 +418,18 @@ else
 		"exit $status: $output"$'\n'"$(run barn 'wg show spl_mesh' 2>&1)"
 fi
 
-# Home and Cabin dial each other where nothing answers: they lose each other,
-# so every node puts back what it had, the Linux node too.
+# Home and Cabin dial each other where nothing answers: Cabin loses Home, so
+# every node puts back what it had, the Linux node too. Barn, checked first,
+# dials them where nothing answers too, but still reaches both: each got
+# Barn's answer to its probe before the run, so WireGuard sends Barn a
+# keepalive 10 s later, from where it really is, and Barn's follows it there.
 cp "$work/splot.yml" "$work/splot.yml.good"
 sed -i 's/endpoint: home.example.net/endpoint: 192.0.2.1/; s/endpoint: cabin.example.net/endpoint: 192.0.2.2/' "$work/splot.yml"
 before="$(held home)$(held cabin)$(held barn)"
 output=$(splot apply --yes 2>&1) && status=0 || status=$?
 cp "$work/splot.yml.good" "$work/splot.yml"
-if [ "$status" -ne 0 ] && grep -q '^Checked Home: lost Cabin' <<<"$output" &&
+if [ "$status" -ne 0 ] && grep -q '^Checked Cabin: lost Home$' <<<"$output" &&
+	grep -q "^Didn't check Home: no node keeps the change anyway$" <<<"$output" &&
 	grep -q '^  Barn   put back$' <<<"$output" && grep -q '^  Cabin  put back$' <<<"$output" &&
 	grep -q '^  Home   put back$' <<<"$output" &&
 	[ "$(held home)$(held cabin)$(held barn)" = "$before" ] &&
