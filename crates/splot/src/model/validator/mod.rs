@@ -185,7 +185,7 @@ nodes:
 
     #[test]
     fn hub_config_is_clean_and_its_names_resolve() {
-        // `Home.hub`, a hub client by name, the hub's tag and a hub client's tag
+        // `Home.$hub`, a hub client by name, the hub's tag and a hub client's tag
         // are all valid references.
         let r = report(&format!(
             "{HUB_HOME}
@@ -213,7 +213,7 @@ clients:
       ssh:
         port: 22
         proto: tcp
-        allowFrom: [Home.hub, Home.camera, cameras, outdoor]
+        allowFrom: [Home.$hub, Home.camera, cameras, outdoor]
 "
         ));
         assert!(

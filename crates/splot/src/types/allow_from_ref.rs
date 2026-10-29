@@ -26,6 +26,8 @@ pub enum AllowFromRef {
     SelfNode,
     /// `{Node}.$node`: that node itself, named from anywhere.
     NodeItself(Identifier),
+    /// `{Node}.$hub`: that node's hub network.
+    Hub(Identifier),
 }
 
 impl FromStr for AllowFromRef {
@@ -36,12 +38,20 @@ impl FromStr for AllowFromRef {
             return Ok(Self::SelfNode);
         }
 
-        if let Some((node, consts::CURRENT_NODE_IDENTIFIER)) = s.split_once('.') {
-            return node.parse().map(Self::NodeItself).map_err(|error| {
+        // A keyword of splot's, qualified by a node.
+        let of_node = |node: &str, reference: fn(Identifier) -> Self| {
+            node.parse().map(reference).map_err(|error| {
                 ParseAllowFromRefError::InvalidNested(ParseNestedIdentifierError::InvalidNode(
                     error,
                 ))
-            });
+            })
+        };
+        match s.split_once('.') {
+            Some((node, consts::CURRENT_NODE_IDENTIFIER)) => {
+                return of_node(node, Self::NodeItself);
+            }
+            Some((node, consts::HUB_IDENTIFIER)) => return of_node(node, Self::Hub),
+            _ => {}
         }
 
         if s.contains('.') {
@@ -71,6 +81,7 @@ impl fmt::Display for AllowFromRef {
             Self::Nested(nested) => nested.fmt(f),
             Self::SelfNode => write!(f, "$node"),
             Self::NodeItself(node) => write!(f, "{node}.$node"),
+            Self::Hub(node) => write!(f, "{node}.$hub"),
         }
     }
 }
@@ -104,6 +115,44 @@ mod tests {
     }
 
     #[test]
+    fn a_hub() {
+        let r = parse("Home.$hub").unwrap();
+        assert_eq!(r, AllowFromRef::Hub("Home".parse().unwrap()));
+        assert_eq!(r.to_string(), "Home.$hub");
+        // A plain local name, not the hub: a zone, device or hub client may
+        // be called `hub`.
+        assert_eq!(
+            parse("Home.hub").unwrap(),
+            AllowFromRef::nested("Home".parse().unwrap(), "hub".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn a_hub_is_named_by_its_node() {
+        assert!(matches!(
+            parse("$hub"),
+            Err(ParseAllowFromRefError::InvalidIdentifier(_))
+        ));
+        for s in [".$hub", "$node.$hub", "-bad.$hub"] {
+            assert!(
+                matches!(
+                    parse(s),
+                    Err(ParseAllowFromRefError::InvalidNested(
+                        ParseNestedIdentifierError::InvalidNode(_)
+                    ))
+                ),
+                "{s}"
+            );
+        }
+        assert!(matches!(
+            parse("Home.$hub.lan"),
+            Err(ParseAllowFromRefError::InvalidNested(
+                ParseNestedIdentifierError::TooManyDots
+            ))
+        ));
+    }
+
+    #[test]
     fn a_node_itself_needs_a_node_name() {
         for s in [".$node", "$node.$node", "-bad.$node"] {
             assert!(
@@ -116,10 +165,10 @@ mod tests {
                 "{s}"
             );
         }
-        // `$node` is the only keyword a node name qualifies, and only as the
-        // last segment.
+        // `$node` and `$hub` are the only keywords a node name qualifies, and
+        // only as the last segment.
         assert!(matches!(
-            parse("Home.$hub"),
+            parse("Home.$lan"),
             Err(ParseAllowFromRefError::InvalidNested(
                 ParseNestedIdentifierError::InvalidLocal(_)
             ))
@@ -180,7 +229,7 @@ mod tests {
 
     #[test]
     fn display_roundtrip() {
-        for s in ["$node", "Home.$node", "Home", "Home.lan"] {
+        for s in ["$node", "Home.$node", "Home.$hub", "Home", "Home.lan"] {
             assert_eq!(parse(s).unwrap().to_string(), s);
         }
     }

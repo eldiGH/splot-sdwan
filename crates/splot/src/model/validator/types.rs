@@ -1,15 +1,12 @@
 use std::{fmt, net::Ipv4Addr};
 
-use crate::{
-    consts,
-    types::{
-        allow_from_ref::AllowFromRef,
-        config_location::ConfigLocation,
-        identifier::Identifier,
-        ip::{Ipv4Network, ReservedAddress},
-        platform::{Concern, Os},
-        port::PortOrRange,
-    },
+use crate::types::{
+    allow_from_ref::AllowFromRef,
+    config_location::ConfigLocation,
+    identifier::Identifier,
+    ip::{Ipv4Network, ReservedAddress},
+    platform::{Concern, Os},
+    port::PortOrRange,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -66,14 +63,6 @@ pub enum ValidationError {
     InvalidPrefix {
         name: Identifier,
         prefix: String,
-        at: ConfigLocation,
-    },
-    #[error(
-        "{at}: name '{name}' is reserved on every node: splot gives it a meaning of its own (e.g. '{{Node}}.{}' is the node's hub network)",
-        consts::HUB_NAME
-    )]
-    ReservedName {
-        name: Identifier,
         at: ConfigLocation,
     },
 
@@ -253,7 +242,6 @@ impl ValidationError {
             Self::Fw4ZoneName { at, .. } => at,
             Self::GlobalNameCollision { at, .. } => at,
             Self::InvalidPrefix { at, .. } => at,
-            Self::ReservedName { at, .. } => at,
             Self::InvalidWanVia { at, .. } => at,
             Self::IpCollision { at, .. } => at,
             Self::IpOutsideSubnet { at, .. } => at,
@@ -514,10 +502,6 @@ mod tests {
             ValidationError::InvalidPrefix {
                 name: id("Home_x"),
                 prefix: "Home_".to_owned(),
-                at: at(),
-            },
-            ValidationError::ReservedName {
-                name: id("hub"),
                 at: at(),
             },
             ValidationError::TagWithNameCollision {

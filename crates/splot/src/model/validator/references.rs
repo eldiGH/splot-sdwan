@@ -5,7 +5,6 @@ use std::{
 
 use crate::{
     config::{self, Client, Config, Node},
-    consts,
     model::{
         host::Place,
         service::{Source, Sources},
@@ -113,7 +112,9 @@ impl Resolution {
         };
 
         self.add(node_refs.iter().cloned(), &network);
-        self.add(local_refs(&consts::hub(), &hub.tags), &network);
+        let hub_refs = iter::once(AllowFromRef::Hub(node_name.clone()))
+            .chain(hub.tags.iter().cloned().map(AllowFromRef::Bare));
+        self.add(hub_refs, &network);
 
         for (client_name, client) in &hub.clients {
             let host = Source {
@@ -399,8 +400,23 @@ clients:
     #[test]
     fn hub_and_its_tag_yield_the_hub_network() {
         let network = BTreeSet::from([source("10.100.49.0/24", hub("Home"))]);
-        assert_eq!(sources(&nested("Home", "hub")), network);
+        assert_eq!(sources(&AllowFromRef::Hub(id("Home"))), network);
         assert_eq!(sources(&bare("cameras")), network);
+        // `hub` is no name of splot's.
+        assert_eq!(sources(&nested("Home", "hub")), BTreeSet::new());
+    }
+
+    #[test]
+    fn a_zone_called_hub_is_not_the_hub() {
+        let resolution = Resolution::of(&config(&FIXTURE.replace("guest:", "hub:")));
+        assert_eq!(
+            resolution.sources[&nested("Home", "hub")],
+            BTreeSet::from([source("192.168.2.0/24", zone("Home", "hub"))])
+        );
+        assert_eq!(
+            resolution.sources[&AllowFromRef::Hub(id("Home"))],
+            BTreeSet::from([source("10.100.49.0/24", hub("Home"))])
+        );
     }
 
     #[test]
@@ -586,13 +602,13 @@ clients:
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     meshIp: 10.100.1.10
     services:
-      ssh: {{ port: 22, proto: tcp, allowFrom: Home.hub }}
+      ssh: {{ port: 22, proto: tcp, allowFrom: Home.$hub }}
 "
         ));
         assert!(error_at(
             &r,
             "clients.Phone.services.ssh.allowFrom",
-            |e| matches!(e, ValidationError::UnknownRef { reference, .. } if reference.to_string() == "Home.hub")
+            |e| matches!(e, ValidationError::UnknownRef { reference, .. } if reference.to_string() == "Home.$hub")
         ));
     }
 }

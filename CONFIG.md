@@ -185,7 +185,7 @@ How a hub is wired:
 - Every other node routes the **whole hub network** through the hub node — it's part of the hub node's peer `AllowedIPs` everywhere, even while the hub has no clients. Adding a client later changes only the hub node.
 - **One address, one path.** WireGuard sends a packet to the peer whose `AllowedIPs` match it most specifically, without checking whether that peer is up. So no two peers may claim the same address: the hub network belongs to the hub node alone, which is why no `meshIp` may lie inside it and hubs may not overlap.
 - Everything on a hub arrives over the mesh interface, so it's in splot's mesh zone. Firewall rules tell hub clients apart by source IP: WireGuard drops any packet whose source isn't in the sending peer's `AllowedIPs`, so the source IP identifies the client.
-- `{NodeName}.hub` refers to the hub network (see [Tags](#tags)); `hub` is a reserved name on every node.
+- `{NodeName}.$hub` refers to the hub network (see [Tags](#tags)).
 
 ---
 
@@ -447,7 +447,8 @@ Tags can be assigned explicitly via the `tags` field on any named object (node, 
 A reference is one of:
 
 - **Bare name** — resolves in the global namespace: an explicit tag, a node name, or a global client name
-- **Qualified `{NodeName}.{LocalName}`** — resolves in that node's per-node namespace: a zone, zone device, or hub client — or the hub itself, as `{NodeName}.hub`
+- **Qualified `{NodeName}.{LocalName}`** — resolves in that node's per-node namespace: a zone, zone device, or hub client
+- **`{NodeName}.$hub`** — that node's hub network
 - **`{NodeName}.$node`** — that node itself, as a host, named from anywhere (see [A node itself](#a-node-itself-nodenode))
 - **`$node`** — the node the rule is on (context-dependent — resolves to a different node per node being generated)
 
@@ -462,7 +463,7 @@ Resolution always produces a set of IP addresses or subnets — never zone names
 | Global client name (e.g. `Phone`)                 | All of the client's known IPs                                            |
 | `{Node}.{Zone}` (e.g. `HomeRouter.lan`)           | That zone's subnet                                                       |
 | `{Node}.{ZoneDevice}` (e.g. `HomeRouter.Printer`) | The device's IP                                                          |
-| `{Node}.hub` (e.g. `HomeRouter.hub`)              | The node's hub network                                                   |
+| `{Node}.$hub` (e.g. `HomeRouter.$hub`)            | The node's hub network                                                   |
 | `{Node}.{HubClient}` (e.g. `HomeRouter.lte-cam`)  | The hub client's IP                                                      |
 | `{Node}.$node` (e.g. `HomeRouter.$node`)          | The node itself: its `meshIp` and its own address on each of its `zones` |
 | `$node`                                           | The same, for the node the rule is on                                    |
@@ -482,7 +483,7 @@ allowFrom: admin                          # everything tagged admin (cross-node)
 allowFrom: HomeRouter                     # all of the node's zone subnets + its hub network
 allowFrom: HomeRouter.lan                 # only the node's lan zone subnet
 allowFrom: HomeRouter.Printer             # specific device's IP
-allowFrom: HomeRouter.hub                 # the node's hub network
+allowFrom: HomeRouter.$hub                # the node's hub network
 allowFrom: HomeRouter.lte-cam             # a hub client's IP
 allowFrom: Phone                          # global client's IPs
 allowFrom: [admin, HomeRouter.iot]        # admin-tagged things + the node's iot zone subnet
@@ -525,7 +526,7 @@ A name in any node's per-node namespace must not collide with any name in the gl
 Every named object has an implicit tag equal to its name. Where that tag lives:
 
 - **Globally-scoped implicit tags** (referenced by bare name): nodes, global clients
-- **Per-node-scoped implicit tags** (referenced as `{NodeName}.{LocalName}`): zones, zone devices, hub clients — and the hub itself, as `{NodeName}.hub`
+- **Per-node-scoped implicit tags** (referenced as `{NodeName}.{LocalName}`): zones, zone devices, hub clients. The hub itself is `{NodeName}.$hub`.
 
 The qualified `{NodeName}.{LocalName}` syntax is intentionally only **two levels deep** — the per-node namespace is flat. There is no `{NodeName}.{Zone}.{Device}` form; a device is referenced as `{NodeName}.{Device}` directly. This works because per-node names across all three categories are unique.
 
@@ -553,9 +554,9 @@ Cabin lets it in from the mesh. Home itself gets no rule for it: what a node sen
 
 Names must contain only alphanumeric characters, `-`, and `_`. Spaces, dots, and other special characters are forbidden — names are used as part of generated UCI section identifiers, and `.` is reserved as the qualified-reference separator.
 
-### Reserved names
+### Names of splot's own
 
-`hub` can't name a zone, zone device, or hub client on any node: `{NodeName}.hub` always refers to the node's hub network. It's reserved on nodes without a hub too, so adding a hub later can't break a config.
+What splot itself names inside a node starts with `$`: `{NodeName}.$hub` (the hub network) and `{NodeName}.$node` (the node itself). A name can't hold a `$`, so they never clash with a zone, device, or hub client, and take no name from them: a zone may be called `hub`, and `HomeRouter.hub` is then that zone.
 
 ### Reserved prefixes for per-node-scoped names
 

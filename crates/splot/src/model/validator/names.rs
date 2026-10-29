@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 use crate::{
     config::Config,
-    consts,
     model::validator::types::{ValidationError, ValidationReport},
     types::{
         allow_from_ref::AllowFromRef,
@@ -22,14 +21,6 @@ fn add_name(
     report: &mut ValidationReport,
     locate: impl FnOnce() -> ConfigLocation,
 ) {
-    if node_name.is_some() && consts::RESERVED_LOCAL_NAMES.contains(&name.as_ref()) {
-        report.errors.push(ValidationError::ReservedName {
-            name: name.clone(),
-            at: locate(),
-        });
-        return;
-    }
-
     if let Some(node_prefixes) = node_prefixes {
         for node_prefix in node_prefixes {
             if name.as_ref().starts_with(node_prefix) {
@@ -153,8 +144,7 @@ pub(super) fn validate_names(
 
         let Some(hub) = &node.hub else { continue };
 
-        // The hub itself, by its reserved name.
-        refs.insert(AllowFromRef::nested(node_name.clone(), consts::hub()));
+        refs.insert(AllowFromRef::Hub(node_name.clone()));
 
         for client_name in hub.clients.keys() {
             add_name(
@@ -180,10 +170,7 @@ pub(super) fn validate_names(
 #[cfg(test)]
 mod tests {
     use crate::{
-        model::validator::{
-            HUB_HOME,
-            types::{ValidationError, ValidationReport},
-        },
+        model::validator::{HUB_HOME, types::ValidationError},
         test_support::{error_at, has_error, report},
     };
 
@@ -463,44 +450,35 @@ clients:
         ));
     }
 
-    fn reserved_name_at(r: &ValidationReport, path: &str) -> bool {
-        error_at(
-            r,
-            path,
-            |e| matches!(e, ValidationError::ReservedName { name, .. } if name == "hub"),
-        )
-    }
-
     #[test]
-    fn hub_is_a_reserved_local_name() {
-        // Reserved on every node, with or without a hub: `{Node}.hub` refers to
-        // the node's hub network.
-        let r = report(&format!(
-            "{HUB_HOME}
+    fn hub_is_an_ordinary_local_name() {
+        // `{Node}.$hub` is the node's hub network, so a zone, a device or a hub
+        // client may be called `hub`, on a node with a hub or without.
+        let zone = "
     zones:
       hub:
         address: 192.168.1.1/24
+";
+        let device = "
+    zones:
       lan:
         address: 192.168.2.1/24
         devices:
           hub:
             ip: 192.168.2.10
             macs: AA:BB:CC:DD:EE:01
-"
-        ));
-        assert!(reserved_name_at(&r, "nodes.Home.zones.hub"));
-        assert!(reserved_name_at(&r, "nodes.Home.zones.lan.devices.hub"));
-
-        let r = report(&format!(
-            "{HUB_HOME}
+";
+        let hub_client = "
     hub:
       network: 10.100.49.0/24
       clients:
         hub:
           publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
           ip: 10.100.49.10
-"
-        ));
-        assert!(reserved_name_at(&r, "nodes.Home.hub.clients.hub"));
+";
+        for named_hub in [zone, device, hub_client] {
+            let r = report(&format!("{HUB_HOME}{named_hub}"));
+            assert!(r.errors.is_empty(), "{named_hub}: {:?}", r.errors);
+        }
     }
 }

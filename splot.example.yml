@@ -114,7 +114,7 @@ nodes:
 
     # Devices that reach the mesh through Home alone (e.g. behind an LTE
     # modem's NAT): peers on Home's mesh interface only. Every other node routes
-    # the whole hub network through Home; `Home.hub` refers to it.
+    # the whole hub network through Home; `Home.$hub` refers to it.
     hub:
       network: 10.100.10.0/24
       clients:

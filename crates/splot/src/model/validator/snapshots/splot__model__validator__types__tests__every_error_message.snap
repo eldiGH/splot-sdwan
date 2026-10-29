@@ -10,7 +10,6 @@ nodes.Home.meshIp: name 'Home' is already used as another global name (node, cli
 nodes.Home.meshIp: local name Cabin conflicts with global Cabin - rename one to avoid ambiguity
 nodes.Home.meshIp: name 'lan' is already used in the same node
 nodes.Home.meshIp: name 'Home_x' uses reserved prefix 'Home_'
-nodes.Home.meshIp: name 'hub' is reserved on every node: splot gives it a meaning of its own (e.g. '{Node}.hub' is the node's hub network)
 nodes.Home.meshIp: tag 'Home' collides with a name used elsewhere in the global namespace
 nodes.Home.meshIp: unknown identifier 'Home.nas'
 nodes.Home.meshIp: IP 10.0.0.1 is outside subnet 10.0.0.0/24

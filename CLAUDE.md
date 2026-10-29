@@ -129,7 +129,7 @@ These three share one global namespace. Names must be unique across the entire c
 - Device names
 - Hub client names
 
-All three share one flat per-node namespace — within a single node, names across all three kinds must be unique. They can recur freely across nodes (`Home` and `Cabin` can both have a `printer` and a `lan`). `hub` is reserved in every node's namespace: `{NodeName}.hub` refers to the node's hub network.
+All three share one flat per-node namespace — within a single node, names across all three kinds must be unique. They can recur freely across nodes (`Home` and `Cabin` can both have a `printer` and a `lan`). What splot itself names inside a node carries a `$`, which no name can hold, so it takes no name from the operator: `{NodeName}.$hub` (the node's hub network) and `{NodeName}.$node` (the node itself). `$` marks a word of splot's rather than a name the operator chose: the hub is written in the config (`hub:`), but splot names it, as it names the node itself.
 
 A bare name in `allowFrom` resolves only against the global namespace. To reference anything inside a node, qualify it with the node name.
 
@@ -138,7 +138,8 @@ A bare name in `allowFrom` resolves only against the global namespace. To refere
 A reference in `allowFrom` is one of:
 
 - **Bare name** — globally-scoped: explicit tag, node, or global client
-- **Qualified `{NodeName}.{LocalName}`** — anything inside a node (zone, device, hub client, or the hub itself as `{NodeName}.hub`)
+- **Qualified `{NodeName}.{LocalName}`** — anything inside a node (zone, device, or hub client)
+- **`{NodeName}.$hub`** — that node's hub network
 - **`{NodeName}.$node`** — that node itself, named from anywhere
 - **`$node`** — the node the rule is on; context-dependent (resolves differently per router being configured)
 
@@ -151,7 +152,7 @@ Resolution always produces a set of IPs or subnets — never zone names. Zone na
 | Global client name (e.g. `Pixel8`)       | All of the client's known IPs                                            |
 | `{Node}.{Zone}` (e.g. `Home.lan`)        | That zone's subnet                                                       |
 | `{Node}.{Device}` (e.g. `Home.printer`)  | The device's IP                                                          |
-| `{Node}.hub` (e.g. `Home.hub`)           | The node's hub network                                                   |
+| `{Node}.$hub` (e.g. `Home.$hub`)         | The node's hub network                                                   |
 | `{Node}.{HubClient}`                     | The hub client's IP                                                      |
 | `{Node}.$node` (e.g. `Home.$node`)       | The node itself: its `meshIp` and its own address on each of its `zones` |
 | `$node`                                  | The same, for the node the rule is on                                    |
@@ -273,7 +274,7 @@ A hub is a network inside `meshNetwork` that a node sets aside for devices reach
 - **One address, one path:** WireGuard sends to the peer with the longest matching prefix and doesn't check whether that peer is up. Every other node routes the whole hub network to the hub node (it's in that node's peer `AllowedIPs`, even while the hub is empty), so hub networks don't overlap and no `meshIp` lies inside one. A hub network lies inside `meshNetwork`: the mesh is one address space.
 - **Hub client vs global client:** a hub client is a peer on its hub node only; a global client with `meshIp` is a peer on every node.
 - **Firewall:** everything on a hub arrives over the mesh interface, so it's in splot's mesh zone; rules tell hub clients apart by source IP.
-- **References:** hub clients join the node's namespace (`Home.camera`); `Home.hub` and the hub's `tags` refer to the whole hub network, the way a zone's name and tags do; a bare node name includes it.
+- **References:** hub clients join the node's namespace (`Home.camera`); `Home.$hub` and the hub's `tags` refer to the whole hub network, the way a zone's name and tags do; a bare node name includes it.
 
 ### Endpoint
 
