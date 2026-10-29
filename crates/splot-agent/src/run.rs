@@ -116,21 +116,22 @@ pub enum Error {
     #[error("putting back what this peer had failed")]
     Restore(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error(transparent)]
-    NoPing(#[from] probe::NoPing),
+    Probe(#[from] probe::Error),
 }
 
-fn now() -> u64 {
+/// Seconds since the epoch.
+pub(crate) fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
 }
 
-/// Begins `run`, prepared: notes which of its probes answer, keeps `backup`
-/// (none when the run changes nothing), and starts the process that puts it
-/// back unless the run is confirmed in time. Only one run at a time: its
-/// directory is the lock.
-pub fn begin(run: &Run, backup: Option<Backup>) -> Result<(), Error> {
-    let answered = probe::answering(&run.probes)?;
+/// Begins `run`, prepared: notes which of its probes, peers on the WireGuard
+/// interface `interface`, answer, keeps `backup` (none when the run changes
+/// nothing), and starts the process that puts it back unless the run is
+/// confirmed in time. Only one run at a time: its directory is the lock.
+pub fn begin(run: &Run, interface: &str, backup: Option<Backup>) -> Result<(), Error> {
+    let answered = probe::answering(&run.probes, interface)?;
 
     begin_in(
         Path::new(DIR),
@@ -423,6 +424,9 @@ mod tests {
     fn answered() -> Vec<Probe> {
         vec![Probe {
             peer: "Cabin".to_owned(),
+            public_key: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="
+                .parse()
+                .unwrap(),
             address: "10.100.0.2".parse().unwrap(),
         }]
     }

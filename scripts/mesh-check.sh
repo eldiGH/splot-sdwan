@@ -4,8 +4,9 @@
 # over ssh. It checks that an apply is confirmed only while the other router
 # still answers through the tunnel, and rolled back when the change cuts it off;
 # then runs across the mesh, both routers at once: all or nothing; then a Linux
-# node, Barn (Debian with wg-quick), joins, and runs across the three; last, a
-# router itself (`Home.$node`) is let in to a service on the other.
+# node, Barn (Debian with wg-quick), joins, and runs across the three; then a
+# router itself (`Home.$node`) is let in to a service on the other; last, a run
+# on a node that holds a session the other end dropped still checks that peer.
 #
 #   scripts/mesh-check.sh [VERSION]     default: the newest version in use
 #
@@ -468,6 +469,37 @@ if [ -n "$dropped_before" ] && [ "$status" -eq 0 ] && grep -q '^Confirmed' <<<"$
 else
 	fail "a node itself over the mesh: Home let in to Cabin's ssh as Home.\$node, Barn still dropped" \
 		"dropped before: ${dropped_before:-no}; exit $status: $output"$'\n'"$(run cabin 'fw4 print | grep -i ssh' 2>&1)"$'\n'"home: $(probe_cabin home 2>&1)"$'\n'"barn: $(probe_cabin barn 2>&1)"
+fi
+
+# Node $1's latest handshake with the peer whose key is $2: seconds since the
+# epoch, 0 for never.
+handshake() {
+	run "$1" "wg show spl_mesh latest-handshakes | awk -v key='$2' '\$1 == key { print \$2 }'"
+}
+# A session the other end dropped: Home's mesh interface restarts, as at a
+# reboot, and Cabin keeps the session it had with Home, fresh from a ping. What
+# Cabin sends into it goes unanswered until WireGuard starts a new handshake,
+# 15 s on; Cabin's probe waits for that, so a run on Cabin alone (the service
+# taken away again) still checks Home. Both sessions are looked at first: the
+# step proves nothing without them.
+run cabin 'ping -c 1 -W 2 10.100.0.1 >/dev/null' || true
+run home 'old=$(cat /sys/class/net/spl_mesh/ifindex); ifup spl_mesh
+	for i in $(seq 20); do
+		sleep 1
+		[ "$(cat /sys/class/net/spl_mesh/ifindex 2>/dev/null)" != "$old" ] &&
+			ifstatus spl_mesh | grep -q "\"up\": true" && break
+	done' || true
+held_since=$(handshake cabin "$home_key") || true
+held_for=$(($(run cabin 'date +%s') - ${held_since:-0}))
+dropped=$(handshake home "$cabin_key") || true
+cp "$work/splot.yml.good" "$work/splot.yml"
+output=$(splot apply --node Cabin --yes 2>&1) && status=0 || status=$?
+if [ "$held_for" -lt 120 ] && [ "$dropped" = 0 ] && [ "$status" -eq 0 ] &&
+	grep -q '^Checked Cabin: Barn, Home answer as before$' <<<"$output" && grep -q '^Confirmed' <<<"$output"; then
+	pass "a session the other end dropped: Cabin's probe waits for WireGuard, and its run checks Home"
+else
+	fail "a session the other end dropped: Cabin's probe waits for WireGuard, and its run checks Home" \
+		"Cabin's session with Home ${held_for}s old, Home's last handshake with Cabin: ${dropped:-none}; exit $status: $output"
 fi
 
 if [ "${SPLOT_CHECK_KEEP:-}" = 1 ]; then

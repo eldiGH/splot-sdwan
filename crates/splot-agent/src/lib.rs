@@ -354,7 +354,7 @@ mod tests {
         is_error::<crate::openwrt::Error>();
         is_error::<crate::linux::Error>();
         is_error::<run::Error>();
-        is_error::<probe::NoPing>();
+        is_error::<probe::Error>();
         is_error::<NotPreparedHere>();
     }
 

@@ -45,12 +45,13 @@ CONFIRMED="Confirmed: splot reached Barn again, and it keeps the change."
 # The plan of a node with nothing to change: the dry run and apply both end
 # there.
 NOTHING="== Barn: nothing to change"$'\n'"Nothing to change."
+# Barn's node peers don't answer here: apply checks none, and says so.
+UNCHECKED="Checked Barn: not Cabin, Home, Lake, which didn't answer before the run"
 # Whether apply's output $1 is the plan for Barn changing $2 (the plan's
-# summary), applied and confirmed. Barn's node peers don't answer here, so
-# there's none to check.
+# summary), applied and confirmed.
 applied() {
 	[ "$(head -1 <<<"$1")" = "== Barn: $2" ] &&
-		[ "$(tail -3 <<<"$1")" = "Prepared: Barn"$'\n'"Applied: Barn"$'\n'"$CONFIRMED" ]
+		[ "$(tail -4 <<<"$1")" = "Prepared: Barn"$'\n'"Applied: Barn"$'\n'"$UNCHECKED"$'\n'"$CONFIRMED" ]
 }
 
 if [ ! -d /sys/module/wireguard ]; then

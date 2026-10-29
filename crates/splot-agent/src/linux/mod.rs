@@ -64,7 +64,7 @@ pub fn prepare(rendered: &Rendered, run: &Run) -> Result<Prepared, Error> {
     match confirmed(rendered)? {
         Some((config, text)) => apply::prepare(config, &text, run),
         None => {
-            crate::run::begin(run, None)?;
+            crate::run::begin(run, INTERFACE, None)?;
             Ok(Prepared::nothing())
         }
     }

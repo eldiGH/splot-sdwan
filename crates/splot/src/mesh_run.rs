@@ -236,8 +236,9 @@ fn run(mut mesh: Mesh, dry_run: bool, confirm_within: u32, yes: bool) -> anyhow:
         let name = &member.name;
         match result {
             Ok((still, lost)) => {
-                if !still.is_empty() {
-                    println!("Checked {name}: {} as before", answer(still));
+                let unanswered = unanswered(&member.probes, still, lost);
+                if let Some(line) = as_before(name, still, &unanswered) {
+                    println!("{line}");
                 }
                 if !lost.is_empty() {
                     println!("Checked {name}: lost {}", lost.join(", "));
@@ -680,6 +681,35 @@ fn unhealthy(cut: &[String], unchecked: &[String]) -> String {
     why.join("; ")
 }
 
+/// Of a node's `probes`, the peers its check left out: those that didn't
+/// answer before the run, so neither answer `still` nor were `lost`.
+fn unanswered(probes: &[Probe], still: &[String], lost: &[String]) -> Vec<String> {
+    probes
+        .iter()
+        .map(|probe| &probe.peer)
+        .filter(|peer| !still.contains(peer) && !lost.contains(peer))
+        .cloned()
+        .collect()
+}
+
+/// What `node`'s check found as it was before the run: the peers that `still`
+/// answer, and those it didn't check, since they didn't answer then
+/// (`unanswered`). None when there are neither.
+fn as_before(node: &Identifier, still: &[String], unanswered: &[String]) -> Option<String> {
+    let mut found = Vec::new();
+    if !still.is_empty() {
+        found.push(format!("{} as before", answer(still)));
+    }
+    if !unanswered.is_empty() {
+        found.push(format!(
+            "not {}, which didn't answer before the run",
+            unanswered.join(", ")
+        ));
+    }
+
+    (!found.is_empty()).then(|| format!("Checked {node}: {}", found.join("; ")))
+}
+
 /// `peers` and the verb that goes with them: "Cabin answers", "Cabin, Lake
 /// answer".
 fn answer(peers: &[String]) -> String {
@@ -1010,6 +1040,52 @@ nodes:
             unhealthy(&cut[..1], &unchecked),
             "the change cut Cabin off from Home; splot couldn't check Lake"
         );
+    }
+
+    #[test]
+    fn the_peers_a_check_left_out_are_those_neither_still_answering_nor_lost() {
+        let probes: Vec<Probe> = ["Cabin", "Lake", "Barn"]
+            .into_iter()
+            .zip(1..)
+            .map(|(peer, last)| Probe {
+                peer: peer.to_owned(),
+                public_key: format!("{}A=", char::from(b'A' + last).to_string().repeat(42))
+                    .parse()
+                    .unwrap(),
+                address: format!("10.100.0.{last}").parse().unwrap(),
+            })
+            .collect();
+        let named =
+            |peers: &[&str]| -> Vec<String> { peers.iter().map(|&peer| peer.to_owned()).collect() };
+
+        assert_eq!(
+            unanswered(&probes, &named(&["Cabin"]), &named(&["Barn"])),
+            ["Lake"]
+        );
+        assert!(unanswered(&probes, &named(&["Cabin", "Lake"]), &named(&["Barn"])).is_empty());
+        assert_eq!(unanswered(&probes, &[], &[]), ["Cabin", "Lake", "Barn"]);
+    }
+
+    #[test]
+    fn a_check_says_which_peers_answer_as_before_and_which_it_left_out() {
+        let (cabin, lake) = (vec!["Cabin".to_owned()], vec!["Lake".to_owned()]);
+        let home = name("Home");
+
+        assert_eq!(
+            as_before(&home, &cabin, &lake).as_deref(),
+            Some(
+                "Checked Home: Cabin answers as before; not Lake, which didn't answer before the run"
+            )
+        );
+        assert_eq!(
+            as_before(&home, &cabin, &[]).as_deref(),
+            Some("Checked Home: Cabin answers as before")
+        );
+        assert_eq!(
+            as_before(&home, &[], &[lake[0].clone(), "Barn".to_owned()]).as_deref(),
+            Some("Checked Home: not Lake, Barn, which didn't answer before the run")
+        );
+        assert_eq!(as_before(&home, &[], &[]), None);
     }
 
     #[test]

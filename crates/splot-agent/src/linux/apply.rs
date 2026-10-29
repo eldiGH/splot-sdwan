@@ -396,7 +396,7 @@ impl Prepared {
 pub(super) fn prepare(config: &WgQuickConfig, text: &str, run: &Run) -> Result<Prepared, Error> {
     let (file_changed, steps, live) = changes(config, text)?;
     if !file_changed && steps.is_empty() {
-        run::begin(run, None)?;
+        run::begin(run, INTERFACE, None)?;
         return Ok(Prepared::nothing());
     }
 
@@ -413,7 +413,7 @@ pub(super) fn prepare(config: &WgQuickConfig, text: &str, run: &Run) -> Result<P
         active: live.active,
         enabled: live.enabled,
     };
-    run::begin(run, Some(backup))?;
+    run::begin(run, INTERFACE, Some(backup))?;
 
     Ok(Prepared {
         text: file_changed.then(|| text.to_owned()),

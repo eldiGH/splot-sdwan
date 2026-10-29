@@ -65,6 +65,27 @@ pub fn remove_peer(interface: &str, public_key: &str) -> Result<(), Error> {
     run(&["set", interface, "peer", public_key, "remove"], None).map(drop)
 }
 
+/// When each peer of `interface` last completed a handshake with it, in
+/// seconds since the epoch: 0 for never.
+pub fn latest_handshakes(interface: &str) -> Result<Vec<(WgPublicKey, u64)>, Error> {
+    Ok(handshakes(&run(
+        &["show", interface, "latest-handshakes"],
+        None,
+    )?))
+}
+
+/// The peers and times in `wg show <interface> latest-handshakes`'s output: a
+/// peer's public key and the time per line.
+fn handshakes(output: &str) -> Vec<(WgPublicKey, u64)> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let (key, time) = line.split_once('\t')?;
+            Some((key.parse().ok()?, time.parse().ok()?))
+        })
+        .collect()
+}
+
 /// The public keys of this peer's WireGuard interfaces, whoever set them up.
 /// Reads no private key.
 pub fn interface_public_keys() -> Result<Vec<WgPublicKey>, Error> {
@@ -100,5 +121,28 @@ mod tests {
             ]
         );
         assert!(public_keys("").is_empty());
+    }
+
+    #[test]
+    fn each_peer_gives_its_latest_handshake() {
+        let output = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\t1729500000\n\
+                      BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=\t0\n";
+        let read = handshakes(output);
+        let read: Vec<(&str, u64)> = read
+            .iter()
+            .map(|(key, time)| (key.as_str(), *time))
+            .collect();
+
+        assert_eq!(
+            read,
+            [
+                (
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                    1_729_500_000
+                ),
+                ("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=", 0)
+            ]
+        );
+        assert!(handshakes("").is_empty());
     }
 }

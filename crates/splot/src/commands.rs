@@ -200,6 +200,7 @@ pub(crate) fn probes(plan: &NodePlan) -> Vec<Probe> {
         .filter(|peer| matches!(peer.host, HostRef::Node(_)))
         .map(|peer| Probe {
             peer: peer.host.to_string(),
+            public_key: peer.public_key.clone(),
             address: peer.address,
         })
         .collect()
@@ -604,9 +605,22 @@ clients:
 
         let probes: Vec<String> = probes
             .iter()
-            .map(|probe| format!("{} {}", probe.peer, probe.address))
+            .map(|probe| {
+                format!(
+                    "{} {} {}",
+                    probe.peer,
+                    probe.public_key.as_str(),
+                    probe.address
+                )
+            })
             .collect();
-        assert_eq!(probes, ["Cabin 10.100.0.2", "Lake 10.100.0.3"]);
+        assert_eq!(
+            probes,
+            [
+                "Cabin CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA= 10.100.0.2",
+                "Lake DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA= 10.100.0.3"
+            ]
+        );
     }
 
     #[test]

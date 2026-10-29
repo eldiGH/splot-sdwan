@@ -17,7 +17,7 @@ use crate::{
 
 /// The protocol's version: splot and an agent talk only when theirs are the
 /// same. A change to a request or a reply bumps it.
-pub const PROTOCOL: u32 = 7;
+pub const PROTOCOL: u32 = 8;
 
 /// What splot asks of the agent.
 #[derive(Debug, Serialize, Deserialize)]
@@ -77,10 +77,12 @@ pub struct Run {
     pub probes: Vec<Probe>,
 }
 
-/// A peer the node pings to see its tunnel works: its name, and its mesh IP.
+/// A peer the node pings to see its tunnel works: its name, its public key
+/// (which finds its session), and its mesh IP.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probe {
     pub peer: String,
+    pub public_key: WgPublicKey,
     pub address: Ipv4Addr,
 }
 
@@ -292,6 +294,9 @@ mod tests {
                     confirm_within: 120,
                     probes: vec![Probe {
                         peer: "Cabin".to_owned(),
+                        public_key: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="
+                            .parse()
+                            .unwrap(),
                         address: Ipv4Addr::new(10, 100, 0, 2),
                     }],
                 },

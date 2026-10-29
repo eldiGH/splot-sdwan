@@ -165,7 +165,7 @@ pub(super) fn prepare(rendered: &Rendered, run: &Run) -> Result<Prepared, Error>
             .collect::<Result<_, Error>>()?;
         Some(Backup::OpenWrt { files })
     };
-    run::begin(run, backup)?;
+    run::begin(run, &naming::mesh_interface().to_string(), backup)?;
 
     Ok(Prepared {
         changes: described(&changeset, peer_update, &rendered.secrets),
