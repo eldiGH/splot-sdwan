@@ -59,6 +59,8 @@ impl Display for NodeLoc {
 pub enum PlatformLoc {
     Root,
     Concern(Concern),
+    Interfaces,
+    Interface(Identifier),
 }
 
 impl Display for PlatformLoc {
@@ -66,6 +68,8 @@ impl Display for PlatformLoc {
         match self {
             Self::Root => write!(f, ""),
             Self::Concern(concern) => write!(f, ".{concern}"),
+            Self::Interfaces => write!(f, ".interfaces"),
+            Self::Interface(zone) => write!(f, ".interfaces.{zone}"),
         }
     }
 }
@@ -273,6 +277,19 @@ mod tests {
             )
             .to_string(),
             "nodes.Home.platform.wireguard"
+        );
+        assert_eq!(
+            ConfigLocation::Node(id("Home"), NodeLoc::Platform(PlatformLoc::Interfaces))
+                .to_string(),
+            "nodes.Home.platform.interfaces"
+        );
+        assert_eq!(
+            ConfigLocation::Node(
+                id("Home"),
+                NodeLoc::Platform(PlatformLoc::Interface(id("lan")))
+            )
+            .to_string(),
+            "nodes.Home.platform.interfaces.lan"
         );
     }
 

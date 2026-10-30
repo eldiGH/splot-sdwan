@@ -47,4 +47,8 @@ Os: "windows" → "windows" isn't an OS splot knows: openwrt, linux
 SshDestination: "" → empty
 SshDestination: "-oProxyCommand=sh" → starts with '-', which ssh would read as an option
 SshDestination: "root@router -p 2222" → contains ' ': no spaces or control characters
+InterfaceName: "" → empty
+InterfaceName: "abcdefghijklmnop" → 16 characters long: Linux names an interface in at most 15
+InterfaceName: ".." → isn't a name Linux gives an interface
+InterfaceName: "eth*" → contains '*': letters, digits, '.', '-' and '_' only
 WanViaTargets: [Home, Home.lan] → node 'Home' appears more than once — each node should appear at most once in wan.via

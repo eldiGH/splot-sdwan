@@ -77,6 +77,10 @@ platform:
   firewall: nftables
   dhcp: dnsmasq
   dns: none
+  interfaces:      # nftables: which interfaces each zone, and the WAN, are on
+    lan: eth0
+    iot: [eth0.20, wlan0]
+    wan: eth1
 ```
 
 | Field       | Values                                             | Required                              | Description                                                                 |
@@ -87,6 +91,7 @@ platform:
 | `dhcp`      | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | Static leases for devices and global clients.                               |
 | `dns`       | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | Nothing yet: splot generates no DNS config so far.                          |
 | `ssh`       | anything `ssh` takes                               | no                                    | Where splot reaches the node. See below.                                    |
+| `interfaces` | map of zone → interface name or list              | with `firewall: nftables`             | The interfaces each zone, and the `wanZone`, are on (Linux only). See below. |
 
 - **Every node says what it runs.** There's no default OS, and splot doesn't detect it: `splot check` validates every node without reaching any, and the config keeps its meaning when a node is reinstalled. On the node itself, splot does check it's what the config says, and refuses otherwise.
 - **On OpenWrt** a concern left out is managed with what OpenWrt ships. **On Linux** there's no usual setup to assume: every concern is written out, `none` included, and one left out is an error.
@@ -98,6 +103,7 @@ platform:
   - `firewall: none` and `dhcp: none` together: splot manages the mesh alone.
 - **`splot check` warns**, once per node and concern, where a concern left alone leaves part of the config undone, naming what (the services whose `allowFrom` isn't enforced there or that another node forwards to it from its WAN, those not forwarded from its own WAN) and what's yours to do. A concern left alone with nothing asked of it gets no warning.
 - **`ssh`** is where splot reaches the node over ssh: `root@192.168.1.1`, a host of your `~/.ssh/config`, `ssh://root@router:2222`, given to the system `ssh` as it is (so your ssh config and agent apply). It can't start with `-` (ssh would read it as an option) or hold spaces or control characters. `splot apply` without `--node` reaches every node splot manages here, so each needs one (a node where every concern is `none` is left out). A command on one node (`--node`) reaches it at `--ssh <destination>` when given, else here; with neither, or with `--local`, splot acts on the machine it runs on, and refuses if that isn't the node. An address over the mesh (its `meshIp`) works once the node is in the mesh, but not for a node that isn't yet, or whose tunnel is down.
+- **`interfaces`** says which network interfaces each of the node's zones, and its `wanZone`, are on: nftables tells them apart by their interfaces, as fw4 does by its zones. With `firewall: nftables` every zone and the `wanZone` (when the node has one) needs one, an interface name or a list (`eth0`, `[eth0.20, wlan0]`): what Linux takes (at most 15 characters), in letters, digits, `.`, `-` and `_`. Each key is one of the node's zones or its `wanZone`. Two zones can't share an interface, since splot couldn't tell them apart (each is a network of its own), but the WAN may come in on a zone's: a host that isn't its site's gateway, reached through a port forward on the router in front of it. No zone is on `spl_mesh`, splot's mesh interface. On OpenWrt it's an error: there a zone's key is the name of its fw4 zone, which says which interfaces it covers.
 - **On Linux, WireGuard only so far:** splot runs the mesh with wg-quick through systemd (see [Linux](#linux)), and `splot apply` refuses a Linux node whose `firewall` or `dhcp` names a program until splot manages it there: set it to `none` to apply the rest. `splot check` validates the node either way.
 
 ### Linux

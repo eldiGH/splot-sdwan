@@ -6,6 +6,11 @@ nodes.Home.meshIp: firewall left out - a linux node names the program behind eve
 nodes.Home.meshIp: splot can't manage wireguard with wg-quick on openwrt - there it's netifd, or none
 nodes.Home.meshIp: the node has a hub, but splot leaves its WireGuard alone - hub clients are peers on splot's mesh interface; a WireGuard server of your own, with its own subnet, is a zone
 nodes.Home.meshIp: fw4 can't name a firewall zone '1lan' - its zone names don't start with a digit, and on OpenWrt this is the zone's name there
+nodes.Home.meshIp: an OpenWrt node's zones are its fw4 zones of the same name - interfaces are for nftables, on Linux
+nodes.Home.meshIp: 'lab' is neither one of the node's zones nor its wanZone
+nodes.Home.meshIp: no interface for zone 'iot' - nftables tells the node's zones apart by their interfaces, so each one, and the wanZone, needs its own
+nodes.Home.meshIp: zones iot, lan share eth0 - splot couldn't tell them apart, so each zone needs an interface of its own
+nodes.Home.meshIp: spl_mesh is splot's mesh interface, and no zone is on it
 nodes.Home.meshIp: name 'Home' is already used as another global name (node, client, or tag)
 nodes.Home.meshIp: local name Cabin conflicts with global Cabin - rename one to avoid ambiguity
 nodes.Home.meshIp: name 'lan' is already used in the same node

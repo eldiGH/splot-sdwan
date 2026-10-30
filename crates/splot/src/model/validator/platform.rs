@@ -3,6 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use splot_core::consts::MESH_DEVICE;
+
 use crate::{
     config::{self, Config},
     consts,
@@ -13,6 +15,7 @@ use crate::{
     types::{
         config_location::{ConfigLocation, HubLoc, NodeLoc, PlatformLoc, ZoneLoc},
         identifier::Identifier,
+        interface::InterfaceName,
         platform::{FirewallProgram, Os, Program, Setting, names},
     },
 };
@@ -39,6 +42,7 @@ pub(super) fn check_platforms(
             if platform.firewall == Some(FirewallProgram::Fw4) {
                 check_fw4_zone_names(name, node, report);
             }
+            check_interfaces(name, node, &platform, report);
 
             Some((name.clone(), platform))
         })
@@ -60,6 +64,72 @@ fn check_fw4_zone_names(name: &Identifier, node: &config::Node, report: &mut Val
                 zone: zone.clone(),
                 at: ConfigLocation::Node(name.clone(), at),
             });
+        }
+    }
+}
+
+/// The interfaces nftables tells a Linux node's zones apart by: each zone, and
+/// the wanZone, on interfaces of its own, which an nftables node names for
+/// every one. The WAN may come in on a zone's: a host that isn't its site's
+/// gateway. An OpenWrt node's zones are its fw4 zones of the same name.
+fn check_interfaces(
+    name: &Identifier,
+    node: &config::Node,
+    platform: &Platform,
+    report: &mut ValidationReport,
+) {
+    let interfaces = &node.platform.interfaces;
+    let at = |loc| ConfigLocation::Node(name.clone(), NodeLoc::Platform(loc));
+
+    if platform.os == Os::OpenWrt {
+        if !interfaces.is_empty() {
+            report.errors.push(ValidationError::InterfacesOnOpenWrt {
+                at: at(PlatformLoc::Interfaces),
+            });
+        }
+        return;
+    }
+
+    let is_zone = |zone: &Identifier| node.zones.contains_key(zone);
+    for (zone, on) in interfaces {
+        if !is_zone(zone) && node.wan_zone.as_ref() != Some(zone) {
+            report.errors.push(ValidationError::InterfaceOfNoZone {
+                zone: zone.clone(),
+                at: at(PlatformLoc::Interface(zone.clone())),
+            });
+        }
+        if on.iter().any(|interface| interface.as_str() == MESH_DEVICE) {
+            report.errors.push(ValidationError::MeshDeviceInZone {
+                at: at(PlatformLoc::Interface(zone.clone())),
+            });
+        }
+    }
+
+    let mut zones_on: BTreeMap<&InterfaceName, Vec<&Identifier>> = BTreeMap::new();
+    for (zone, on) in interfaces.iter().filter(|(zone, _)| is_zone(zone)) {
+        for interface in on {
+            zones_on.entry(interface).or_default().push(zone);
+        }
+    }
+    for (interface, zones) in zones_on {
+        if zones.len() > 1 {
+            let zones: Vec<String> = zones.iter().map(ToString::to_string).collect();
+            report.errors.push(ValidationError::SharedInterface {
+                interface: interface.clone(),
+                zones: zones.join(", "),
+                at: at(PlatformLoc::Interfaces),
+            });
+        }
+    }
+
+    if platform.firewall == Some(FirewallProgram::Nftables) {
+        for zone in node.zones.keys().chain(&node.wan_zone) {
+            if !interfaces.contains_key(zone) {
+                report.errors.push(ValidationError::ZoneWithoutInterface {
+                    zone: zone.clone(),
+                    at: at(PlatformLoc::Interfaces),
+                });
+            }
         }
     }
 }
@@ -363,6 +433,207 @@ nodes:
         );
         // Where splot leaves the firewall alone, no fw4 zone is named after them.
         assert!(errors("      os: openwrt\n      firewall: none", "0wan").is_empty());
+    }
+
+    /// Home on Linux, with zones iot and lan and its wanZone, its firewall
+    /// `firewall`, and `interfaces` (the lines of its key) in its platform.
+    fn on_linux(firewall: &str, interfaces: &str) -> ValidationReport {
+        let platform = format!(
+            "      os: linux
+      wireguard: wg-quick
+      firewall: {firewall}
+      dhcp: none
+      dns: none
+{interfaces}"
+        );
+        report(&format!(
+            "{}    zones:
+      iot: {{ address: 192.168.10.1/24 }}
+      lan: {{ address: 192.168.1.1/24 }}
+",
+            home(&platform)
+        ))
+    }
+
+    fn messages(r: &ValidationReport) -> Vec<String> {
+        r.errors.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn an_nftables_node_says_which_interfaces_its_zones_are_on() {
+        let r = on_linux(
+            "nftables",
+            "      interfaces:
+        lan: eth0
+        iot: [eth0.10, wlan0]
+        wan: eth1",
+        );
+        assert!(r.errors.is_empty(), "{:?}", messages(&r));
+
+        // The WAN may come in on a zone's: a host that isn't its site's gateway.
+        let r = on_linux(
+            "nftables",
+            "      interfaces:
+        lan: eth0
+        iot: eth0.10
+        wan: eth0",
+        );
+        assert!(r.errors.is_empty(), "{:?}", messages(&r));
+
+        // A name Linux or nftables wouldn't take doesn't parse (serde says only
+        // where: a key that takes one or a list doesn't pass on why).
+        let err = serde_norway::from_str::<Config>(&home(
+            "      os: linux\n      interfaces:\n        lan: eth*",
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(err.starts_with("nodes.Home.platform.interfaces: "), "{err}");
+    }
+
+    #[test]
+    fn an_nftables_node_needs_an_interface_for_each_zone_and_its_wan_zone() {
+        // The zones named in each error, which all point at the key.
+        let missing = |r: &ValidationReport| -> Vec<String> {
+            let zones: Vec<String> = r
+                .errors
+                .iter()
+                .filter_map(|e| match e {
+                    ValidationError::ZoneWithoutInterface { zone, at } => {
+                        assert_eq!(at.to_string(), "nodes.Home.platform.interfaces");
+                        Some(zone.to_string())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(zones.len(), r.errors.len(), "{:?}", messages(r));
+            zones
+        };
+
+        let r = on_linux("nftables", "      interfaces:\n        lan: eth0");
+        assert_eq!(missing(&r), ["iot", "wan"]);
+        let r = on_linux("nftables", "      interfaces:\n        wan: eth1");
+        assert_eq!(missing(&r), ["iot", "lan"]);
+        assert_eq!(missing(&on_linux("nftables", "")), ["iot", "lan", "wan"]);
+
+        // Where splot leaves the firewall alone, nothing needs one.
+        assert!(on_linux("none", "").errors.is_empty());
+        assert!(
+            on_linux("none", "      interfaces:\n        lan: eth0")
+                .errors
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn an_interface_is_for_a_zone_of_the_node_or_its_wan_zone() {
+        for firewall in ["nftables", "none"] {
+            let r = on_linux(
+                firewall,
+                "      interfaces:
+        lan: eth0
+        iot: eth0.10
+        wan: eth1
+        lab: eth2",
+            );
+            assert!(error_at(&r, "nodes.Home.platform.interfaces.lab", |e| {
+                matches!(e, ValidationError::InterfaceOfNoZone { zone, .. } if zone.as_ref() == "lab")
+            }));
+            assert_eq!(r.errors.len(), 1, "{firewall}: {:?}", messages(&r));
+        }
+    }
+
+    #[test]
+    fn two_zones_on_one_interface_is_an_error() {
+        // The interface each error names, and its zones.
+        let shared = |interfaces: &str| -> Vec<(String, String)> {
+            let r = on_linux("nftables", interfaces);
+            let shared: Vec<(String, String)> = r
+                .errors
+                .iter()
+                .filter_map(|e| match e {
+                    ValidationError::SharedInterface {
+                        interface,
+                        zones,
+                        at,
+                    } => {
+                        assert_eq!(at.to_string(), "nodes.Home.platform.interfaces");
+                        Some((interface.to_string(), zones.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(shared.len(), r.errors.len(), "{:?}", messages(&r));
+            shared
+        };
+        let pair = |interface: &str| vec![(interface.to_owned(), "iot, lan".to_owned())];
+
+        // The WAN on it too isn't named.
+        assert_eq!(
+            shared(
+                "      interfaces:
+        lan: eth0
+        iot: eth0
+        wan: eth0"
+            ),
+            pair("eth0")
+        );
+        // One of a zone's interfaces, whichever zone lists more.
+        assert_eq!(
+            shared(
+                "      interfaces:
+        lan: [eth0, wlan0]
+        iot: wlan0
+        wan: eth1"
+            ),
+            pair("wlan0")
+        );
+        assert_eq!(
+            shared(
+                "      interfaces:
+        lan: eth0
+        iot: [eth0.10, eth0]
+        wan: eth1"
+            ),
+            pair("eth0")
+        );
+    }
+
+    #[test]
+    fn no_zone_is_on_splots_mesh_interface() {
+        for (zone, interfaces) in [
+            ("iot", "lan: eth0, iot: spl_mesh, wan: eth1"),
+            ("lan", "lan: [eth0, spl_mesh], iot: eth0.10, wan: eth1"),
+            ("wan", "lan: eth0, iot: eth0.10, wan: spl_mesh"),
+        ] {
+            let r = on_linux("nftables", &format!("      interfaces: {{ {interfaces} }}"));
+            assert!(
+                error_at(
+                    &r,
+                    &format!("nodes.Home.platform.interfaces.{zone}"),
+                    |e| matches!(e, ValidationError::MeshDeviceInZone { .. })
+                ),
+                "{zone}: {:?}",
+                messages(&r)
+            );
+            assert_eq!(r.errors.len(), 1, "{zone}: {:?}", messages(&r));
+        }
+    }
+
+    #[test]
+    fn an_openwrt_node_has_no_interfaces() {
+        // Its zones are fw4's, whether splot manages the firewall or not.
+        for platform in [
+            "      os: openwrt",
+            "      os: openwrt\n      firewall: none",
+        ] {
+            let r = report(&home(&format!(
+                "{platform}\n      interfaces:\n        wan: eth1"
+            )));
+            assert!(error_at(&r, "nodes.Home.platform.interfaces", |e| {
+                matches!(e, ValidationError::InterfacesOnOpenWrt { .. })
+            }));
+            assert_eq!(r.errors.len(), 1, "{:?}", messages(&r));
+        }
     }
 
     #[test]

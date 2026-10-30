@@ -222,9 +222,10 @@ nodes:
 
   # A Linux host that runs the mesh at its site, a Raspberry Pi say. Linux
   # has no usual setup to assume, so its platform names the program behind
-  # every concern (`none` where splot should leave one alone). On Linux splot
-  # applies only the WireGuard so far: `splot apply` refuses Barn until its
-  # firewall and DHCP are `none` too.
+  # every concern (`none` where splot should leave one alone). nftables tells
+  # its zones apart by their interfaces, so `interfaces` says which each zone,
+  # and the WAN, is on. On Linux splot applies only the WireGuard so far:
+  # `splot apply` refuses Barn until its firewall and DHCP are `none` too.
   Barn:
     platform:
       os: linux
@@ -233,6 +234,9 @@ nodes:
       dhcp: dnsmasq
       dns: dnsmasq
       ssh: root@192.168.4.1
+      interfaces:
+        lan: eth0
+        wan: eth1
     publicKey: ReplaceBarnPublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 203.0.113.30
     listenPort: 51820

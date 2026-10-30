@@ -6,6 +6,7 @@ pub use splot_core::{identifier, wg_key};
 pub mod allow_from_ref;
 pub mod config_location;
 pub mod endpoint;
+pub mod interface;
 pub mod ip;
 pub mod mac;
 pub mod platform;
@@ -23,6 +24,7 @@ mod tests {
         allow_from_ref::AllowFromRef,
         endpoint::{EndpointHost, Hostname},
         identifier::{Identifier, NestedIdentifier},
+        interface::InterfaceName,
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
         platform::{FirewallProgram, Os, Setting},
@@ -73,6 +75,7 @@ mod tests {
         is_error::<super::wg_key::KeyFormatError>();
         is_error::<super::platform::ParseSettingError>();
         is_error::<super::ssh::ParseSshDestinationError>();
+        is_error::<super::interface::ParseInterfaceNameError>();
         is_error::<splot_core::os::ParseOsError>();
         is_error::<crate::model::validator::types::ValidationError>();
     }
@@ -128,6 +131,10 @@ mod tests {
             error::<SshDestination>(""),
             error::<SshDestination>("-oProxyCommand=sh"),
             error::<SshDestination>("root@router -p 2222"),
+            error::<InterfaceName>(""),
+            error::<InterfaceName>("abcdefghijklmnop"),
+            error::<InterfaceName>(".."),
+            error::<InterfaceName>("eth*"),
         ];
 
         // wan.via names a node at most once; only serde builds that list.

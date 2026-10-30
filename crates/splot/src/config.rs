@@ -12,6 +12,7 @@ use crate::{
         },
         endpoint::EndpointHost,
         identifier::Identifier,
+        interface::InterfaceName,
         ip::{Ipv4Interface, Ipv4Network},
         mac::MacAddress,
         platform::{DhcpProgram, DnsProgram, FirewallProgram, Os, Setting, WireGuardProgram},
@@ -112,6 +113,10 @@ pub struct Platform {
     pub dns: Option<Setting<DnsProgram>>,
     /// Where splot reaches the node over ssh.
     pub ssh: Option<SshDestination>,
+    /// The interfaces each zone, and the `wanZone`, are on: how nftables tells
+    /// them apart.
+    #[serde(default)]
+    pub interfaces: BTreeMap<Identifier, OneOrManyUnique<InterfaceName>>,
 }
 
 #[derive(Deserialize, Debug)]

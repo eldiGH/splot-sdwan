@@ -19,7 +19,7 @@ pub use apply::{Error, Prepared};
 use key_store::FileKeyStore;
 
 /// The mesh interface: the name it has on OpenWrt too.
-const INTERFACE: &str = "spl_mesh";
+const INTERFACE: &str = splot_core::consts::MESH_DEVICE;
 
 /// The file with the secrets from `store`: what apply writes. Refuses when a
 /// pair's preshared key isn't stored.

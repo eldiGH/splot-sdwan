@@ -55,6 +55,8 @@ mod tests {
     #[test]
     fn mesh_interface_is_spl_mesh() {
         assert_eq!(mesh_interface().to_string(), "spl_mesh");
+        // netifd names the device after the section.
+        assert_eq!(mesh_interface().to_string(), consts::MESH_DEVICE);
     }
 
     #[test]

@@ -1,9 +1,12 @@
 use std::{fmt, net::Ipv4Addr};
 
+use splot_core::consts::MESH_DEVICE;
+
 use crate::types::{
     allow_from_ref::AllowFromRef,
     config_location::ConfigLocation,
     identifier::Identifier,
+    interface::InterfaceName,
     ip::{Ipv4Network, ReservedAddress},
     platform::{Concern, Os},
     port::PortOrRange,
@@ -42,6 +45,32 @@ pub enum ValidationError {
         zone: Identifier,
         at: ConfigLocation,
     },
+    #[error(
+        "{at}: an OpenWrt node's zones are its fw4 zones of the same name - interfaces are for nftables, on Linux"
+    )]
+    InterfacesOnOpenWrt { at: ConfigLocation },
+    #[error("{at}: '{zone}' is neither one of the node's zones nor its wanZone")]
+    InterfaceOfNoZone {
+        zone: Identifier,
+        at: ConfigLocation,
+    },
+    #[error(
+        "{at}: no interface for zone '{zone}' - nftables tells the node's zones apart by their interfaces, so each one, and the wanZone, needs its own"
+    )]
+    ZoneWithoutInterface {
+        zone: Identifier,
+        at: ConfigLocation,
+    },
+    #[error(
+        "{at}: zones {zones} share {interface} - splot couldn't tell them apart, so each zone needs an interface of its own"
+    )]
+    SharedInterface {
+        interface: InterfaceName,
+        zones: String,
+        at: ConfigLocation,
+    },
+    #[error("{at}: {MESH_DEVICE} is splot's mesh interface, and no zone is on it")]
+    MeshDeviceInZone { at: ConfigLocation },
 
     // names
     #[error("{at}: name '{name}' is already used as another global name (node, client, or tag)")]
@@ -240,6 +269,11 @@ impl ValidationError {
             Self::UnsupportedProgram { at, .. } => at,
             Self::HubWithoutWireGuard { at } => at,
             Self::Fw4ZoneName { at, .. } => at,
+            Self::InterfacesOnOpenWrt { at } => at,
+            Self::InterfaceOfNoZone { at, .. } => at,
+            Self::ZoneWithoutInterface { at, .. } => at,
+            Self::SharedInterface { at, .. } => at,
+            Self::MeshDeviceInZone { at } => at,
             Self::GlobalNameCollision { at, .. } => at,
             Self::InvalidPrefix { at, .. } => at,
             Self::InvalidWanVia { at, .. } => at,
@@ -489,6 +523,21 @@ mod tests {
                 zone: id("1lan"),
                 at: at(),
             },
+            ValidationError::InterfacesOnOpenWrt { at: at() },
+            ValidationError::InterfaceOfNoZone {
+                zone: id("lab"),
+                at: at(),
+            },
+            ValidationError::ZoneWithoutInterface {
+                zone: id("iot"),
+                at: at(),
+            },
+            ValidationError::SharedInterface {
+                interface: "eth0".parse().unwrap(),
+                zones: "iot, lan".to_owned(),
+                at: at(),
+            },
+            ValidationError::MeshDeviceInZone { at: at() },
             ValidationError::GlobalNameCollision {
                 name: id("Home"),
                 at: at(),

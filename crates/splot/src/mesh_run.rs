@@ -875,7 +875,8 @@ nodes:
       firewall: nftables
       dhcp: none
       dns: none
-      ssh: barn";
+      ssh: barn
+      interfaces: { wan: eth0 }";
         let network = mesh(HOME_SSH, barn);
         for err in [
             members(&network).err().unwrap(),
