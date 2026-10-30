@@ -1,0 +1,70 @@
+---
+source: crates/splot/src/backend/linux/mod.rs
+expression: rendered_node.firewall.unwrap()
+---
+# The firewall of node Barn, written by splot: its own table, which
+# `splot apply` replaces whole. Change splot.yml instead.
+table inet splot
+delete table inet splot
+
+table inet splot {
+	chain input {
+		type filter hook input priority filter; policy accept;
+		# replies, and what they bring
+		ct state established,related accept
+		# ping from its peers
+		iifname "spl_mesh" ip saddr { 10.100.0.1, 10.100.0.2, 10.100.0.3, 10.100.0.100 } ip daddr 10.100.0.4 icmp type echo-request accept
+		# WireGuard listen port
+		iifname "eth1" udp dport 51820 accept
+		# in: Barn ssh, from spl_mesh
+		iifname "spl_mesh" ip saddr { 10.100.0.100, 192.168.1.50 } ip daddr { 10.100.0.4, 192.168.4.1, 192.168.40.1 } tcp dport 22 accept
+		# the mesh zone's input
+		iifname "spl_mesh" drop
+	}
+
+	chain forward {
+		type filter hook forward priority filter; policy accept;
+		# replies, and what they bring
+		ct state established,related accept
+		# in: Barn.nvr web, from spl_mesh
+		iifname "spl_mesh" oifname "eth0" ip saddr { 10.100.0.100, 192.168.1.50 } ip daddr 192.168.4.10 tcp dport 443 accept
+		# out: Cabin.camera rtsp, from lan
+		iifname "eth0" oifname "spl_mesh" ip saddr 192.168.4.10 ip daddr 192.168.2.30 tcp dport 554 accept
+		# from the WAN: Barn.nvr web
+		iifname "eth1" ip saddr { 198.51.100.0/24, 203.0.113.7 } ip daddr 192.168.4.10 tcp dport 443 ct status dnat accept
+		# from the WAN: Cabin.weather http
+		iifname "eth1" ip daddr 192.168.2.40 tcp dport 80 ct status dnat accept
+		# within the mesh zone
+		iifname "spl_mesh" oifname "spl_mesh" drop
+		# deny: spl_mesh to any zone
+		iifname "spl_mesh" drop
+		# deny: iot to spl_mesh
+		iifname "eth0.20" oifname "spl_mesh" drop
+		# deny: iot to lan
+		iifname "eth0.20" oifname "eth0" drop
+		# deny: lan to spl_mesh
+		iifname "eth0" oifname "spl_mesh" drop
+		# deny: lan to iot
+		iifname "eth0" oifname "eth0.20" drop
+	}
+
+	chain output {
+		type filter hook output priority filter; policy accept;
+		# the mesh zone's output
+		oifname "spl_mesh" accept
+	}
+
+	chain dstnat {
+		type nat hook prerouting priority dstnat; policy accept;
+		# Barn.nvr web
+		iifname "eth1" ip saddr { 198.51.100.0/24, 203.0.113.7 } tcp dport 8443 dnat ip to 192.168.4.10:443
+		# Cabin.weather http
+		iifname "eth1" tcp dport 8080 dnat ip to 192.168.2.40:80
+	}
+
+	chain srcnat {
+		type nat hook postrouting priority srcnat; policy accept;
+		# snat: Cabin.weather http
+		oifname "spl_mesh" ct status dnat ip daddr 192.168.2.40 tcp dport 80 snat ip to 10.100.0.4
+	}
+}

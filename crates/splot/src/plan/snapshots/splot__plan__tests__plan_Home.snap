@@ -6,7 +6,7 @@ expression: plan.to_string()
 
 [wireguard]
 interface: listen 51820, address 10.100.0.1/16
-peer Barn at 10.100.0.4: key ReplaceBarnPublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.4/32, 192.168.4.0/24], routed, endpoint 203.0.113.30:51820, psk
+peer Barn at 10.100.0.4: key ReplaceBarnPublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.4/32, 192.168.40.0/24, 192.168.4.0/24], routed, endpoint 203.0.113.30:51820, psk
 peer Cabin at 10.100.0.2: key ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.2/32, 192.168.2.0/24], routed, endpoint cabin.example.net:51820, psk
 peer Lake at 10.100.0.3: key ReplaceLakePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.3/32, 192.168.3.0/24], routed, psk
 peer Phone at 10.100.0.100: key ReplacePhonePublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.100/32], psk
@@ -22,6 +22,8 @@ accept in Home.nas https: tcp/443 from mesh [10.100.0.100/32] to lan [192.168.1.
 accept in Home.printer print: tcp/9100 from mesh [10.100.0.100/32] to lan [192.168.1.16/32]
 accept in Home.lte-cam rtsp: tcp/554 from mesh [10.100.0.100/32] to mesh [10.100.10.10/32]
 accept in Home.lte-cam rtsp: tcp/554 from lan [192.168.1.50/32] to mesh [10.100.10.10/32]
+accept out Barn ssh: tcp/22 from lan [192.168.1.50/32] to mesh [10.100.0.4/32, 192.168.40.1/32, 192.168.4.1/32]
+accept out Barn.nvr web: tcp/443 from lan [192.168.1.50/32] to mesh [192.168.4.10/32]
 accept out Cabin.camera rtsp: tcp/554 from lan [192.168.1.50/32] to mesh [192.168.2.30/32]
 accept out Phone sync: tcp/22000 from lan [192.168.1.20/32] to mesh [10.100.0.100/32]
 otherwise drop: between [mesh, iot, lan], and from mesh to any zone

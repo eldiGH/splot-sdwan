@@ -118,6 +118,20 @@ splot owns `/etc/wireguard/spl_mesh.conf` and runs it through systemd's `wg-quic
   - Rejected: adding and removing routes by hand (no drop, but apply-time and boot-time routes could differ); restarting at every change (adding a phone would drop every tunnel).
 - **An interface up some other way** (`wg-quick up` by hand) is refused: the unit couldn't start over it.
 
+### Linux: the firewall with nftables
+
+splot's firewall on a Linux node is a table of its own, `inet splot`, which it renders as one nft file (decided):
+
+- **Its own table, its own base chains** (input, forward, output; nat prerouting and postrouting), each `policy accept`. On one hook every table's base chains see a packet: an `accept` ends only the chain it's in, a `drop` is final. So splot's chains let what isn't splot's pass by their policy, and end what is (see "Firewall default policy") in a verdict of splot's own rules: splot's drops hold whatever the operator's tables say (the host's own, Podman's netavark), and its accepts let through only what no other table drops. splot never touches another table, nor runs `flush ruleset`.
+  - Rejected: chains in the operator's table that it jumps to (a jump can't leave its table): splot would edit a table it doesn't own, the operator's file would fail to load without splot's chains, and a `flush ruleset` reload (Debian's `nftables.service`) would wipe them.
+- **Replaced in one transaction:** the file makes the table if it isn't there, deletes it and writes it again (`table inet splot`, `delete table inet splot`, then the table), so `nft -f` swaps it whole, whether it was there or not.
+- **A zone is its interfaces** (`platform.interfaces`), the mesh zone splot's mesh interface, matched by name (`iifname`, `oifname`), so the rules load before an interface is up. In the `inet` family, what's matched by interface alone (the mesh zone's input, the deny) covers IPv6 too.
+- **What fw4 does, written out:** replies (`established,related`) accepted first; the peers' ping, the listen port and the rules to the node itself in input, then the mesh zone's drop; the rules through the node in forward, then the mesh zone's own drop and splot's deny, a rule for each crossing it covers; the mesh zone's output accept. One rule per protocol, TCP and UDP by port, ICMP whole, as fw4 takes a service's protocols. A set holds no address another of its addresses covers. No match is ever left out, which would match anything: an empty set is `{ }`, which nft refuses.
+- **Port forwards:** DNAT from the WAN's interfaces, one rule whatever the number of `wan.sources` (nft takes a set), and an accept of each in forward (`ct status dnat`), which matters only where the WAN comes in on a zone's interface: there splot's deny would drop it. Into the mesh, the SNAT to the node's `meshIp` matches only what was forwarded (`ct status dnat`, which nft can match and fw4's uci can't), so the node's own networks keep their address.
+  - Rejected: matching what fw4 matches, for the same side effect on both platforms.
+- **Labels** are `#` comments in the file, in the config's notation (`in: Barn ssh, from spl_mesh`): nft's rule comments take at most 128 characters, and a name has no limit.
+- **Not applied yet:** `apply` refuses a Linux node whose firewall is nftables.
+
 ### Tags
 
 Tags are the sole access control abstraction. They appear in `allowFrom` on services. They can be applied to nodes, zones, devices, hubs, hub clients, and global clients.
@@ -353,7 +367,7 @@ A WireGuard pair can also share a preshared key (PSK). It adds nothing against t
 
 ### Scope
 
-Tests cover the **deterministic core**: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (`src/model/`: hosts, reference resolution, WAN targets), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), UCI command/builder rendering, the wg-quick renderer, the protocol (what's sent arrives as it was, and is checked again), and in the agent: the secrets filled in, the OS check, and the Linux apply's decisions (what's live, read from `ip -j`, against what wg-quick would set). The process/IO layer (the agent's `uci` executor, `wg`, `ip`, `systemctl`, `env`, its `apply`, and splot's `main` and `commands`) is **out of scope** for now — it shells out and touches the filesystem; the container checks cover it. The key stores (the agent's `key_store`) are tested in their pure parts (reading the store, the commands that write it) and in the store file's mode, in a temporary directory. The process helper (the agent's `process`) is tested with standard programs (`cat`, `sh`), not the ones splot drives.
+Tests cover the **deterministic core**: type parsers (`src/types/`), config parsing (`src/config.rs`), all validator passes and the model they build (`src/model/`: hosts, reference resolution, WAN targets), the planners and the plan's plain-text view (`src/plan/`), the uci renderers (firewall zone/rules/redirects, network, dhcp), UCI command/builder rendering, the wg-quick and nftables renderers, the protocol (what's sent arrives as it was, and is checked again), and in the agent: the secrets filled in, the OS check, and the Linux apply's decisions (what's live, read from `ip -j`, against what wg-quick would set). The process/IO layer (the agent's `uci` executor, `wg`, `ip`, `systemctl`, `env`, its `apply`, and splot's `main` and `commands`) is **out of scope** for now — it shells out and touches the filesystem; the container checks cover it. The key stores (the agent's `key_store`) are tested in their pure parts (reading the store, the commands that write it) and in the store file's mode, in a temporary directory. The process helper (the agent's `process`) is tested with standard programs (`cat`, `sh`), not the ones splot drives.
 
 ### Placement
 
@@ -373,7 +387,7 @@ Tests are inline `#[cfg(test)] mod tests { use super::*; ... }` modules, always 
 - **A change that touches generator output** comes with its snapshot diff in the same commit, so the commit shows what it does to the generated router config.
 - Keep the example config representative: a new feature that generates config should appear in `splot.example.yml`, which puts it under the snapshot too.
 
-`example_config_snapshot` in `src/backend/linux/mod.rs` does the same for the Linux backend: the wg-quick file of every Linux node of the example, secrets as placeholders. Its snapshots live in `src/backend/linux/snapshots/`.
+`example_config_snapshot` in `src/backend/linux/mod.rs` does the same for the Linux backend: the wg-quick file of every Linux node of the example, secrets as placeholders, and its nft file. Its snapshots live in `src/backend/linux/snapshots/`.
 
 `example_plan_snapshot` (in `src/plan/mod.rs`) pins the node plan, the platform-neutral layer between the model and the renderers, as its plain-text view, for every node of `splot.example.yml`. Its snapshots live in `src/plan/snapshots/`.
 

@@ -165,6 +165,11 @@ fn check_platform(
         dhcp: dhcp?,
         dns: dns?,
         ssh: platform.ssh.clone(),
+        interfaces: platform
+            .interfaces
+            .iter()
+            .map(|(zone, on)| (zone.clone(), on.0.clone()))
+            .collect(),
     })
 }
 
@@ -261,6 +266,7 @@ nodes:
                 dhcp: Some(DhcpProgram::Dnsmasq),
                 dns: Some(DnsProgram::Dnsmasq),
                 ssh: None,
+                interfaces: BTreeMap::new(),
             }
         );
         // Spelled out, the same.
@@ -291,6 +297,7 @@ nodes:
                 dhcp: None,
                 dns: Some(DnsProgram::Dnsmasq),
                 ssh: None,
+                interfaces: BTreeMap::new(),
             }
         );
         assert_eq!(
@@ -306,6 +313,7 @@ nodes:
                 dhcp: Some(DhcpProgram::Dnsmasq),
                 dns: None,
                 ssh: None,
+                interfaces: BTreeMap::new(),
             }
         );
     }
@@ -327,6 +335,7 @@ nodes:
                 dhcp: Some(DhcpProgram::Dnsmasq),
                 dns: None,
                 ssh: None,
+                interfaces: BTreeMap::new(),
             }
         );
 

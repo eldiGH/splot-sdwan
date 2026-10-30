@@ -57,6 +57,27 @@ pub struct DefaultPolicy {
     pub verdict: Verdict,
 }
 
+impl DefaultPolicy {
+    /// What the verdict covers, each from one zone to another, or to any zone
+    /// when none: whatever leaves the mesh zone, and from each declared zone
+    /// into the mesh and into every other declared zone. Within a declared zone
+    /// is the zone's own.
+    pub fn crossings(&self) -> Vec<(&ZoneRef, Option<&ZoneRef>)> {
+        self.zones
+            .iter()
+            .flat_map(|from| match from {
+                ZoneRef::Mesh => vec![(from, None)],
+                ZoneRef::Named(_) => self
+                    .zones
+                    .iter()
+                    .filter(|to| *to != from)
+                    .map(|to| (from, Some(to)))
+                    .collect(),
+            })
+            .collect()
+    }
+}
+
 /// Every WireGuard peer of the node may ping it: an echo request from the peer's
 /// own address to the node's mesh IP, to the node itself and nowhere else. The
 /// health check of an apply pings the peers.
@@ -256,6 +277,33 @@ clients:
     fn zones(plan: &FirewallPlan) -> Vec<String> {
         let zones = &plan.default_policy.zones;
         zones.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn the_default_policy_covers_what_leaves_the_mesh_and_crosses_between_declared_zones() {
+        let crossings = |plan: &FirewallPlan| -> Vec<String> {
+            let crossings = plan.default_policy.crossings();
+            crossings
+                .iter()
+                .map(|(from, to)| match to {
+                    Some(to) => format!("{from} -> {to}"),
+                    None => format!("{from} -> any"),
+                })
+                .collect()
+        };
+
+        assert_eq!(
+            crossings(&home(&with_iot(HOME))),
+            [
+                "mesh -> any",
+                "iot -> mesh",
+                "iot -> lan",
+                "lan -> mesh",
+                "lan -> iot",
+            ]
+        );
+        // Within a zone is the zone's own.
+        assert_eq!(crossings(&home(HOME)), ["mesh -> any", "lan -> mesh"]);
     }
 
     fn forwards(plan: &FirewallPlan) -> Vec<String> {

@@ -1,4 +1,5 @@
-//! The config of a Linux node: its WireGuard as a wg-quick file.
+//! The config of a Linux node: its WireGuard as a wg-quick file, its firewall
+//! as an nft file.
 
 use std::collections::BTreeSet;
 
@@ -16,6 +17,9 @@ pub struct Rendered {
     pub public_key: WgPublicKey,
     /// The wg-quick file; none where splot leaves the WireGuard alone.
     pub wireguard: Option<WgQuickConfig>,
+    /// The nft file of splot's own table; none where splot leaves the firewall
+    /// alone. It holds no secret.
+    pub firewall: Option<String>,
 }
 
 /// A line of the file: as it is, or a key whose value is a secret.

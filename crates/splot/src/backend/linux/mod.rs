@@ -1,17 +1,18 @@
-//! Linux: the plan as the files of the programs a Linux node runs. Only its
-//! WireGuard so far, with wg-quick: splot doesn't manage a Linux node's
-//! firewall or DHCP yet, and `apply` refuses a node that asks it to.
+//! Linux: the plan as the files of the programs a Linux node runs: its
+//! WireGuard with wg-quick, its firewall with nftables. splot doesn't manage a
+//! Linux node's DHCP yet, and `apply` refuses a node that asks it to.
 
+mod nftables;
 mod wg_quick;
 
 use log::info;
 use splot_core::protocol::linux::Rendered;
 
-use crate::plan::NodePlan;
+use crate::{model::platform::Platform, plan::NodePlan};
 
 /// The plan as the files a Linux node holds, with placeholders where its
-/// secrets go.
-pub fn render(plan: &NodePlan) -> Rendered {
+/// secrets go; its zones on the interfaces `platform` says.
+pub fn render(plan: &NodePlan, platform: &Platform) -> Rendered {
     info!("Rendering the Linux config of node '{}'", plan.node);
 
     Rendered {
@@ -21,6 +22,10 @@ pub fn render(plan: &NodePlan) -> Rendered {
             .wireguard
             .as_ref()
             .map(|wireguard| wg_quick::render(&plan.node, wireguard)),
+        firewall: plan
+            .firewall
+            .as_ref()
+            .map(|firewall| nftables::render(&plan.node, firewall, platform)),
     }
 }
 
@@ -32,7 +37,8 @@ mod tests {
     #[test]
     fn example_config_snapshot() {
         // The wg-quick file splot renders for every Linux node of the example,
-        // with its secrets as placeholders: what the dry run shows.
+        // with its secrets as placeholders: what the dry run shows. Then its
+        // nft file.
         let network = test_support::checked(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../splot.example.yml"
@@ -44,9 +50,14 @@ mod tests {
             .filter(|node| node.platform().os() == Os::Linux)
         {
             let plan = plan::plan(&network, node.name()).unwrap();
-            let config = render(&plan).wireguard.unwrap();
+            let rendered_node = render(&plan, node.platform());
+            let config = rendered_node.wireguard.unwrap();
 
             insta::assert_snapshot!(format!("example_{}", node.name()), config.masked());
+            insta::assert_snapshot!(
+                format!("example_{}_nftables", node.name()),
+                rendered_node.firewall.unwrap()
+            );
             rendered += 1;
         }
         assert!(rendered > 0);
@@ -71,10 +82,12 @@ nodes:
     meshIp: 10.100.0.1
 ",
         );
-        let plan = plan::plan(&network, &"Home".parse().unwrap()).unwrap();
-        let rendered = render(&plan);
+        let home = network.node(&"Home".parse().unwrap()).unwrap();
+        let plan = plan::plan(&network, home.name()).unwrap();
+        let rendered = render(&plan, home.platform());
 
         assert!(rendered.wireguard.is_none());
+        assert!(rendered.firewall.is_none());
         assert_eq!(rendered.public_key, plan.public_key);
     }
 }

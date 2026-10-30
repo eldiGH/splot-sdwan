@@ -320,7 +320,7 @@ fn member(network: &Network, node: &Identifier) -> anyhow::Result<Option<Member>
 
     Ok(Some(Member {
         name: node.clone(),
-        rendered: backend::render(&plan, commands::node_os(network, node)),
+        rendered: backend::render(&plan, commands::node_platform(network, node)),
         probes: commands::probes(&plan),
     }))
 }

@@ -383,6 +383,7 @@ mod tests {
                 node,
                 public_key,
                 wireguard: None,
+                firewall: None,
             }),
         };
         let os = match found {

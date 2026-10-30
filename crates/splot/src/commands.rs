@@ -8,7 +8,7 @@ use splot_core::protocol::{Probe, Reply, Request};
 
 use crate::{
     agent::{self, Agent},
-    model::{Network, host::HostRef},
+    model::{Network, host::HostRef, platform::Platform},
     plan::{self, NodePlan},
     types::{
         identifier::Identifier,
@@ -207,12 +207,15 @@ pub(crate) fn probes(plan: &NodePlan) -> Vec<Probe> {
 }
 
 /// The OS the config says `node` runs: for a node it has a plan for.
-pub(crate) fn node_os(network: &Network, node: &Identifier) -> Os {
+pub(crate) fn node_platform<'a>(network: &'a Network, node: &Identifier) -> &'a Platform {
     network
         .node(node)
         .expect("a node the config has a plan for is in the config")
         .platform()
-        .os()
+}
+
+pub(crate) fn node_os(network: &Network, node: &Identifier) -> Os {
+    node_platform(network, node).os()
 }
 
 /// `psk set`: stores the preshared key of the pair of `node` (this peer) with

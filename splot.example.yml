@@ -178,26 +178,27 @@ nodes:
             macs: aa:bb:cc:00:00:04
             services:
               # The camera's RTSP stream, viewable from admin devices
-              # anywhere on the mesh — but never from the public internet.
+              # anywhere on the mesh, and recorded by Barn's nvr — but never
+              # from the public internet.
               rtsp:
                 port: 554
                 proto: tcp
-                allowFrom: admin
+                allowFrom: [admin, Barn.nvr]
 
           weather:
             ip: 192.168.2.40
             macs: aa:bb:cc:00:00:06
             services:
-              # A weather station's page, published at Home's fixed address
-              # (Cabin's changes). Home forwards it over the mesh as itself,
-              # from its meshIp, so the replies come back through Home: the
-              # station sees Home, not who's asking. Restrict who may with
-              # `sources`, here on the WAN side.
+              # A weather station's page, published at Home's and Barn's fixed
+              # addresses (Cabin's changes). Each forwards it over the mesh as
+              # itself, from its meshIp, so the replies come back through it:
+              # the station sees Home or Barn, not who's asking. Restrict who
+              # may with `sources`, here on the WAN side.
               http:
                 port: "8080:80"
                 proto: tcp
                 wan:
-                  via: [Home]
+                  via: [Home, Barn]
 
   # Behind its ISP's NAT with no port forward, so nobody can dial it: no
   # endpoint. It dials the others, and keeps its NAT mapping open with
@@ -236,6 +237,7 @@ nodes:
       ssh: root@192.168.4.1
       interfaces:
         lan: eth0
+        iot: eth0.20
         wan: eth1
     publicKey: ReplaceBarnPublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 203.0.113.30
@@ -243,6 +245,34 @@ nodes:
     meshIp: 10.100.0.4
     wanZone: wan
 
+    services:
+      # SSH to Barn itself, from admin devices anywhere on the mesh.
+      ssh:
+        port: 22
+        proto: tcp
+        allowFrom: admin
+
     zones:
       lan:
         address: 192.168.4.1/24
+        devices:
+          # A video recorder: it records Cabin's camera over the mesh (see
+          # the camera's allowFrom).
+          nvr:
+            ip: 192.168.4.10
+            macs: aa:bb:cc:00:00:07
+            services:
+              # Its web page, for admin devices on the mesh, and from the
+              # office on Barn's WAN.
+              web:
+                port: "8443:443"
+                proto: tcp
+                allowFrom: admin
+                wan:
+                  via: [Barn]
+                  sources: ["198.51.100.0/24", "203.0.113.7/32"]
+
+      # A VLAN of its own, like Home's iot: splot drops what no service lets
+      # through between it, lan and the mesh.
+      iot:
+        address: 192.168.40.1/24

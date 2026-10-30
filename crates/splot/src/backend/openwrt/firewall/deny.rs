@@ -19,28 +19,17 @@ pub(super) struct Deny<'a> {
 }
 
 /// fw4 applies a zone's `forward` policy only within the zone, so the default
-/// policy takes rules: one for whatever leaves the mesh zone, and one from each
-/// declared zone into the mesh and into every other declared zone. fw4 puts
-/// each in its source zone's forward chain, in the order of the file, and the
-/// agent keeps splot's sections in plan order: these come after splot's
-/// accepts. Within a zone is the zone's own.
+/// policy takes rules, one for each crossing it covers. fw4 puts each in its
+/// source zone's forward chain, in the order of the file, and the agent keeps
+/// splot's sections in plan order: these come after splot's accepts.
 pub(super) fn denies(policy: &DefaultPolicy) -> Vec<Deny<'_>> {
-    let DefaultPolicy { zones, verdict } = policy;
-    let deny = |from, to| Deny {
-        from,
-        to,
-        verdict: *verdict,
-    };
-
-    zones
-        .iter()
-        .flat_map(|from| match from {
-            ZoneRef::Mesh => vec![deny(from, None)],
-            ZoneRef::Named(_) => zones
-                .iter()
-                .filter(|to| *to != from)
-                .map(|to| deny(from, Some(to)))
-                .collect(),
+    policy
+        .crossings()
+        .into_iter()
+        .map(|(from, to)| Deny {
+            from,
+            to,
+            verdict: policy.verdict,
         })
         .collect()
 }
