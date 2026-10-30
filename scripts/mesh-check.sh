@@ -125,8 +125,9 @@ boot() {
 	local network=pasta:-I,eth1,--map-gw forward=()
 	# Home takes a port forward on its WAN: what this machine sends its
 	# published ports comes in there, from the gateway's address, as from the
-	# internet. pasta would otherwise splice it into the router's loopback,
-	# where no port forward sees it.
+	# internet (its ssh too, which prepare.sh's rule lets in). pasta would
+	# otherwise splice it into the router's loopback, where no port forward
+	# sees it.
 	if [ "$name" = home ]; then
 		network+=,--no-splice
 		forward=(--publish "127.0.0.1::$FORWARD_PORT")

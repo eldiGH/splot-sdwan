@@ -66,8 +66,12 @@ uci add_list firewall.@zone[-1].network=iot
 uci commit firewall
 EOF
 
-# splot reaches the router over ssh (dropbear), on the port podman publishes,
-# which arrives on the WAN: let it in there, as an operator's own rule.
+# splot reaches the router over ssh (dropbear), at a port podman publishes on
+# this machine's loopback. pasta splices such a connection: it makes one of its
+# own to the port, inside the router, which comes in on the router's loopback,
+# and fw4 lets in whatever does. A router whose pasta doesn't splice
+# (mesh-check.sh's Home) gets it on the WAN, from the gateway's address: let it
+# in there, as an operator's own rule.
 cat >/etc/uci-defaults/99-splot-test-ssh <<'EOF'
 uci add firewall rule
 uci set firewall.@rule[-1].name='Allow-SSH-for-splot-check'
