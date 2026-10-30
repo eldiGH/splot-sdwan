@@ -541,13 +541,9 @@ through_home() {
 before=$(through_home) || true
 sed -i "/^  Cabin:$/,/^  Barn:$/ s/^    wanZone: wan$/&\n    services:\n      ssh: { port: '$FORWARD_PORT:22', proto: tcp, wan: { via: Home } }/" "$work/splot.yml"
 output=$(splot apply --yes 2>&1) && status=0 || status=$?
-# fw4 takes the change when procd reloads it, a second or two after the run's
-# go, which a quick run's checks and confirm don't wait for: the forward gets
-# that long.
-for _ in $(seq 15); do
-	after=$(through_home) && [ "$(sed -n 1p <<<"$after")" = "$cabin_key" ] && break
-	sleep 1
-done
+# No wait: the go reloaded fw4 on both routers before the check, so the
+# forward is live once the run is confirmed.
+after=$(through_home) || true
 if ! grep -qF "$cabin_key" <<<"$before" && [ "$status" -eq 0 ] && grep -q '^Confirmed' <<<"$output" &&
 	[ "$(sed -n 1p <<<"$after")" = "$cabin_key" ] && [[ $(sed -n 2p <<<"$after") == '10.100.0.1 '* ]]; then
 	pass "a port forward from Home's WAN reaches Cabin over the mesh, as Home"

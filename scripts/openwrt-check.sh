@@ -286,8 +286,8 @@ EOF
 	else
 		fail "the change is confirmed: no run left on the router" "$output"$'\n'"$(run 'ls -l /tmp/splot; cat /tmp/splot/last' 2>&1)"
 	fi
-	# procd runs the reloads that reload_config triggers a second later.
-	sleep 3
+	# No wait for procd here: splot reloaded fw4 and dnsmasq itself before
+	# the check, so what follows is live already.
 
 	# fw4 skips a section it can't use with a "[!]" warning and still exits 0.
 	output=$(run 'fw4 check 2>&1') || true
@@ -644,6 +644,45 @@ EOF
 			"exit $status: $output"$'\n'"last: $last"$'\n'"before: $cut_before"$'\n'"applied: $cut_applied"$'\n'"after: $cut_after"
 	fi
 	sleep 3
+
+	# When nft refuses a ruleset, fw4 keeps the old one live and still exits
+	# 0. So splot checks the ruleset first: a refused one fails the apply, and
+	# the router puts back what it had on the spot. fw4 checks splot's own
+	# sections, so the refusal comes from an include of the operator's: a
+	# filter chain that jumps to the WAN's dstnat chain, where nft takes only
+	# what a nat chain may hold. It takes the include while Home forwards
+	# nothing from its WAN, and refuses it once the example's forwards put
+	# their dnat there. (A jump to a chain the change takes away wouldn't do:
+	# fw4 flushes its table rather than deleting it, so the chain stays, empty.)
+	awk '/^ *wan:$/ { indent = index($0, "w"); skip = 1; next }
+		skip { match($0, /^ */); if (RLENGTH >= indent) next; skip = 0 }
+		1' "$work/splot.yml" >"$work/splot-no-forward.yml"
+	local nft_setup='' nft_before nft_after nft_live
+	splot --config "$work/splot-no-forward.yml" apply --node Home --yes >/dev/null 2>&1 ||
+		nft_setup+="the apply without the forwards failed; "
+	run "printf 'chain dstnat_wan {\n}\nchain splot_check {\n\ttype filter hook input priority filter + 10; policy accept;\n\tjump dstnat_wan\n}\n' >/root/splot-check.nft
+		uci set firewall.splot_check=include; uci set firewall.splot_check.type=nftables
+		uci set firewall.splot_check.path=/root/splot-check.nft
+		uci set firewall.splot_check.position=table-post; uci commit firewall; fw4 reload"
+	run 'fw4 check' >/dev/null 2>&1 || nft_setup+="fw4 check refuses the include without the forwards; "
+	nft_before=$(run "md5sum $files")
+	output=$(splot --config "$work/splot.yml" apply --node Home --yes 2>&1) && status=0 || status=$?
+	nft_after=$(run "md5sum $files")
+	last=$(run 'cat /tmp/splot/last 2>&1') || true
+	nft_live=$(run 'nft list chain inet fw4 dstnat_wan' 2>&1) || true
+	run 'uci delete firewall.splot_check; uci commit firewall; rm /root/splot-check.nft; fw4 reload'
+	splot --config "$work/splot.yml" apply --node Home --yes >/dev/null 2>&1 ||
+		nft_setup+="the apply with the forwards back failed; "
+	if [ -z "$nft_setup" ] && [ "$status" -ne 0 ] &&
+		grep -q "applying failed on Home, so it didn't keep the change" <<<"$output" &&
+		grep -q '`fw4 check` failed' <<<"$output" && grep -q 'Could not process rule' <<<"$output" &&
+		[ "$nft_before" = "$nft_after" ] && grep -q "rolled back" <<<"$last" && ! run '[ -e /tmp/splot/run ]' &&
+		grep -q 'chain dstnat_wan' <<<"$nft_live" && ! grep -q 'dnat ip to' <<<"$nft_live"; then
+		pass "a ruleset nft refuses fails the apply: the router put back what it had on the spot"
+	else
+		fail "a ruleset nft refuses fails the apply: the router put back what it had on the spot" \
+			"$nft_setup"$'\n'"exit $status: $output"$'\n'"last: $last"$'\n'"before: $nft_before"$'\n'"after: $nft_after"$'\n'"live: $nft_live"
+	fi
 
 	# Concerns left alone: with `firewall: none` and `dhcp: none` on Home, splot
 	# renders neither file, so it stages, deletes, commits and reloads nothing

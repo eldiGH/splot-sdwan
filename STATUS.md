@@ -117,11 +117,13 @@ What one node has to do, by concern, worked out from the `Network`, with no plat
 ### Reloading services after apply (`splot-agent`'s `openwrt/reload.rs`)
 
 - `uci commit` only writes files. After committing, splot reloads the services of the files that changed (those the diff touched) and reports any failure; nothing changed → no reload.
-- `reload_config` reloads every service whose config changed: fw4 for `firewall`, dnsmasq for `dhcp`, netifd for interface-level changes (key, port, addresses). procd runs these reloads a second later.
+- `reload_config` reloads every service whose config changed: fw4 for `firewall`, dnsmasq for `dhcp`, netifd for interface-level changes (key, port, addresses), and others that read those files (odhcpd, miniupnpd). procd runs these reloads a second later, after a quick run's check. So after it, splot runs the reloads the check depends on itself, and the change is live when the go answers (procd reloads those again a second later, with the same files):
+  - `firewall` changed: `fw4 check`, then `/etc/init.d/firewall reload`, which returns once the ruleset is loaded. When nft refuses the ruleset, `fw4 reload` keeps the old one live and still exits 0: the check is what fails then, and fw4 isn't reloaded.
+  - `dhcp` changed: `/etc/init.d/dnsmasq reload`; procd restarts dnsmasq with its new config before it returns.
 - netifd's reload doesn't see peer changes (peers are separate `wireguard_<interface>` sections), so when `network` changed, splot runs `ubus call network reload` (netifd re-reads the config now, so new interfaces exist) and then updates each of its WireGuard interfaces. It asks netifd first (`ubus call network get_proto_handlers`) whether the WireGuard handler supports renew:
   - yes (OpenWrt 25.12+): `ubus call network.interface.<iface> renew` re-runs the setup with `wg syncconf`; live, tunnels stay up.
   - no (24.10): `down` + `up` on the interface; the tunnels drop for a moment.
-- Every command is a request to procd/netifd that returns at once; the daemons do the restarts afterwards, independently of splot's session, so a reload that briefly drops the mesh can't cut splot off halfway. splot runs all commands even after one fails, then reports every failure.
+- netifd's commands are requests that return at once; netifd restarts the interface afterwards, independently of splot's session, so a reload that briefly drops the mesh can't cut splot off halfway. fw4 loads its whole ruleset at once and lets established traffic through. splot runs every step even after one fails (a step is a command, or `fw4 check` and the reload it gates), then reports every failure.
 - `apply` fails before writing anything when `ubus` isn't available. `--dry-run` lists the reload commands as `#` comments, which `uci batch` ignores.
 
 ### CLI (`src/cli.rs`, `src/main.rs`, `src/commands.rs`)
