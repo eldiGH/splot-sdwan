@@ -49,12 +49,11 @@ pub enum Backup {
     OpenWrt {
         files: Vec<(PathBuf, Option<String>)>,
     },
-    /// The wg-quick file (none: there was none), and whether its unit ran and
-    /// was enabled.
+    /// What the node had of each concern the run changes: none for one it
+    /// leaves as it is.
     Linux {
-        file: Option<String>,
-        active: bool,
-        enabled: bool,
+        firewall: Option<linux::NftablesKept>,
+        wireguard: Option<linux::WgQuickKept>,
     },
 }
 
@@ -64,10 +63,9 @@ impl Backup {
         match self {
             Self::OpenWrt { files } => openwrt::restore(files)?,
             Self::Linux {
-                file,
-                active,
-                enabled,
-            } => linux::restore(file.as_deref(), *active, *enabled)?,
+                firewall,
+                wireguard,
+            } => linux::restore(firewall.as_ref(), wireguard.as_ref())?,
         }
 
         Ok(())
@@ -433,9 +431,12 @@ mod tests {
 
     fn backup() -> Backup {
         Backup::Linux {
-            file: Some("[Interface]\n".to_owned()),
-            active: true,
-            enabled: true,
+            firewall: None,
+            wireguard: Some(linux::WgQuickKept {
+                file: Some("[Interface]\n".to_owned()),
+                active: true,
+                enabled: true,
+            }),
         }
     }
 

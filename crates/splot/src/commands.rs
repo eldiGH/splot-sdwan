@@ -285,8 +285,8 @@ pub fn psk_set(
 }
 
 /// Refuses a node that asks splot for what it can check but not do yet: on
-/// Linux, its firewall and DHCP. Applying the rest alone would leave the node
-/// short of what the config says.
+/// Linux, its DHCP. Applying the rest alone would leave the node short of what
+/// the config says.
 pub(crate) fn check_applicable(network: &Network, node: &Identifier) -> anyhow::Result<()> {
     let Some(node) = network.node(node) else {
         return Ok(());
@@ -296,28 +296,12 @@ pub(crate) fn check_applicable(network: &Network, node: &Identifier) -> anyhow::
         return Ok(());
     }
 
-    let not_yet: Vec<String> = [
-        platform
-            .firewall()
-            .map(|program| format!("{} ({program})", Concern::Firewall)),
-        platform
-            .dhcp()
-            .map(|program| format!("{} ({program})", Concern::Dhcp)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    match not_yet.as_slice() {
-        [] => Ok(()),
-        [one] => bail!(
-            "splot can't manage {}'s {one} on Linux yet: set it to `none` to apply the rest",
-            node.name()
-        ),
-        several => bail!(
-            "splot can't manage {}'s {} on Linux yet: set them to `none` to apply the rest",
+    match platform.dhcp() {
+        None => Ok(()),
+        Some(program) => bail!(
+            "splot can't manage {}'s {} ({program}) on Linux yet: set it to `none` to apply the rest",
             node.name(),
-            several.join(" or ")
+            Concern::Dhcp
         ),
     }
 }
@@ -490,9 +474,9 @@ clients:
 
     #[test]
     fn on_linux_splot_applies_only_what_it_manages_there() {
-        // On OpenWrt everything. On Linux the WireGuard so far: a node that asks
-        // splot for its firewall or DHCP there is refused, not half applied.
-        // DNS generates nothing on any platform yet.
+        // On OpenWrt everything. On Linux the WireGuard and the firewall so far:
+        // a node that asks splot for its DHCP there is refused, not half
+        // applied. DNS generates nothing on any platform yet.
         let linux = |name: &str, key: char, ip: u8, platform: &str| {
             format!(
                 "
@@ -552,13 +536,10 @@ nodes:
         assert!(applicable("Home").is_ok());
         assert!(applicable("Barn").is_ok());
         assert!(applicable("Lake").is_ok());
-        assert_eq!(
-            applicable("Mill").unwrap_err(),
-            "splot can't manage Mill's firewall (nftables) on Linux yet: set it to `none` to apply the rest"
-        );
+        assert!(applicable("Mill").is_ok());
         assert_eq!(
             applicable("Pond").unwrap_err(),
-            "splot can't manage Pond's firewall (nftables) or dhcp (dnsmasq) on Linux yet: set them to `none` to apply the rest"
+            "splot can't manage Pond's dhcp (dnsmasq) on Linux yet: set it to `none` to apply the rest"
         );
     }
 

@@ -65,7 +65,8 @@ pub struct Agent {
 /// What a run prepared on this peer, for the OS it runs.
 enum Prepared {
     OpenWrt(openwrt::Prepared),
-    Linux(linux::Prepared),
+    // Boxed: a part for each concern makes it large.
+    Linux(Box<linux::Prepared>),
 }
 
 impl Prepared {
@@ -122,7 +123,7 @@ impl Agent {
 
         let prepared = match rendered {
             Rendered::OpenWrt(rendered) => Prepared::OpenWrt(openwrt::prepare(rendered, run)?),
-            Rendered::Linux(rendered) => Prepared::Linux(linux::prepare(rendered, run)?),
+            Rendered::Linux(rendered) => Prepared::Linux(Box::new(linux::prepare(rendered, run)?)),
         };
         let changes = prepared.changes().clone();
         self.prepared = Some((run.id.clone(), prepared));
@@ -238,7 +239,7 @@ fn dry_run(rendered: &Rendered) -> Result<Reply, Error> {
 
     let (changes, warnings) = match rendered {
         Rendered::OpenWrt(rendered) => openwrt::dry_run(rendered)?,
-        Rendered::Linux(rendered) => (linux::dry_run(rendered)?, Vec::new()),
+        Rendered::Linux(rendered) => linux::dry_run(rendered)?,
     };
 
     Ok(Reply::DryRun { changes, warnings })
@@ -329,7 +330,10 @@ mod tests {
         );
 
         // Held for its own run only, and kept for it.
-        agent.prepared = Some(("r1".to_owned(), Prepared::Linux(linux::Prepared::nothing())));
+        agent.prepared = Some((
+            "r1".to_owned(),
+            Prepared::Linux(Box::new(linux::Prepared::nothing())),
+        ));
         assert_eq!(
             agent.handle(Request::Go {
                 run: "r2".to_owned()

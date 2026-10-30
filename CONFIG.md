@@ -104,7 +104,7 @@ platform:
 - **`splot check` warns**, once per node and concern, where a concern left alone leaves part of the config undone, naming what (the services whose `allowFrom` isn't enforced there or that another node forwards to it from its WAN, those not forwarded from its own WAN) and what's yours to do. A concern left alone with nothing asked of it gets no warning.
 - **`ssh`** is where splot reaches the node over ssh: `root@192.168.1.1`, a host of your `~/.ssh/config`, `ssh://root@router:2222`, given to the system `ssh` as it is (so your ssh config and agent apply). It can't start with `-` (ssh would read it as an option) or hold spaces or control characters. `splot apply` without `--node` reaches every node splot manages here, so each needs one (a node where every concern is `none` is left out). A command on one node (`--node`) reaches it at `--ssh <destination>` when given, else here; with neither, or with `--local`, splot acts on the machine it runs on, and refuses if that isn't the node. An address over the mesh (its `meshIp`) works once the node is in the mesh, but not for a node that isn't yet, or whose tunnel is down.
 - **`interfaces`** says which network interfaces each of the node's zones, and its `wanZone`, are on: nftables tells them apart by their interfaces, as fw4 does by its zones. With `firewall: nftables` every zone and the `wanZone` (when the node has one) needs one, an interface name or a list (`eth0`, `[eth0.20, wlan0]`): what Linux takes (at most 15 characters), in letters, digits, `.`, `-` and `_`. Each key is one of the node's zones or its `wanZone`. Two zones can't share an interface, since splot couldn't tell them apart (each is a network of its own), but the WAN may come in on a zone's: a host that isn't its site's gateway, reached through a port forward on the router in front of it. No zone is on `spl_mesh`, splot's mesh interface. On OpenWrt it's an error: there a zone's key is the name of its fw4 zone, which says which interfaces it covers.
-- **On Linux, WireGuard only so far:** splot runs the mesh with wg-quick through systemd (see [Linux](#linux)), and `splot apply` refuses a Linux node whose `firewall` or `dhcp` names a program until splot manages it there: set it to `none` to apply the rest. `splot check` validates the node either way.
+- **On Linux, WireGuard and the firewall so far:** splot runs the mesh with wg-quick and its firewall with nftables, both through systemd (see [Linux](#linux)), and `splot apply` refuses a Linux node whose `dhcp` names a program until splot manages it there: set it to `none` to apply the rest. `splot check` validates the node either way.
 
 ### Linux
 
@@ -115,6 +115,12 @@ What a Linux node needs, and what splot does there:
 - **A change to a peer** (a new client, a key, an endpoint, a PSK) is applied live (`systemctl reload`, which runs `wg syncconf`): the tunnels stay up.
 - **A change to the interface's address or routes** (a new node or zone, a changed `meshIp`) restarts it (`systemctl restart`): wg-quick sets them only when it starts, so the tunnels drop for a moment. The dry run says which and why.
 - **An interface you brought up yourself** under that name (`wg-quick up spl_mesh`) is refused: bring it down and apply again.
+
+With `firewall: nftables`:
+
+- **nftables (`nft`).** splot's firewall is a table of its own, `inet splot`, which it writes to `/etc/splot/firewall.nft` (rewritten whole: don't edit it) and loads through a unit of its own, `splot-firewall.service`, started and enabled so the table is back at every boot before the network comes up. Each apply replaces the table whole, in one transaction: there's no moment without it.
+- **Your own tables stay as they are**, and splot never runs `flush ruleset`. What splot drops stays dropped whatever they say; what it accepts gets through only where they accept it too. So the dry run warns about each of your chains that drops what it doesn't accept (`policy drop`, Docker's `FORWARD` say): let through there what splot's services grant.
+- **A ruleset loaded with `flush ruleset` removes splot's table too.** Debian's `nftables.service` loads `/etc/nftables.conf` with one: splot's unit loads after it at boot, and again whenever it restarts or reloads. Starting it when it wasn't running, or `nft -f` of such a file by hand, leaves splot's table out: run `systemctl reload splot-firewall`, or apply again (the dry run says the table isn't loaded).
 
 ---
 
@@ -449,12 +455,9 @@ What follows:
 - **Your `forwarding` sections between splot zones stop working:** fw4 checks rules before forwardings, so splot's drop wins. Declare the flows they carried as services (`allowFrom: Home.lan` for a whole zone).
 - **Your `rule` sections there decide before splot's:** fw4 takes rules in the file's order, and splot's come last. One that accepts lets through what no service grants; one that drops or rejects stops what a service grants. Declare what they're for as services, and remove them.
 - **The dry run warns about both** (every `splot apply` shows it before asking): each forwarding or rule of yours between splot zones, out of the mesh zone (to the WAN too), or into the router from the mesh zone, saying what it does there and what to do instead. The router's stock sections (`lan` to `wan`, the WAN's rules) are none of these.
+- **On Linux** there's no fw4 to share: splot's drops hold whatever your own nft tables say, and the dry run warns about each of your chains that drops what it doesn't accept, where splot's accepts need yours (see [Linux](#linux)).
 - **Switching it on stops every flow nobody declared**, all at once. Move a site over with `firewall: none` first (see [Platform](#platform)): declare its flows, then let splot run its firewall.
 - A node that isn't its zones' router enforces only what passes through it.
-
-### Not yet
-
-On Linux splot doesn't run the firewall at all so far (see [Platform](#platform)). On OpenWrt all of the above is enforced.
 
 ---
 

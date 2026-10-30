@@ -873,7 +873,7 @@ nodes:
         let barn = "      os: linux
       wireguard: wg-quick
       firewall: nftables
-      dhcp: none
+      dhcp: dnsmasq
       dns: none
       ssh: barn
       interfaces: { wan: eth0 }";
@@ -884,7 +884,7 @@ nodes:
         ] {
             assert!(
                 err.to_string()
-                    .starts_with("splot can't manage Cabin's firewall (nftables) on Linux yet"),
+                    .starts_with("splot can't manage Cabin's dhcp (dnsmasq) on Linux yet"),
                 "{err}"
             );
         }

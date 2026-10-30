@@ -1,9 +1,10 @@
-//! Linux: the rendered files made live through systemd. Only the WireGuard so
-//! far, with wg-quick.
+//! Linux: the rendered files made live through systemd: the WireGuard with
+//! wg-quick, the firewall as splot's own nft table. DHCP not yet.
 
 mod apply;
 mod file;
 pub(crate) mod key_store;
+mod nftables;
 
 use splot_core::protocol::{
     Changes, Run,
@@ -13,10 +14,12 @@ use splot_core::protocol::{
 use crate::{
     key_store::KeyStore,
     node,
+    run::{self, Backup},
     secret::{self, MissingPsks},
 };
-pub use apply::{Error, Prepared};
+pub use apply::{Error, Kept as WgQuickKept};
 use key_store::FileKeyStore;
+pub use nftables::Kept as NftablesKept;
 
 /// The mesh interface: the name it has on OpenWrt too.
 const INTERFACE: &str = splot_core::consts::MESH_DEVICE;
@@ -50,34 +53,144 @@ fn confirmed(rendered: &Rendered) -> Result<Option<(&WgQuickConfig, String)>, Er
     }
 }
 
-/// What `apply` would change on this peer, as the dry run shows it, changing
-/// nothing.
-pub fn dry_run(rendered: &Rendered) -> Result<Changes, Error> {
-    match confirmed(rendered)? {
-        Some((config, text)) => apply::print(config, &text),
-        None => Ok(Changes::none()),
+/// The changes of each concern as one: their summaries, then their texts, in
+/// turn.
+fn joined(changes: impl IntoIterator<Item = Changes>) -> Changes {
+    let changes: Vec<Changes> = changes
+        .into_iter()
+        .filter(|changes| !changes.is_empty())
+        .collect();
+    if changes.is_empty() {
+        return Changes::none();
+    }
+
+    Changes {
+        summary: changes
+            .iter()
+            .flat_map(|changes| changes.summary.iter().cloned())
+            .collect(),
+        text: changes
+            .iter()
+            .map(|changes| changes.text.as_str())
+            .collect(),
     }
 }
 
-/// Begins `run` to make `rendered` live on this peer, changing nothing yet.
-pub fn prepare(rendered: &Rendered, run: &Run) -> Result<Prepared, Error> {
-    match confirmed(rendered)? {
-        Some((config, text)) => apply::prepare(config, &text, run),
-        None => {
-            crate::run::begin(run, INTERFACE, None)?;
-            Ok(Prepared::nothing())
+/// What `apply` would change on this peer, as the dry run shows it, and what
+/// of the peer's own firewall decides some of what splot does; changing
+/// nothing.
+pub fn dry_run(rendered: &Rendered) -> Result<(Changes, Vec<String>), Error> {
+    let wireguard = confirmed(rendered)?;
+
+    let mut changes = Vec::new();
+    let mut warnings = Vec::new();
+    if let Some(text) = &rendered.firewall {
+        changes.push(nftables::print(text)?);
+        warnings = nftables::warnings()?;
+    }
+    if let Some((config, text)) = wireguard {
+        changes.push(apply::print(config, &text)?);
+    }
+
+    Ok((joined(changes), warnings))
+}
+
+/// What a run prepared on this peer: each concern's change, none where nothing
+/// changes.
+pub struct Prepared {
+    firewall: Option<nftables::Prepared>,
+    wireguard: Option<apply::Prepared>,
+    changes: Changes,
+}
+
+impl Prepared {
+    /// Nothing to do.
+    #[cfg(test)]
+    pub(crate) fn nothing() -> Self {
+        Self {
+            firewall: None,
+            wireguard: None,
+            changes: Changes::none(),
         }
     }
+
+    /// What the go changes, as the dry run shows it.
+    pub fn changes(&self) -> &Changes {
+        &self.changes
+    }
 }
 
-/// Makes what run `id` prepared live. Returns what changed.
+/// Begins `run` to make `rendered` live on this peer, changing nothing yet:
+/// works out what each concern changes, and keeps what the node has of it for
+/// the run.
+pub fn prepare(rendered: &Rendered, run: &Run) -> Result<Prepared, Error> {
+    let wireguard = match confirmed(rendered)? {
+        Some((config, text)) => apply::prepare(config, &text)?,
+        None => None,
+    };
+    let firewall = match &rendered.firewall {
+        Some(text) => nftables::prepare(text)?,
+        None => None,
+    };
+
+    let backup = (firewall.is_some() || wireguard.is_some()).then(|| Backup::Linux {
+        firewall: firewall.as_ref().map(|prepared| prepared.kept.clone()),
+        wireguard: wireguard.as_ref().map(|prepared| prepared.kept.clone()),
+    });
+    run::begin(run, INTERFACE, backup)?;
+
+    let changes = joined(
+        [
+            firewall.as_ref().map(|prepared| prepared.changes.clone()),
+            wireguard.as_ref().map(|prepared| prepared.changes.clone()),
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    Ok(Prepared {
+        firewall,
+        wireguard,
+        changes,
+    })
+}
+
+/// Makes what run `id` prepared live: the firewall first, so the mesh comes up,
+/// or changes, behind the rules meant for it. When any of it fails, puts back
+/// what the node had. Returns what changed.
 pub fn go(prepared: &Prepared, id: &str) -> Result<Vec<String>, Error> {
-    apply::go(prepared, id)
+    run::go(id)?;
+
+    let applied = (|| {
+        if let Some(firewall) = &prepared.firewall {
+            nftables::go(firewall)?;
+        }
+        if let Some(wireguard) = &prepared.wireguard {
+            apply::go(wireguard)?;
+        }
+        Ok(())
+    })();
+    if let Err(cause) = applied {
+        let cause = Box::new(cause);
+        return Err(match run::rollback(id) {
+            Ok(()) => Error::PutBack(cause),
+            Err(rollback) => Error::NotPutBack { cause, rollback },
+        });
+    }
+
+    Ok(prepared.changes.summary.clone())
 }
 
-/// Puts back the wg-quick file a run changed (see `apply::restore`).
-pub(crate) fn restore(file: Option<&str>, active: bool, enabled: bool) -> Result<(), Error> {
-    apply::restore(file, active, enabled)
+/// Puts back what a run changed, each concern it kept: the WireGuard first,
+/// the reverse of the go. The firewall is put back even when the WireGuard
+/// fails to be.
+pub(crate) fn restore(
+    firewall: Option<&NftablesKept>,
+    wireguard: Option<&WgQuickKept>,
+) -> Result<(), Error> {
+    let wireguard = wireguard.map_or(Ok(()), apply::restore);
+    let firewall = firewall.map_or(Ok(()), nftables::restore);
+
+    wireguard.and(firewall)
 }
 
 #[cfg(test)]
@@ -177,5 +290,34 @@ mod tests {
         let store = FileKeyStore::for_tests(PRIVATE_KEY).with_psk(&lake(), LAKE_PSK);
         let MissingPsks(missing) = filled(&home(), &store).unwrap_err();
         assert_eq!(missing, ["Cabin", "Phone"]);
+    }
+
+    #[test]
+    fn each_concerns_changes_are_shown_in_turn_as_one() {
+        let changes = |summary: &[&str], text: &str| Changes {
+            summary: summary.iter().map(|line| line.to_string()).collect(),
+            text: text.to_owned(),
+        };
+        let firewall = changes(
+            &["/etc/splot/firewall.nft", "splot-firewall reloaded"],
+            "# the firewall\n",
+        );
+        let wireguard = changes(&["/etc/wireguard/spl_mesh.conf"], "# the WireGuard\n");
+
+        assert_eq!(
+            joined([firewall.clone(), Changes::none(), wireguard.clone()]),
+            changes(
+                &[
+                    "/etc/splot/firewall.nft",
+                    "splot-firewall reloaded",
+                    "/etc/wireguard/spl_mesh.conf"
+                ],
+                "# the firewall\n# the WireGuard\n"
+            )
+        );
+        // One alone is as it is; none is nothing to change.
+        assert_eq!(joined([Changes::none(), wireguard.clone()]), wireguard);
+        assert_eq!(joined([Changes::none(), Changes::none()]), Changes::none());
+        assert_eq!(joined([]), Changes::none());
     }
 }

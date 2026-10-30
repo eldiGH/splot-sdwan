@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use splot_core::consts::MESH_DEVICE;
+use splot_core::consts::{MESH_DEVICE, NFT_FAMILY, NFT_TABLE};
 
 use crate::{
     model::platform::Platform,
@@ -23,10 +23,6 @@ use crate::{
     },
     types::{identifier::Identifier, ip::Ipv4Network, port::PortOrRange, protocol::Protocol},
 };
-
-/// splot's table: of the `inet` family, so its interface matches cover IPv6
-/// too.
-const TABLE: &str = "inet splot";
 
 /// `items` as nft matches them: one as it is, more as an anonymous set. None is
 /// `{ }`, which nft refuses: a match is never left out, which would match
@@ -335,13 +331,15 @@ pub(super) fn render(node: &Identifier, firewall: &FirewallPlan, platform: &Plat
         }
     }
 
+    // Of the `inet` family, so its interface matches cover IPv6 too.
+    let table = format!("{NFT_FAMILY} {NFT_TABLE}");
     let mut file = format!(
         "# The firewall of node {node}, written by splot: its own table, which
 # `splot apply` replaces whole. Change splot.yml instead.
-table {TABLE}
-delete table {TABLE}
+table {table}
+delete table {table}
 
-table {TABLE} {{"
+table {table} {{"
     );
     for chain in [input, forward, output, dstnat, srcnat] {
         file.push_str(&chain.text());

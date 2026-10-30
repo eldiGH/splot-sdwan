@@ -1,10 +1,13 @@
-//! Applying the rendered config on Linux: write the wg-quick file, then have
+//! Applying the WireGuard on Linux: write the wg-quick file, then have
 //! systemd's `wg-quick@spl_mesh` make it live. It's started if it isn't running,
 //! and enabled so it comes back after a reboot. wg-quick sets the interface's
 //! address and routes only when it starts, so it's restarted when what's live
 //! differs from what the file makes; otherwise it's reloaded, which is
 //! `wg syncconf`: the tunnels stay up. splot never sets an address or a route
 //! itself, so what's live is always wg-quick's own.
+//!
+//! The errors of applying on Linux, and how the programs are run, are here
+//! for the firewall too.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -13,18 +16,12 @@ use std::{
     process::{Command, Output},
 };
 
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use splot_core::protocol::{Changes, Run, linux::WgQuickConfig};
+use splot_core::protocol::{Changes, linux::WgQuickConfig};
 
 use super::{INTERFACE, file};
-use crate::{
-    node::NotConfirmed,
-    process,
-    run::{self, Backup},
-    secret::MissingPsks,
-    wg,
-};
+use crate::{node::NotConfirmed, process, run, secret::MissingPsks, wg};
 
 /// The file wg-quick reads for the interface.
 pub(super) const PATH: &str = "/etc/wireguard/spl_mesh.conf";
@@ -51,10 +48,10 @@ pub enum Error {
     },
     #[error(transparent)]
     MissingPsks(#[from] MissingPsks),
-    #[error("can't read {PATH}")]
-    Read(#[source] io::Error),
-    #[error("can't write {PATH}")]
-    Write(#[source] io::Error),
+    #[error("can't read {0}")]
+    Read(&'static str, #[source] io::Error),
+    #[error("can't write {0}")]
+    Write(&'static str, #[source] io::Error),
     #[error("failed to run `{command}`")]
     Run {
         command: String,
@@ -77,6 +74,8 @@ pub enum Error {
         "{INTERFACE} is up, but not through {UNIT}, which splot runs it with - bring it down (`wg-quick down {INTERFACE}`, if that's how it came up) and apply again"
     )]
     NotTheUnits,
+    #[error("nft refuses the firewall splot rendered: {0}")]
+    NftRefused(String),
 }
 
 /// `program args`, as an error message shows it.
@@ -99,7 +98,7 @@ fn output(program: &str, args: &[&str]) -> Result<Output, Error> {
 
 /// Runs `program args` and returns what it printed; an error carrying what it
 /// said when it fails.
-fn run(program: &str, args: &[&str]) -> Result<String, Error> {
+pub(super) fn run(program: &str, args: &[&str]) -> Result<String, Error> {
     let output = output(program, args)?;
 
     if !output.status.success() {
@@ -117,7 +116,7 @@ fn run(program: &str, args: &[&str]) -> Result<String, Error> {
 
 /// Whether `program args` exits 0: how `systemctl is-active` and `is-enabled`
 /// answer.
-fn succeeds(program: &str, args: &[&str]) -> Result<bool, Error> {
+pub(super) fn succeeds(program: &str, args: &[&str]) -> Result<bool, Error> {
     Ok(output(program, args)?.status.success())
 }
 
@@ -342,65 +341,75 @@ fn steps(live: &Live, config: &WgQuickConfig, file_changed: bool) -> Result<Vec<
     Ok(steps)
 }
 
-/// The file as it is now; none if there's none yet.
-fn current() -> Result<Option<String>, Error> {
-    match fs::read_to_string(PATH) {
+/// The file at `path` as it is now; none if there's none yet.
+pub(super) fn current(path: &'static str) -> Result<Option<String>, Error> {
+    match fs::read_to_string(path) {
         Ok(text) => Ok(Some(text)),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(Error::Read(err)),
+        Err(err) => Err(Error::Read(path, err)),
     }
 }
 
-/// What `run` would do: whether the file changes, and the steps after it;
+/// Puts the file at `path` back as it was (`text`: none for one there wasn't),
+/// written with `write`.
+pub(super) fn put_back(
+    path: &'static str,
+    text: Option<&str>,
+    write: fn(&Path, &str) -> io::Result<()>,
+) -> Result<(), Error> {
+    match text {
+        Some(text) => write(Path::new(path), text),
+        None => match fs::remove_file(path) {
+            Err(err) if err.kind() != io::ErrorKind::NotFound => Err(err),
+            _ => Ok(()),
+        },
+    }
+    .map_err(|err| Error::Write(path, err))
+}
+
+/// What a go would do: whether the file changes, and the steps after it;
 /// and what's live now. Reads only.
 fn changes(config: &WgQuickConfig, text: &str) -> Result<(bool, Vec<Step>, Live), Error> {
-    let file_changed = current()?.as_deref() != Some(text);
+    let file_changed = current(PATH)?.as_deref() != Some(text);
     let live = Live::read()?;
     let steps = steps(&live, config, file_changed)?;
 
     Ok((file_changed, steps, live))
 }
 
+/// What the node had of the WireGuard before a run: the wg-quick file (none:
+/// there was none), and whether its unit ran and was enabled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Kept {
+    pub(crate) file: Option<String>,
+    pub(crate) active: bool,
+    pub(crate) enabled: bool,
+}
+
 /// What a run prepared: the file its go writes, if it changes, and what
 /// systemd does after.
-pub struct Prepared {
+pub(super) struct Prepared {
     /// The file with its secrets in; none when it doesn't change.
     text: Option<String>,
     /// The peers whose sessions go before a reload: their preshared key
     /// changed.
     fresh: Vec<String>,
     steps: Vec<Step>,
-    changes: Changes,
-}
-
-impl Prepared {
-    /// Nothing to do.
-    pub(crate) fn nothing() -> Self {
-        Self {
-            text: None,
-            fresh: Vec::new(),
-            steps: Vec::new(),
-            changes: Changes::none(),
-        }
-    }
-
     /// What the go changes, as the dry run shows it.
-    pub fn changes(&self) -> &Changes {
-        &self.changes
-    }
+    pub(super) changes: Changes,
+    /// What the node has, for the run to put back.
+    pub(super) kept: Kept,
 }
 
-/// Begins `run` to write `text`, the file with its secrets in, and make it
-/// live, changing nothing yet: works out whether the file changes and what
-/// systemd does after, and keeps what the node has for the run.
-pub(super) fn prepare(config: &WgQuickConfig, text: &str, run: &Run) -> Result<Prepared, Error> {
+/// Works out what writing `text`, the file with its secrets in, and making it
+/// live changes, changing nothing yet: none when nothing does.
+pub(super) fn prepare(config: &WgQuickConfig, text: &str) -> Result<Option<Prepared>, Error> {
     let (file_changed, steps, live) = changes(config, text)?;
     if !file_changed && steps.is_empty() {
-        run::begin(run, INTERFACE, None)?;
-        return Ok(Prepared::nothing());
+        return Ok(None);
     }
 
-    let before = current()?;
+    let before = current(PATH)?;
     // A reload keeps the sessions it has: a peer whose preshared key changed
     // gets a fresh one. A start or a restart has none to keep.
     let fresh = if steps.contains(&Step::Reload) {
@@ -408,48 +417,33 @@ pub(super) fn prepare(config: &WgQuickConfig, text: &str, run: &Run) -> Result<P
     } else {
         Vec::new()
     };
-    let backup = Backup::Linux {
-        file: before,
-        active: live.active,
-        enabled: live.enabled,
-    };
-    run::begin(run, INTERFACE, Some(backup))?;
 
-    Ok(Prepared {
+    Ok(Some(Prepared {
         text: file_changed.then(|| text.to_owned()),
         fresh,
         changes: described(config, file_changed, &steps),
         steps,
-    })
+        kept: Kept {
+            file: before,
+            active: live.active,
+            enabled: live.enabled,
+        },
+    }))
 }
 
-/// Applies what run `id` prepared: writes the file, then has systemd make it
-/// live. When any of it fails, puts back what the node had. Returns what
-/// changed.
-pub(super) fn go(prepared: &Prepared, id: &str) -> Result<Vec<String>, Error> {
-    run::go(id)?;
-
-    let applied = (|| {
-        if let Some(text) = &prepared.text {
-            file::write_private(Path::new(PATH), text).map_err(Error::Write)?;
-        }
-        for key in &prepared.fresh {
-            wg::remove_peer(INTERFACE, key).map_err(Error::FreshSession)?;
-        }
-        for step in &prepared.steps {
-            step.run()?;
-        }
-        Ok(())
-    })();
-    if let Err(cause) = applied {
-        let cause = Box::new(cause);
-        return Err(match run::rollback(id) {
-            Ok(()) => Error::PutBack(cause),
-            Err(rollback) => Error::NotPutBack { cause, rollback },
-        });
+/// Applies what was prepared: writes the file, then has systemd make it live.
+pub(super) fn go(prepared: &Prepared) -> Result<(), Error> {
+    if let Some(text) = &prepared.text {
+        file::write_private(Path::new(PATH), text).map_err(|err| Error::Write(PATH, err))?;
+    }
+    for key in &prepared.fresh {
+        wg::remove_peer(INTERFACE, key).map_err(Error::FreshSession)?;
+    }
+    for step in &prepared.steps {
+        step.run()?;
     }
 
-    Ok(prepared.changes.summary.clone())
+    Ok(())
 }
 
 /// Each peer's public key in a wg-quick file, and its pair's preshared key.
@@ -492,24 +486,18 @@ fn psk_changed(before: &str, after: &str) -> Vec<String> {
         .collect()
 }
 
-/// Puts back the wg-quick file a run changed as it was (`file`: none for one
-/// there wasn't), and its unit running and enabled as it was.
-pub(super) fn restore(file: Option<&str>, active: bool, enabled: bool) -> Result<(), Error> {
-    match file {
-        Some(text) => file::write_private(Path::new(PATH), text).map_err(Error::Write)?,
-        None => match fs::remove_file(PATH) {
-            Err(err) if err.kind() != io::ErrorKind::NotFound => return Err(Error::Write(err)),
-            _ => {}
-        },
-    }
+/// Puts back the wg-quick file a run changed as it was, and its unit running
+/// and enabled as it was.
+pub(super) fn restore(kept: &Kept) -> Result<(), Error> {
+    put_back(PATH, kept.file.as_deref(), file::write_private)?;
 
     run(
         "systemctl",
-        &[if active { "restart" } else { "stop" }, UNIT],
+        &[if kept.active { "restart" } else { "stop" }, UNIT],
     )?;
     run(
         "systemctl",
-        &[if enabled { "enable" } else { "disable" }, UNIT],
+        &[if kept.enabled { "enable" } else { "disable" }, UNIT],
     )?;
 
     Ok(())

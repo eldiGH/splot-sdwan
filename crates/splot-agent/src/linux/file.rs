@@ -1,29 +1,46 @@
-//! Writing the files splot owns on a Linux node, which hold secrets: whole,
-//! and readable by root only.
+//! Writing the files splot owns on a Linux node: whole, and those that hold
+//! secrets readable by root only.
 
 use std::{
     fs::{self, DirBuilder, OpenOptions},
     io::{self, Write},
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
     path::Path,
 };
 
 /// Only root may read or write them, or list the directory splot makes for them.
 const FILE_MODE: u32 = 0o600;
 const DIR_MODE: u32 = 0o700;
+/// Anyone may read it, as systemd's units are.
+const PUBLIC_MODE: u32 = 0o644;
 
 /// Writes `text` to `path` so that it's never seen half-written, nor readable
 /// by anyone but root at any point: into a new file beside it, private from the
 /// start, then renamed over it. The directory is made, private, if it's missing.
 pub(super) fn write_private(path: &Path, text: &str) -> io::Result<()> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| io::Error::other("a file's path names its directory"))?;
     DirBuilder::new()
         .recursive(true)
         .mode(DIR_MODE)
-        .create(dir)?;
+        .create(dir(path)?)?;
 
+    replace(path, text, FILE_MODE)
+}
+
+/// Writes `text` to `path`, in a directory that's there, readable by anyone,
+/// never seen half-written.
+pub(super) fn write_public(path: &Path, text: &str) -> io::Result<()> {
+    replace(path, text, PUBLIC_MODE)
+}
+
+fn dir(path: &Path) -> io::Result<&Path> {
+    path.parent()
+        .ok_or_else(|| io::Error::other("a file's path names its directory"))
+}
+
+/// Writes `text` into a new file beside `path`, `mode` from the start, then
+/// renames it over `path`.
+fn replace(path: &Path, text: &str, mode: u32) -> io::Result<()> {
+    let dir = dir(path)?;
     let mut name = path.file_name().unwrap_or_default().to_owned();
     name.push(".splot-new");
     let new = dir.join(name);
@@ -33,12 +50,14 @@ pub(super) fn write_private(path: &Path, text: &str) -> io::Result<()> {
         _ => {}
     }
 
-    // The umask can only take bits away from the mode: never more than 0600.
+    // Never more open than `mode`, from the start; set again after, since the
+    // umask may have taken bits away from it.
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(FILE_MODE)
+        .mode(mode)
         .open(&new)?;
+    file.set_permissions(fs::Permissions::from_mode(mode))?;
     file.write_all(text.as_bytes())?;
     file.sync_all()?;
 
@@ -47,8 +66,6 @@ pub(super) fn write_private(path: &Path, text: &str) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt;
-
     use super::*;
     use crate::test_support::{TempDir, mode};
 
@@ -89,6 +106,19 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "new\n");
         assert_eq!(mode(&path), 0o600);
         assert_eq!(files(&temp.0), ["keys"]);
+    }
+
+    #[test]
+    fn a_public_file_is_readable_by_anyone() {
+        let temp = TempDir::new("write-public");
+        let path = temp.0.join("splot-firewall.service");
+        fs::write(&path, "old\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        write_public(&path, "new\n").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new\n");
+        assert_eq!(mode(&path), 0o644);
+        assert_eq!(files(&temp.0), ["splot-firewall.service"]);
     }
 
     #[test]

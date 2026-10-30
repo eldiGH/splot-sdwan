@@ -3,8 +3,8 @@
 # container with systemd, and runs splot here, as an operator would, carrying
 # the x86_64 agent and reaching the container over ssh at its platform.ssh, as
 # node Barn of splot.example.yml (its firewall and DHCP set to none: splot
-# manages only a Linux node's WireGuard so far). It asks systemd, wg and ip
-# whether the result works.
+# doesn't manage a Linux node's DHCP yet, and its firewall isn't checked here
+# yet). It asks systemd, wg and ip whether the result works.
 #
 #   scripts/linux-check.sh
 #
@@ -153,12 +153,12 @@ if ! reachable; then
 	exit 1
 fi
 
-# The example as it is asks splot for Barn's firewall and DHCP.
+# The example as it is asks splot for Barn's DHCP.
 output=$(config=$work/splot.example.yml splot apply --node Barn --dry-run)
-if printf '%s' "$output" | grep -q "splot can't manage Barn's firewall (nftables) or dhcp (dnsmasq) on Linux yet"; then
-	pass "apply refuses a firewall and DHCP splot can't manage on Linux yet"
+if printf '%s' "$output" | grep -q "splot can't manage Barn's dhcp (dnsmasq) on Linux yet"; then
+	pass "apply refuses a DHCP splot can't manage on Linux yet"
 else
-	fail "apply refuses a firewall and DHCP splot can't manage on Linux yet" "$output"
+	fail "apply refuses a DHCP splot can't manage on Linux yet" "$output"
 fi
 
 # Only init writes the key: until it has run, the dry run says so and creates

@@ -5,3 +5,8 @@ pub const MESH_INTERFACE_NAME: &str = "mesh";
 /// The mesh interface's device on the node, on every platform: netifd names it
 /// after its uci section, and wg-quick after its file.
 pub const MESH_DEVICE: &str = "spl_mesh";
+/// splot's own nftables table on a Linux node, `inet splot`: its family and
+/// its name. splot renders it, the agent loads it, and nothing of splot's
+/// touches another.
+pub const NFT_FAMILY: &str = "inet";
+pub const NFT_TABLE: &str = "splot";
