@@ -5,8 +5,9 @@
 # still answers through the tunnel, and rolled back when the change cuts it off;
 # then runs across the mesh, both routers at once: all or nothing; then a Linux
 # node, Barn (Debian with wg-quick), joins, and runs across the three; then a
-# router itself (`Home.$node`) is let in to a service on the other; last, a run
-# on a node that holds a session the other end dropped still checks that peer.
+# router itself (`Home.$node`) is let in to a service on the other; a run on a
+# node that holds a session the other end dropped still checks that peer; last,
+# a port forward from Home's WAN reaches Cabin over the mesh.
 #
 #   scripts/mesh-check.sh [VERSION]     default: the newest version in use
 #
@@ -27,6 +28,9 @@ BINARY=target/$TARGET/release/splot
 HOME_PORT=52820
 CABIN_PORT=52821
 BARN_PORT=52822
+# A TCP port on Home's WAN, published like WireGuard's, for a port forward
+# from the internet.
+FORWARD_PORT=2222
 
 failures=0
 pass() { printf '  PASS  %s\n' "$1"; }
@@ -118,8 +122,17 @@ boot() {
 	podman rm --force --ignore --time 0 "$container" >/dev/null
 	# --map-gw: the router reaches this machine's loopback at its gateway's
 	# address, and through it the other router's published WireGuard port.
-	podman run --detach --name "$container" --privileged --network pasta:-I,eth1,--map-gw \
-		--publish 127.0.0.1::22 --publish "127.0.0.1:$port:$port/udp" "$IMAGE" >/dev/null
+	local network=pasta:-I,eth1,--map-gw forward=()
+	# Home takes a port forward on its WAN: what this machine sends its
+	# published ports comes in there, from the gateway's address, as from the
+	# internet. pasta would otherwise splice it into the router's loopback,
+	# where no port forward sees it.
+	if [ "$name" = home ]; then
+		network+=,--no-splice
+		forward=(--publish "127.0.0.1::$FORWARD_PORT")
+	fi
+	podman run --detach --name "$container" --privileged --network "$network" \
+		--publish 127.0.0.1::22 --publish "127.0.0.1:$port:$port/udp" "${forward[@]}" "$IMAGE" >/dev/null
 
 	local up=
 	for _ in $(seq 60); do
@@ -500,6 +513,46 @@ if [ "$held_for" -lt 120 ] && [ "$dropped" = 0 ] && [ "$status" -eq 0 ] &&
 else
 	fail "a session the other end dropped: Cabin's probe waits for WireGuard, and its run checks Home" \
 		"Cabin's session with Home ${held_for}s old, Home's last handshake with Cabin: ${dropped:-none}; exit $status: $output"
+fi
+
+# A port forward from Home's WAN into the mesh: Cabin's own ssh, at Home's
+# port $FORWARD_PORT. What this machine sends there arrives on Home's WAN from
+# an address WireGuard at Cabin wouldn't take from Home, and Cabin would answer
+# it by its own route: Home sends it as itself, from its mesh IP, which Cabin
+# lets in. So this machine logs in to Cabin through Home, and Cabin sees Home.
+cat >>"$work/ssh_config" <<EOF
+Host cabin-via-home
+	HostName 127.0.0.1
+	Port $(podman port splot-openwrt-mesh-home "$FORWARD_PORT/tcp" | sed 's/.*://')
+	User root
+	IdentityFile $work/key
+	IdentitiesOnly yes
+	StrictHostKeyChecking no
+	UserKnownHostsFile /dev/null
+	LogLevel ERROR
+	ConnectTimeout 5
+
+EOF
+# Cabin's WireGuard key and the address its ssh sees, through Home's forward.
+through_home() {
+	PATH="$work/bin:$PATH" timeout 10 ssh cabin-via-home 'wg show spl_mesh public-key; echo "$SSH_CLIENT"' 2>&1
+}
+before=$(through_home) || true
+sed -i "/^  Cabin:$/,/^  Barn:$/ s/^    wanZone: wan$/&\n    services:\n      ssh: { port: '$FORWARD_PORT:22', proto: tcp, wan: { via: Home } }/" "$work/splot.yml"
+output=$(splot apply --yes 2>&1) && status=0 || status=$?
+# fw4 takes the change when procd reloads it, a second or two after the run's
+# go, which a quick run's checks and confirm don't wait for: the forward gets
+# that long.
+for _ in $(seq 15); do
+	after=$(through_home) && [ "$(sed -n 1p <<<"$after")" = "$cabin_key" ] && break
+	sleep 1
+done
+if ! grep -qF "$cabin_key" <<<"$before" && [ "$status" -eq 0 ] && grep -q '^Confirmed' <<<"$output" &&
+	[ "$(sed -n 1p <<<"$after")" = "$cabin_key" ] && [[ $(sed -n 2p <<<"$after") == '10.100.0.1 '* ]]; then
+	pass "a port forward from Home's WAN reaches Cabin over the mesh, as Home"
+else
+	fail "a port forward from Home's WAN reaches Cabin over the mesh, as Home" \
+		"before: $before"$'\n'"exit $status: $output"$'\n'"after: $after"$'\n'"$(run home 'nft list chain inet fw4 srcnat_spl_mesh' 2>&1)"
 fi
 
 if [ "${SPLOT_CHECK_KEEP:-}" = 1 ]; then
