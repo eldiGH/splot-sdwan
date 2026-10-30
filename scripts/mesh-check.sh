@@ -4,10 +4,11 @@
 # over ssh. It checks that an apply is confirmed only while the other router
 # still answers through the tunnel, and rolled back when the change cuts it off;
 # then runs across the mesh, both routers at once: all or nothing; then a Linux
-# node, Barn (Debian with wg-quick), joins, and runs across the three; then a
-# router itself (`Home.$node`) is let in to a service on the other; a run on a
-# node that holds a session the other end dropped still checks that peer; last,
-# a port forward from Home's WAN reaches Cabin over the mesh.
+# node, Barn (Debian with wg-quick, and its firewall as splot's nft table),
+# joins, and runs across the three; then a router itself (`Home.$node`) is let
+# in to a service on the other, and to one on Barn; a run on a node that holds
+# a session the other end dropped still checks that peer; last, a port forward
+# from Home's WAN reaches Cabin over the mesh.
 #
 #   scripts/mesh-check.sh [VERSION]     default: the newest version in use
 #
@@ -272,9 +273,9 @@ fi
 
 # Across the mesh: what each router holds, and whether a run is left there.
 held() {
-	local file=/etc/config/network
-	[ "$1" != barn ] || file=/etc/wireguard/spl_mesh.conf
-	run "$1" "md5sum $file; [ ! -e /tmp/splot/run ] || echo 'a run is left'"
+	local files=/etc/config/network
+	[ "$1" != barn ] || files="/etc/wireguard/spl_mesh.conf /etc/splot/firewall.nft"
+	run "$1" "md5sum $files; [ ! -e /tmp/splot/run ] || echo 'a run is left'"
 }
 last() { run "$1" 'cat /tmp/splot/last 2>/dev/null' || true; }
 
@@ -383,20 +384,24 @@ else
 fi
 
 # A Linux node joins: Barn, with a key of its own and a preshared key with
-# each router. Every node's peer list changes, in one run. A run checks only
-# the tunnels that worked before it, so the new ones are pinged here.
+# each router, and its firewall on: the peers' pings get through it. Every
+# node's peer list changes, in one run. A run checks only the tunnels that
+# worked before it, so the new ones are pinged here. Its WAN is the
+# container's interface, which pasta names after this machine's.
 barn() {
 	cat <<EOF
   Barn:
     platform:
       os: linux
       wireguard: wg-quick
-      firewall: none
+      firewall: nftables
       dhcp: none
       dns: none
       ssh: barn
+      interfaces: { wan: $barn_wan }
     publicKey: $1
     endpoint: barn.example.net
+    wanZone: wan
     listenPort: $BARN_PORT
     meshIp: 10.100.0.4
 EOF
@@ -410,9 +415,9 @@ with_barn() {
 	} >"$work/splot.yml.new"
 	mv "$work/splot.yml.new" "$work/splot.yml"
 }
-# Its setup without the config's warning (Barn leaves its firewall alone): a
-# failure there shows in the check after it.
+# Its setup quietly: a failure there shows in the check after it.
 boot_barn
+barn_wan=$(run barn "ip -o route show default | awk '{ print \$5; exit }'")
 with_barn BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=
 splot init --node Barn >/dev/null 2>&1
 with_barn "$(run barn 'sed -n "s/^private-key //p" /etc/splot/keys | wg pubkey')"
@@ -426,11 +431,12 @@ if [ "$status" -eq 0 ] && grep -q '^Applied: Barn, Cabin, Home$' <<<"$output" &&
 	grep -q '^Confirmed: splot reached every node again, and each keeps the change.$' <<<"$output" &&
 	run home 'ping -c 3 -W 2 10.100.0.4 >/dev/null' && run cabin 'ping -c 3 -W 2 10.100.0.4 >/dev/null' &&
 	run barn 'ping -c 3 -W 2 10.100.0.1 >/dev/null && ping -c 3 -W 2 10.100.0.2 >/dev/null' &&
-	run home 'ping -c 3 -W 2 10.100.0.2 >/dev/null'; then
-	pass "a Linux node joins: every node's peers in one run, all confirmed, each pair answers"
+	run home 'ping -c 3 -W 2 10.100.0.2 >/dev/null' &&
+	run barn 'systemctl is-active --quiet splot-firewall && nft list table inet splot >/dev/null'; then
+	pass "a Linux node joins, its firewall on: every node's peers in one run, all confirmed, each pair answers"
 else
-	fail "a Linux node joins: every node's peers in one run, all confirmed, each pair answers" \
-		"exit $status: $output"$'\n'"$(run barn 'wg show spl_mesh' 2>&1)"
+	fail "a Linux node joins, its firewall on: every node's peers in one run, all confirmed, each pair answers" \
+		"exit $status: $output"$'\n'"$(run barn 'wg show spl_mesh; nft list table inet splot' 2>&1)"
 fi
 
 # Home and Cabin dial each other where nothing answers: Cabin loses Home, so
@@ -456,33 +462,48 @@ else
 		"exit $status: $output"$'\n'"barn: $(last barn)"
 fi
 
-# Whether node $1 reaches Cabin's ssh at its mesh IP: dropbear's banner.
-# OpenWrt's nc has no timeout, and the router no `timeout`: the shell ends it.
-probe_cabin() {
+# Whether node $1 reaches the ssh at mesh IP $2: its banner. OpenWrt's nc has
+# no timeout, and the router no `timeout`: the shell ends it.
+probe() {
 	case $1 in
-	barn) run barn 'timeout 4 bash -c "exec 3<>/dev/tcp/10.100.0.2/22 && head -c 7 <&3"' ;;
-	*) run "$1" 'sleep 2 | nc 10.100.0.2 22 >/tmp/probe 2>/dev/null & sleep 4; kill $! 2>/dev/null
-		head -c 7 /tmp/probe; rm -f /tmp/probe' ;;
+	barn) run barn "timeout 4 bash -c 'exec 3<>/dev/tcp/$2/22 && head -c 7 <&3'" ;;
+	*) run "$1" "sleep 2 | nc $2 22 >/tmp/probe 2>/dev/null & sleep 4; kill \$! 2>/dev/null
+		head -c 7 /tmp/probe; rm -f /tmp/probe" ;;
 	esac
 }
-reaches_cabin() {
+reaches() {
 	local banner
-	banner=$(probe_cabin "$1" 2>/dev/null) || true
+	banner=$(probe "$1" "$2" 2>/dev/null) || true
 	[[ $banner == SSH-* ]]
 }
 # A node itself over the mesh: what Home sends comes from its mesh IP, which
 # only `Home.$node` names. Cabin drops Home's connection to its ssh until a
 # service lets Home itself in, and then still drops Barn's.
 dropped_before=
-reaches_cabin home || dropped_before=1
+reaches home 10.100.0.2 || dropped_before=1
 sed -i '/^  Cabin:$/,/^  Barn:$/ s/^    wanZone: wan$/&\n    services:\n      ssh: { port: 22, proto: tcp, allowFrom: Home.$node }/' "$work/splot.yml"
 output=$(splot apply --node Cabin --yes 2>&1) && status=0 || status=$?
 if [ -n "$dropped_before" ] && [ "$status" -eq 0 ] && grep -q '^Confirmed' <<<"$output" &&
-	reaches_cabin home && ! reaches_cabin barn; then
+	reaches home 10.100.0.2 && ! reaches barn 10.100.0.2; then
 	pass "a node itself over the mesh: Home let in to Cabin's ssh as Home.\$node, Barn still dropped"
 else
 	fail "a node itself over the mesh: Home let in to Cabin's ssh as Home.\$node, Barn still dropped" \
-		"dropped before: ${dropped_before:-no}; exit $status: $output"$'\n'"$(run cabin 'fw4 print | grep -i ssh' 2>&1)"$'\n'"home: $(probe_cabin home 2>&1)"$'\n'"barn: $(probe_cabin barn 2>&1)"
+		"dropped before: ${dropped_before:-no}; exit $status: $output"$'\n'"$(run cabin 'fw4 print | grep -i ssh' 2>&1)"$'\n'"home: $(probe home 10.100.0.2 2>&1)"$'\n'"barn: $(probe barn 10.100.0.2 2>&1)"
+fi
+
+# The same on Barn, whose firewall is splot's nft table: Barn drops Home's
+# connection to its ssh, at its mesh IP, until a service lets Home itself in,
+# and then still drops Cabin's.
+dropped_before=
+reaches home 10.100.0.4 || dropped_before=1
+sed -i '/^  Barn:$/,/^clients:/ s/^    meshIp: 10.100.0.4$/&\n    services:\n      ssh: { port: 22, proto: tcp, allowFrom: Home.$node }/' "$work/splot.yml"
+output=$(splot apply --node Barn --yes 2>&1) && status=0 || status=$?
+if [ -n "$dropped_before" ] && [ "$status" -eq 0 ] && grep -q '^Confirmed' <<<"$output" &&
+	reaches home 10.100.0.4 && ! reaches cabin 10.100.0.4; then
+	pass "Barn's nft table over the mesh: Home let in to Barn's ssh as Home.\$node, Cabin still dropped"
+else
+	fail "Barn's nft table over the mesh: Home let in to Barn's ssh as Home.\$node, Cabin still dropped" \
+		"dropped before: ${dropped_before:-no}; exit $status: $output"$'\n'"$(run barn 'nft list chain inet splot input' 2>&1)"$'\n'"home: $(probe home 10.100.0.4 2>&1)"$'\n'"cabin: $(probe cabin 10.100.0.4 2>&1)"
 fi
 
 # Node $1's latest handshake with the peer whose key is $2: seconds since the

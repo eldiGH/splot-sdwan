@@ -2,9 +2,10 @@
 # Checks what splot does on a Linux node against real Linux: boots a Debian
 # container with systemd, and runs splot here, as an operator would, carrying
 # the x86_64 agent and reaching the container over ssh at its platform.ssh, as
-# node Barn of splot.example.yml (its firewall and DHCP set to none: splot
-# doesn't manage a Linux node's DHCP yet, and its firewall isn't checked here
-# yet). It asks systemd, wg and ip whether the result works.
+# node Barn of splot.example.yml (its DHCP set to none: splot doesn't manage a
+# Linux node's DHCP yet; its firewall too at first, then splot's own beside
+# tables of the operator's). It asks systemd, wg, ip and nft whether the result
+# works.
 #
 #   scripts/linux-check.sh
 #
@@ -30,6 +31,9 @@ CABIN_ADDRESS=203.0.113.20
 
 CONF=/etc/wireguard/spl_mesh.conf
 UNIT=wg-quick@spl_mesh
+FIREWALL=/etc/splot/firewall.nft
+FIREWALL_UNIT=splot-firewall
+FIREWALL_UNIT_FILE=/etc/systemd/system/$FIREWALL_UNIT.service
 
 failures=0
 pass() { printf '  PASS  %s\n' "$1"; }
@@ -87,7 +91,8 @@ fi
 exec $(command -v ssh) -F "$work/ssh_config" "\$@"
 EOF
 chmod +x "$work/bin/ssh"
-# The example with Barn's firewall and DHCP left alone, reached as `barn`.
+# The example with Barn's firewall and DHCP left alone, reached as `barn`. The
+# firewall is turned on for its own checks, after the WireGuard's.
 sed 's/ssh: root@192.168.4.1/ssh: barn/' splot.example.yml >"$work/splot.example.yml"
 sed 's/firewall: nftables/firewall: none/; s/dhcp: dnsmasq/dhcp: none/' "$work/splot.example.yml" >"$work/splot.yml"
 
@@ -316,36 +321,51 @@ $output"
 fi
 
 # The node keeps a change only once splot reaches it again: cut off after the
-# apply, it puts back what it had by itself at the deadline, the unit running
-# as it was. splot waits for the deadline (meanwhile the change is there), and
-# asks again: still cut off, it says so.
+# apply (the ssh wrapper fails every later session), it puts back what it had
+# by itself at the deadline. splot waits for the deadline (meanwhile the change
+# is there), and asks again: still cut off, it says so. What the node command
+# $1 prints is kept before ($cut_before), while the change is there
+# ($cut_applied) and after ($cut_after); splot's output is in $output.
+cut_off_apply() {
+	cut_before=$(run "$1" 2>&1 || true)
+	echo 0 >"$work/cut"
+	PATH="$work/bin:$PATH" "$BINARY" --config "$work/splot.yml" apply --node Barn --yes --confirm-within 10 \
+		>"$work/cut.out" 2>&1 &
+	local waiting=$!
+	for _ in $(seq 40); do
+		if grep -q 'waiting for its deadline' "$work/cut.out"; then break; fi
+		sleep 0.5
+	done
+	cut_applied=$(run "$1" 2>&1 || true)
+	wait "$waiting" && status=0 || status=$?
+	rm -f "$work/cut"
+	output=$(cat "$work/cut.out")
+	cut_after=$(run "$1" 2>&1 || true)
+}
+# Whether the apply cut off went so: splot waited, and said so; the node had
+# the change, then what it had before, and its run ended put back.
+put_back_by_itself() {
+	[ "$status" -ne 0 ] && grep -q "^Couldn't check Barn: " <<<"$output" &&
+		grep -q '^  Barn  unreachable: waiting for its deadline' <<<"$output" &&
+		grep -q '^  Barn  still unreachable: ' <<<"$output" &&
+		grep -q "splot couldn't check Barn, so Barn didn't keep it" <<<"$output" &&
+		[ "$cut_applied" != "$cut_before" ] && [ "$cut_after" = "$cut_before" ] &&
+		run 'grep -q "rolled back" /tmp/splot/last' && ! run '[ -e /tmp/splot/run ]'
+}
+# What a check of a cut off apply shows when it fails.
+cut_off_shown() {
+	printf 'exit %s: %s\nlast: %s\nbefore: %s\napplied: %s\nafter: %s' "$status" "$output" \
+		"$(run 'cat /tmp/splot/last' 2>&1)" "$cut_before" "$cut_applied" "$cut_after"
+}
+
 sed -i 's/endpoint: 203.0.113.21/endpoint: 203.0.113.22/' "$work/splot.yml"
-cut_before=$(run "md5sum $CONF")
-echo 0 >"$work/cut"
-PATH="$work/bin:$PATH" "$BINARY" --config "$work/splot.yml" apply --node Barn --yes --confirm-within 10 \
-	>"$work/cut.out" 2>&1 &
-waiting=$!
-for _ in $(seq 40); do
-	if grep -q 'waiting for its deadline' "$work/cut.out"; then break; fi
-	sleep 0.5
-done
-cut_applied=$(run "md5sum $CONF")
-wait "$waiting" && status=0 || status=$?
-rm -f "$work/cut"
-output=$(cat "$work/cut.out")
-cut_after=$(run "md5sum $CONF")
-last=$(run 'cat /tmp/splot/last 2>&1') || true
-if [ "$status" -ne 0 ] && grep -q "^Couldn't check Barn: " <<<"$output" &&
-	grep -q '^  Barn  unreachable: waiting for its deadline' <<<"$output" &&
-	grep -q '^  Barn  still unreachable: ' <<<"$output" &&
-	grep -q "splot couldn't check Barn, so Barn didn't keep it" <<<"$output" &&
-	[ "$cut_applied" != "$cut_before" ] && [ "$cut_after" = "$cut_before" ] &&
-	grep -q "rolled back" <<<"$last" && ! run '[ -e /tmp/splot/run ]' &&
+cut_off_apply "md5sum $CONF"
+if put_back_by_itself &&
 	run "systemctl is-active --quiet $UNIT" && run 'wg show spl_mesh endpoints' | grep -q '203\.0\.113\.21:51820'; then
 	pass "cut off before the confirm: the node put back what it had at the deadline, $UNIT running; splot waited"
 else
 	fail "cut off before the confirm: the node put back what it had at the deadline, $UNIT running; splot waited" \
-		"exit $status: $output"$'\n'"last: $last"$'\n'"before: $cut_before"$'\n'"applied: $cut_applied"$'\n'"after: $cut_after"
+		"$(cut_off_shown)"
 fi
 sed -i 's/endpoint: 203.0.113.22/endpoint: 203.0.113.21/' "$work/splot.yml"
 
@@ -380,6 +400,121 @@ else
 fi
 run "systemctl start $UNIT"
 
+# The firewall: splot's own table, beside two of the operator's, which it
+# leaves as they are: one that lets ssh in, and one that drops what it doesn't
+# forward, as Docker's does.
+run 'nft -f - <<EOF
+table inet host {
+	chain input {
+		type filter hook input priority filter; policy accept;
+		tcp dport 22 accept
+	}
+}
+table ip filter {
+	chain FORWARD {
+		type filter hook forward priority filter; policy drop;
+	}
+}
+EOF'
+# The operator's tables, handles included: a table written again gets new ones.
+others() { run 'nft -a list table inet host; nft -a list table ip filter'; }
+others_before=$(others)
+live() { run 'nft list table inet splot'; }
+# Whether splot's table is loaded, and is what nft makes of the file: loaded
+# again in a network namespace of its own.
+loaded() {
+	local live
+	live=$(live 2>&1) &&
+		[ "$live" = "$(run "unshare --net sh -c 'nft -f $FIREWALL && nft list table inet splot'" 2>&1)" ]
+}
+sed -i 's/^      firewall: none$/      firewall: nftables/' "$work/splot.yml"
+
+# With the agent's warnings, which splot() leaves out.
+output=$(PATH="$work/bin:$PATH" "$BINARY" --config "$work/splot.yml" apply --node Barn --dry-run 2>&1) || true
+if grep -q "^# $FIREWALL becomes:$" <<<"$output" &&
+	grep -q "^#   systemctl enable --now $FIREWALL_UNIT$" <<<"$output" &&
+	grep -qF "warning: Barn: table ip filter: chain FORWARD drops what it doesn't accept (policy drop, hook forward)" <<<"$output" &&
+	! grep -q 'warning: Barn: table inet host' <<<"$output" &&
+	! run "[ -e $FIREWALL ] || [ -e $FIREWALL_UNIT_FILE ]" && ! live >/dev/null 2>&1; then
+	pass "firewall, dry run: the file, then the start; a warning about the table that drops what it doesn't forward; writes nothing"
+else
+	fail "firewall, dry run: the file, then the start; a warning about the table that drops what it doesn't forward; writes nothing" "$output"
+fi
+
+# Cut off: the node had no table of splot's, no unit and no file, and has none
+# again, the operator's tables as they were.
+cut_off_apply "md5sum $CONF $FIREWALL $FIREWALL_UNIT_FILE; systemctl is-active $FIREWALL_UNIT; systemctl is-enabled $FIREWALL_UNIT; nft list tables"
+if put_back_by_itself && ! run "[ -e $FIREWALL ] || [ -e $FIREWALL_UNIT_FILE ]" &&
+	[ "$(others)" = "$others_before" ]; then
+	pass "firewall, cut off before the confirm: the node put back what it had, no table, unit or file of splot's"
+else
+	fail "firewall, cut off before the confirm: the node put back what it had, no table, unit or file of splot's" \
+		"$(cut_off_shown)"$'\n'"$(others 2>&1)"
+fi
+
+output=$(splot apply --node Barn --yes)
+if applied "$output" "$FIREWALL, $FIREWALL_UNIT_FILE, $FIREWALL_UNIT started and enabled" &&
+	[ "$(run "stat -c %a $FIREWALL $FIREWALL_UNIT_FILE" | paste -sd' ')" = "600 644" ] &&
+	run "systemctl is-active --quiet $FIREWALL_UNIT && systemctl is-enabled --quiet $FIREWALL_UNIT" &&
+	loaded && grep -qF 'iifname "spl_mesh" drop' <<<"$(live)" &&
+	[ "$(others)" = "$others_before" ]; then
+	pass "firewall, apply: the file (0600) and the unit, started and enabled; the table loaded as the file says; the operator's tables untouched"
+else
+	fail "firewall, apply: the file (0600) and the unit, started and enabled; the table loaded as the file says; the operator's tables untouched" \
+		"$output"$'\n'"$(live 2>&1)"$'\n'"$(others 2>&1)"
+fi
+
+# Handles included: a table loaded again gets new ones.
+firewall_state() { run "stat -c '%i %Y' $FIREWALL $FIREWALL_UNIT_FILE; nft -a list table inet splot | md5sum"; }
+before=$(firewall_state)
+output=$(splot apply --node Barn --yes)
+if [ "$output" = "$NOTHING" ] && [ "$before" = "$(firewall_state)" ] &&
+	[ "$(others)" = "$others_before" ]; then
+	pass "firewall, second apply: nothing to change, the files and the table untouched"
+else
+	fail "firewall, second apply: nothing to change, the files and the table untouched" "$output"
+fi
+
+# Barn's own ssh moves: the file changes, and is loaded again; the WireGuard
+# stays as it is.
+sed -i '/^      # SSH to Barn itself/,/port:/ s/port: 22$/port: 2222/' "$work/splot.yml"
+before=$(file_state)
+dry=$(splot apply --node Barn --dry-run)
+output=$(splot apply --node Barn --yes)
+if grep -q "^#   systemctl reload $FIREWALL_UNIT$" <<<"$dry" &&
+	applied "$output" "$FIREWALL, $FIREWALL_UNIT reloaded" &&
+	loaded && grep -q 'tcp dport 2222 accept' <<<"$(live)" && ! grep -q 'tcp dport 22 accept' <<<"$(live)" &&
+	[ "$before" = "$(file_state)" ]; then
+	pass "firewall change: loaded again, live; the WireGuard untouched"
+else
+	fail "firewall change: loaded again, live; the WireGuard untouched" "$dry
+$output"
+fi
+
+# Removed some other way: loaded again, and the dry run says why.
+run 'nft delete table inet splot'
+dry=$(splot apply --node Barn --dry-run)
+output=$(splot apply --node Barn --yes)
+if grep -qF "#   systemctl reload $FIREWALL_UNIT  (table inet splot isn't loaded)" <<<"$dry" &&
+	applied "$output" "$FIREWALL_UNIT reloaded" && loaded; then
+	pass "firewall: a table removed some other way is loaded again, saying why"
+else
+	fail "firewall: a table removed some other way is loaded again, saying why" "$dry
+$output"
+fi
+
+# Cut off after a change: the node loads the table it had again by itself.
+sed -i '/^      # SSH to Barn itself/,/port:/ s/port: 2222$/port: 2223/' "$work/splot.yml"
+cut_off_apply "md5sum $FIREWALL; nft list table inet splot"
+if put_back_by_itself && loaded && grep -q 'tcp dport 2222 accept' <<<"$(live)" &&
+	run "systemctl is-active --quiet $FIREWALL_UNIT"; then
+	pass "firewall, cut off before the confirm: the node put back the table it had at the deadline"
+else
+	fail "firewall, cut off before the confirm: the node put back the table it had at the deadline" \
+		"$(cut_off_shown)"
+fi
+sed -i '/^      # SSH to Barn itself/,/port:/ s/port: 2223$/port: 2222/' "$work/splot.yml"
+
 # splot on the node itself (--local): the agent's code in splot, and splot
 # itself keeps the deadline. A peer's endpoint moves, and it's confirmed.
 podman cp "$BINARY" "$CONTAINER:/usr/bin/splot"
@@ -395,11 +530,15 @@ else
 fi
 sed -i 's/endpoint: 203.0.113.21/endpoint: 203.0.113.23/' "$work/splot.yml"
 
-# The mesh comes back after a reboot, with its routes.
+# The mesh comes back after a reboot, with its routes, and splot's table: after
+# nftables.service, whose ruleset starts with `flush ruleset`.
+run 'systemctl enable --quiet nftables'
 podman restart --time 5 "$CONTAINER" >/dev/null
 booted || true
 reachable || true
 state=$(run "systemctl is-active $UNIT" || true)
+firewall_booted=
+if loaded && run 'nft list table inet filter >/dev/null'; then firewall_booted=1; fi
 output=$(splot apply --node Barn --yes)
 if [ "$state" = active ] &&
 	[ "$(routes)" = "192.168.1.0/24 192.168.10.0/24 192.168.2.0/24 192.168.3.0/24 192.168.5.0/24" ] &&
@@ -409,12 +548,28 @@ else
 	fail "reboot: the mesh comes back as splot left it" "$state; routes $(routes)
 $output"
 fi
-
-output=$(run "journalctl -u $UNIT -p err --no-pager -q" || true)
-if [ -z "$output" ]; then
-	pass "no errors logged by $UNIT"
+if [ -n "$firewall_booted" ]; then
+	pass "reboot: splot's table loaded as splot left it, after nftables.service's flush"
 else
-	fail "no errors logged by $UNIT" "$output"
+	fail "reboot: splot's table loaded as splot left it, after nftables.service's flush" \
+		"$(run 'nft list tables; journalctl -b -u nftables -u splot-firewall --no-pager' 2>&1)"
+fi
+
+# nftables.service reloaded flushes the ruleset again; splot's unit follows.
+run 'systemctl reload nftables'
+output=$(splot apply --node Barn --yes)
+if loaded && [ "$output" = "$NOTHING" ]; then
+	pass "nftables.service reloaded: splot's table loaded again with it, nothing for apply to do"
+else
+	fail "nftables.service reloaded: splot's table loaded again with it, nothing for apply to do" \
+		"$output"$'\n'"$(run 'nft list tables' 2>&1)"
+fi
+
+output=$(run "journalctl -u $UNIT -u $FIREWALL_UNIT -p err --no-pager -q" || true)
+if [ -z "$output" ]; then
+	pass "no errors logged by $UNIT or $FIREWALL_UNIT"
+else
+	fail "no errors logged by $UNIT or $FIREWALL_UNIT" "$output"
 fi
 
 # Each agent splot sent removed itself when its session ended.

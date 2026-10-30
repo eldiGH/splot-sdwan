@@ -1,10 +1,10 @@
 # Test node for scripts/linux-check.sh: Debian booted with systemd, with
-# wg-quick, iproute2 and ping, as a Linux node that runs the mesh, and sshd for
-# splot to reach it. The packages are fetched over IPv4: the container may have
-# no working IPv6 route.
+# wg-quick, nftables, iproute2 and ping, as a Linux node that runs the mesh and
+# its firewall, and sshd for splot to reach it. The packages are fetched over
+# IPv4: the container may have no working IPv6 route.
 FROM docker.io/library/debian:trixie
 RUN apt-get -o Acquire::ForceIPv4=true update && \
 	DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true install -y --no-install-recommends \
-		systemd systemd-sysv dbus wireguard-tools iproute2 iputils-ping openssh-server && \
+		systemd systemd-sysv dbus wireguard-tools nftables iproute2 iputils-ping openssh-server && \
 	apt-get clean && rm -rf /var/lib/apt/lists/*
 CMD ["/sbin/init"]
