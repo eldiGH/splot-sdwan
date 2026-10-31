@@ -1,6 +1,6 @@
 //! Linux: the rendered files made live through systemd: the WireGuard with
-//! wg-quick, the firewall as splot's own nft table, the DHCP with the
-//! operator's dnsmasq reading splot's file.
+//! wg-quick, the firewall as splot's own nft table, the DHCP and the DNS with
+//! the operator's dnsmasq reading splot's file.
 
 mod apply;
 mod dnsmasq;
@@ -94,7 +94,7 @@ pub fn dry_run(rendered: &Rendered) -> Result<(Changes, Vec<String>), Error> {
     if let Some((config, text)) = wireguard {
         changes.push(apply::print(config, &text)?);
     }
-    if let Some(text) = &rendered.dhcp {
+    if let Some(text) = &rendered.dnsmasq {
         changes.push(dnsmasq::print(text)?);
         warnings.extend(dnsmasq::warnings());
     }
@@ -141,7 +141,7 @@ pub fn prepare(rendered: &Rendered, run: &Run) -> Result<Prepared, Error> {
         Some(text) => nftables::prepare(text)?,
         None => None,
     };
-    let dhcp = match &rendered.dhcp {
+    let dhcp = match &rendered.dnsmasq {
         Some(text) => dnsmasq::prepare(text)?,
         None => None,
     };

@@ -2,9 +2,9 @@
 # Checks what splot does on a Linux node against real Linux: boots a Debian
 # container with systemd, and runs splot here, as an operator would, carrying
 # the x86_64 agent and reaching the container over ssh at its platform.ssh, as
-# node Barn of splot.example.yml (its firewall and DHCP left alone at first;
-# then splot's own firewall beside tables of the operator's, and its DHCP
-# through the node's dnsmasq). It asks systemd, wg, ip, nft, dnsmasq and a DHCP
+# node Barn of splot.example.yml (its firewall, DHCP and DNS left alone at
+# first; then splot's own firewall beside tables of the operator's, and its
+# DHCP and DNS through the node's dnsmasq). It asks systemd, wg, ip, nft, dnsmasq and a DHCP
 # client whether the result works.
 #
 #   scripts/linux-check.sh
@@ -92,12 +92,12 @@ fi
 exec $(command -v ssh) -F "$work/ssh_config" "\$@"
 EOF
 chmod +x "$work/bin/ssh"
-# The example with Barn's firewall and DHCP left alone, reached as `barn`. The
-# firewall is turned on for its own checks, after the WireGuard's, then the
-# DHCP. Barn's LAN is the check's own interface, dhcp0, where a DHCP client
+# The example with Barn's firewall, DHCP and DNS left alone, reached as
+# `barn`. The firewall is turned on for its own checks, after the WireGuard's,
+# then the DHCP and the DNS. Barn's LAN is the check's own interface, dhcp0, where a DHCP client
 # asks Barn's dnsmasq.
 sed 's/ssh: root@192.168.4.2/ssh: barn/; s/^        lan: eth0$/        lan: dhcp0/' splot.example.yml >"$work/splot.example.yml"
-sed 's/firewall: nftables/firewall: none/; s/dhcp: dnsmasq/dhcp: none/' "$work/splot.example.yml" >"$work/splot.yml"
+sed 's/firewall: nftables/firewall: none/; s/dhcp: dnsmasq/dhcp: none/; s/dns: dnsmasq/dns: none/' "$work/splot.example.yml" >"$work/splot.yml"
 
 # What splot printed, with its exit status when it failed. Without the config's
 # warnings: Barn leaves its firewall to the operator. The config is
@@ -532,7 +532,7 @@ lease() {
 # Cabin's guest zone among them, from the route change above.
 LEASE='192.168.4.10 0.0.0.0/0 192.168.4.1 10.100.0.0/16 192.168.4.2 192.168.1.0/24 192.168.4.2 192.168.2.0/24 192.168.4.2 192.168.3.0/24 192.168.4.2 192.168.5.0/24 192.168.4.2 192.168.10.0/24 192.168.4.2 192.168.40.0/24 192.168.4.2'
 lease_before=$(lease)
-sed -i '/^  Barn:$/,$ s/^      dhcp: none$/      dhcp: dnsmasq/' "$work/splot.yml"
+sed -i '/^  Barn:$/,$ { s/^      dhcp: none$/      dhcp: dnsmasq/; s/^      dns: none$/      dns: dnsmasq/ }' "$work/splot.yml"
 
 # dnsmasq's config doesn't read splot's file yet: the dry run says so.
 output=$(PATH="$work/bin:$PATH" "$BINARY" --config "$work/splot.yml" apply --node Barn --dry-run 2>&1) || true
@@ -556,6 +556,16 @@ if applied "$(grep -v '^warning: ' <<<"$output")" "$DNSMASQ, dnsmasq restarted" 
 else
 	fail "DHCP, apply: the file (0600), dnsmasq restarted; the nvr gets its address, and the routes through Barn" \
 		"$output"$'\n'"before: $lease_before"$'\n'"after: $lease_after"
+fi
+
+# Barn's DNS through the same file: its names answer at its dnsmasq, and one in
+# its domain splot doesn't know gets no answer from public DNS.
+names=$(run 'busybox nslookup nvr.barn.example.org 127.0.0.1 2>&1; busybox nslookup nothing.barn.example.org 127.0.0.1 2>&1' || true)
+if grep -q 'Address: 192\.168\.4\.10' <<<"$names" && grep -q 'NXDOMAIN' <<<"$names" &&
+	run "grep -qxF server=/home.example.org/192.168.1.1 $DNSMASQ"; then
+	pass "DNS: Barn's names answer at its dnsmasq, an unknown one in its domain doesn't; Home's domain forwarded"
+else
+	fail "DNS: Barn's names answer at its dnsmasq, an unknown one in its domain doesn't; Home's domain forwarded" "$names"
 fi
 
 dnsmasq_state() { run "stat -c '%i %Y' $DNSMASQ; systemctl show -p MainPID --value dnsmasq"; }

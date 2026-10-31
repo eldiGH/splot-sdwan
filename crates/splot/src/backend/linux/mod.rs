@@ -1,5 +1,6 @@
 //! Linux: the plan as the files of the programs a Linux node runs: its
-//! WireGuard with wg-quick, its firewall with nftables, its DHCP with dnsmasq.
+//! WireGuard with wg-quick, its firewall with nftables, its DHCP and DNS with
+//! dnsmasq.
 
 mod dnsmasq;
 mod nftables;
@@ -26,10 +27,7 @@ pub fn render(plan: &NodePlan, platform: &Platform) -> Rendered {
             .firewall
             .as_ref()
             .map(|firewall| nftables::render(&plan.node, firewall, platform)),
-        dhcp: plan
-            .dhcp
-            .as_ref()
-            .map(|dhcp| dnsmasq::render(&plan.node, dhcp, platform)),
+        dnsmasq: dnsmasq::render(&plan.node, plan.dhcp.as_ref(), plan.dns.as_ref(), platform),
     }
 }
 
@@ -64,7 +62,7 @@ mod tests {
             );
             insta::assert_snapshot!(
                 format!("example_{}_dnsmasq", node.name()),
-                rendered_node.dhcp.unwrap()
+                rendered_node.dnsmasq.unwrap()
             );
             rendered += 1;
         }

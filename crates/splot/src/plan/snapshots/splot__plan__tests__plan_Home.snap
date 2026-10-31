@@ -16,6 +16,7 @@ peer Home.lte-cam at 10.100.10.10: key ReplaceLteCamPublicKeyAAAAAAAAAAAAAAAAAAA
 mesh zone: input drop, output accept, forward drop
 ping 10.100.0.1 from [Barn 10.100.0.4, Cabin 10.100.0.2, Lake 10.100.0.3, Phone 10.100.0.100, Home.lte-cam 10.100.10.10]
 listen port: wan udp/51820
+dns to 192.168.1.1, on lan from [Barn 10.100.0.4, Cabin 10.100.0.2, Lake 10.100.0.3]
 accept in Home ssh: tcp/22 from mesh [10.100.0.100/32] to the node [10.100.0.1/32, 192.168.10.1/32, 192.168.1.1/32]
 accept in Home.tv cast: tcp/8009 from lan [192.168.1.0/24] to iot [192.168.10.20/32]
 accept in Home.nas https: tcp/443 from mesh [10.100.0.100/32] to lan [192.168.1.20/32]

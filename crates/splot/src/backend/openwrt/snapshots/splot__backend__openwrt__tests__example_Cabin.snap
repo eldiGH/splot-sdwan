@@ -2,7 +2,7 @@
 source: crates/splot/src/backend/openwrt/mod.rs
 expression: output
 ---
-# network
+# network: splot's interface, wireguard_spl_mesh
 set network.spl_mesh='interface'
 set network.spl_mesh.proto='wireguard'
 set network.spl_mesh.private_key='<private key>'
@@ -42,7 +42,7 @@ set network.spl_wireguard_spl_mesh_Phone.public_key='ReplacePhonePublicKeyAAAAAA
 set network.spl_wireguard_spl_mesh_Phone.preshared_key='<preshared key>'
 set network.spl_wireguard_spl_mesh_Phone.route_allowed_ips='0'
 add_list network.spl_wireguard_spl_mesh_Phone.allowed_ips='10.100.0.100/32'
-# firewall
+# firewall: splot's zone, rule, redirect, nat
 set firewall.spl_zone_mesh='zone'
 set firewall.spl_zone_mesh.name='spl_mesh'
 set firewall.spl_zone_mesh.input='DROP'
@@ -67,6 +67,31 @@ set firewall.spl_rule_listen_port.src='wan'
 set firewall.spl_rule_listen_port.proto='udp'
 set firewall.spl_rule_listen_port.dest_port='51820'
 set firewall.spl_rule_listen_port.target='ACCEPT'
+set firewall.spl_rule_dns='rule'
+set firewall.spl_rule_dns.name='[SPLOT] DNS from the nodes that forward to it'
+set firewall.spl_rule_dns.src='spl_mesh'
+set firewall.spl_rule_dns.family='ipv4'
+add_list firewall.spl_rule_dns.proto='tcp'
+add_list firewall.spl_rule_dns.proto='udp'
+add_list firewall.spl_rule_dns.src_ip='10.100.0.1'
+add_list firewall.spl_rule_dns.src_ip='10.100.0.3'
+add_list firewall.spl_rule_dns.src_ip='10.100.0.4'
+add_list firewall.spl_rule_dns.dest_ip='192.168.2.1'
+set firewall.spl_rule_dns.dest_port='53'
+set firewall.spl_rule_dns.target='ACCEPT'
+set firewall.spl_rule_dns_lan='rule'
+set firewall.spl_rule_dns_lan.name='[SPLOT] DNS from the nodes that forward to it, to lan'
+set firewall.spl_rule_dns_lan.src='spl_mesh'
+set firewall.spl_rule_dns_lan.dest='lan'
+set firewall.spl_rule_dns_lan.family='ipv4'
+add_list firewall.spl_rule_dns_lan.proto='tcp'
+add_list firewall.spl_rule_dns_lan.proto='udp'
+add_list firewall.spl_rule_dns_lan.src_ip='10.100.0.1'
+add_list firewall.spl_rule_dns_lan.src_ip='10.100.0.3'
+add_list firewall.spl_rule_dns_lan.src_ip='10.100.0.4'
+add_list firewall.spl_rule_dns_lan.dest_ip='192.168.2.1'
+set firewall.spl_rule_dns_lan.dest_port='53'
+set firewall.spl_rule_dns_lan.target='ACCEPT'
 set firewall.spl_rule_in_Cabin_dns_from_spl_mesh='rule'
 set firewall.spl_rule_in_Cabin_dns_from_spl_mesh.name='[SPLOT] in: Cabin dns, from spl_mesh'
 set firewall.spl_rule_in_Cabin_dns_from_spl_mesh.src='spl_mesh'
@@ -120,7 +145,7 @@ set firewall.spl_rule_deny_lan_to_spl_mesh.src='lan'
 set firewall.spl_rule_deny_lan_to_spl_mesh.dest='spl_mesh'
 set firewall.spl_rule_deny_lan_to_spl_mesh.proto='all'
 set firewall.spl_rule_deny_lan_to_spl_mesh.target='DROP'
-# dhcp
+# dhcp: splot's host, hostrecord, cname
 set dhcp.spl_host_camera='host'
 set dhcp.spl_host_camera.name='camera'
 set dhcp.spl_host_camera.ip='192.168.2.30'
@@ -129,6 +154,20 @@ set dhcp.spl_host_weather='host'
 set dhcp.spl_host_weather.name='weather'
 set dhcp.spl_host_weather.ip='192.168.2.40'
 add_list dhcp.spl_host_weather.mac='aa:bb:cc:00:00:06'
+set dhcp.spl_hostrecord_camera='hostrecord'
+set dhcp.spl_hostrecord_camera.name='camera.cabin.example.org'
+set dhcp.spl_hostrecord_camera.ip='192.168.2.30'
+set dhcp.spl_hostrecord_weather='hostrecord'
+set dhcp.spl_hostrecord_weather.name='weather.cabin.example.org'
+set dhcp.spl_hostrecord_weather.ip='192.168.2.40'
+# dnsmasq sections: splot's values
+server /cabin.example.org/
+server /barn.example.org/192.168.4.2
+server /home.example.org/192.168.1.1
+server /wg.cabin.example.org/#
+rebind_domain barn.example.org
+rebind_domain home.example.org
+of domains cabin.example.org, barn.example.org, home.example.org
 # owned
 from spl_mesh to any zone
 from lan to spl_mesh

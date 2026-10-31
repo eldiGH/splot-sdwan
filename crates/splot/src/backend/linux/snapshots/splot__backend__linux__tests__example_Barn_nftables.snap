@@ -16,6 +16,10 @@ table inet splot {
 		iifname "spl_mesh" ip saddr { 10.100.0.1, 10.100.0.2, 10.100.0.3, 10.100.0.100 } ip daddr 10.100.0.4 icmp type echo-request accept
 		# WireGuard listen port
 		iifname "eth0" udp dport 51820 accept
+		# DNS from the nodes that forward to it
+		iifname "spl_mesh" ip saddr { 10.100.0.1, 10.100.0.2, 10.100.0.3 } ip daddr 192.168.4.2 tcp dport 53 accept
+		# DNS from the nodes that forward to it
+		iifname "spl_mesh" ip saddr { 10.100.0.1, 10.100.0.2, 10.100.0.3 } ip daddr 192.168.4.2 udp dport 53 accept
 		# in: Barn ssh, from spl_mesh
 		iifname "spl_mesh" ip saddr { 10.100.0.100, 192.168.1.50 } ip daddr { 10.100.0.4, 192.168.4.2, 192.168.40.1 } tcp dport 22 accept
 		# the mesh zone's input
@@ -26,6 +30,10 @@ table inet splot {
 		type filter hook forward priority filter; policy accept;
 		# replies, and what they bring
 		ct state established,related accept
+		# DNS from the nodes that forward to it, to lan
+		iifname "spl_mesh" oifname "eth0" ip saddr { 10.100.0.1, 10.100.0.2, 10.100.0.3 } ip daddr 192.168.4.2 tcp dport 53 accept
+		# DNS from the nodes that forward to it, to lan
+		iifname "spl_mesh" oifname "eth0" ip saddr { 10.100.0.1, 10.100.0.2, 10.100.0.3 } ip daddr 192.168.4.2 udp dport 53 accept
 		# in: Barn.nvr web, from spl_mesh
 		iifname "spl_mesh" oifname "eth0" ip saddr { 10.100.0.100, 192.168.1.50 } ip daddr 192.168.4.10 tcp dport 443 accept
 		# out: Cabin.camera rtsp, from lan

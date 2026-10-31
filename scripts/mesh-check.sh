@@ -8,8 +8,9 @@
 # joins, and runs across the three; then a router itself (`Home.$node`) is let
 # in to a service on the other, and to one on Barn; a run on a node that holds
 # a session the other end dropped still checks that peer; a port forward from
-# Home's WAN reaches Cabin over the mesh; last, on fresh routers, Cabin without
-# an endpoint: only splot's listen-port rule lets its handshake in at Home.
+# Home's WAN reaches Cabin over the mesh; Cabin resolves a name in Home's
+# domain through the tunnel; last, on fresh routers, Cabin without an
+# endpoint: only splot's listen-port rule lets its handshake in at Home.
 #
 #   scripts/mesh-check.sh [VERSION]     default: the newest version in use
 #
@@ -575,6 +576,23 @@ if ! grep -qF "$cabin_key" <<<"$before" && [ "$status" -eq 0 ] && grep -q '^Conf
 else
 	fail "a port forward from Home's WAN reaches Cabin over the mesh, as Home" \
 		"before: $before"$'\n'"exit $status: $output"$'\n'"after: $after"$'\n'"$(run home 'nft list chain inet fw4 srcnat_spl_mesh' 2>&1)"
+fi
+
+# DNS across the mesh: Home gets a domain, answered at its mesh IP, and a hub
+# client with a name in it. Cabin, whose DNS splot manages too (OpenWrt's
+# dnsmasq) and which has no domain of its own, forwards Home's domain to Home
+# over the tunnel, and Home's firewall lets Cabin's query in: Cabin resolves
+# the client's name. Barn's DNS is left alone: it forwards nothing.
+sed -i '/^  Home:$/,/^  Cabin:$/ s/^    wanZone: wan$/&\n    dns: { domain: home.example.org, address: 10.100.0.1 }\n    hub:\n      network: 10.100.10.0\/24\n      clients:\n        cam: { publicKey: QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQA=, ip: 10.100.10.2, psk: false }/' "$work/splot.yml"
+output=$(splot apply --yes 2>&1) && status=0 || status=$?
+names=$(run cabin 'nslookup cam.home.example.org 127.0.0.1 2>&1') || true
+dns_rule=$(run home 'nft list chain inet fw4 input_spl_mesh' 2>&1 | grep -F 'DNS from the nodes') || true
+if [ "$status" -eq 0 ] && grep -q '^Confirmed' <<<"$output" && grep -q 'Address: 10\.100\.10\.2' <<<"$names" &&
+	grep -qF '10.100.0.2' <<<"$dns_rule" && ! grep -qF '10.100.0.4' <<<"$dns_rule"; then
+	pass "DNS across the mesh: Cabin resolves a name of Home's domain through the tunnel"
+else
+	fail "DNS across the mesh: Cabin resolves a name of Home's domain through the tunnel" \
+		"exit $status: $output"$'\n'"$names"$'\n'"rule: $dns_rule"$'\n'"$(run cabin 'grep -h home.example.org /var/etc/dnsmasq.conf.*' 2>&1)"
 fi
 
 # Only one side dials: fresh routers, and Cabin without an endpoint (nor a

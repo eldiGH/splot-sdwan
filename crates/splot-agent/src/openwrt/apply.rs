@@ -24,7 +24,11 @@ use super::{
     reload::{self, PeerUpdate, Reload},
     slot,
     uci::{self, UciBatchCommand},
+    values,
 };
+
+/// The file of the operator's dnsmasq sections, which hold splot's values too.
+const DNSMASQ_FILE: &str = "dhcp";
 use crate::{
     run::{self, Backup},
     wg,
@@ -322,15 +326,21 @@ fn changeset(rendered: &Rendered) -> Result<Changeset, Error> {
     let mut changes = Vec::new();
     let mut fresh = Vec::new();
 
-    for (file, sections) in &rendered.files {
-        let current = current(file)?;
-        let diff = diff::diff(&current, sections);
+    for file in &rendered.files {
+        let name = &file.name;
+        let current = current(name)?;
+        let diff = diff::diff(&current, &file.sections, &file.types);
         fresh.extend(diff::psk_changed(&diff));
         // Spelled in uci here, while the sections the changes point at are alive.
-        let file_changes = diff::commands(file, &current, &diff);
+        let mut file_changes = diff::commands(name, &current, &diff);
+        if name == DNSMASQ_FILE
+            && let Some(dnsmasq) = &rendered.dnsmasq
+        {
+            file_changes.extend(values::commands(name, &current, dnsmasq));
+        }
 
         if !file_changes.is_empty() {
-            files.push(file.clone());
+            files.push(name.clone());
             changes.extend(file_changes);
         }
     }
@@ -423,11 +433,11 @@ fn revert(files: &[String]) -> Result<(), uci::Error> {
 pub fn find_duplicate_sections(rendered: &Rendered) -> Vec<String> {
     let mut duplicates = Vec::new();
 
-    for (file, sections) in &rendered.files {
+    for file in &rendered.files {
         let mut seen = HashSet::new();
 
-        for section in sections {
-            let path = format!("{file}.{}", section.name);
+        for section in &file.sections {
+            let path = format!("{}.{}", file.name, section.name);
 
             if !seen.insert(section.name.as_str()) && !duplicates.contains(&path) {
                 duplicates.push(path);
@@ -497,16 +507,16 @@ mod tests {
     fn distinct_sections_pass() {
         let rendered = Rendered {
             files: vec![
-                (
-                    "firewall".to_owned(),
+                super::super::file(
+                    "firewall",
                     vec![
                         section("spl_rule_in_Home_ssh", "rule"),
                         section("spl_rule_out_Home_ssh", "rule"),
                     ],
                 ),
                 // Same name, other file.
-                (
-                    "network".to_owned(),
+                super::super::file(
+                    "network",
                     vec![section("spl_rule_in_Home_ssh", "interface")],
                 ),
             ],
@@ -519,8 +529,8 @@ mod tests {
     #[test]
     fn duplicate_section_is_reported_once() {
         let rendered = Rendered {
-            files: vec![(
-                "firewall".to_owned(),
+            files: vec![super::super::file(
+                "firewall",
                 vec![
                     section("spl_x", "rule"),
                     section("spl_x", "rule"),

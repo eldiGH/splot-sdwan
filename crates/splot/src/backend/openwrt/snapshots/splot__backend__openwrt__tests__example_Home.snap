@@ -2,7 +2,7 @@
 source: crates/splot/src/backend/openwrt/mod.rs
 expression: output
 ---
-# network
+# network: splot's interface, wireguard_spl_mesh
 set network.spl_mesh='interface'
 set network.spl_mesh.proto='wireguard'
 set network.spl_mesh.private_key='<private key>'
@@ -45,7 +45,7 @@ set network.spl_wireguard_spl_mesh_lte_cam.description='[SPLOT] Home.lte-cam'
 set network.spl_wireguard_spl_mesh_lte_cam.public_key='ReplaceLteCamPublicKeyAAAAAAAAAAAAAAAAAAAAA='
 set network.spl_wireguard_spl_mesh_lte_cam.route_allowed_ips='0'
 add_list network.spl_wireguard_spl_mesh_lte_cam.allowed_ips='10.100.10.10/32'
-# firewall
+# firewall: splot's zone, rule, redirect, nat
 set firewall.spl_zone_mesh='zone'
 set firewall.spl_zone_mesh.name='spl_mesh'
 set firewall.spl_zone_mesh.input='DROP'
@@ -71,6 +71,31 @@ set firewall.spl_rule_listen_port.src='wan'
 set firewall.spl_rule_listen_port.proto='udp'
 set firewall.spl_rule_listen_port.dest_port='51820'
 set firewall.spl_rule_listen_port.target='ACCEPT'
+set firewall.spl_rule_dns='rule'
+set firewall.spl_rule_dns.name='[SPLOT] DNS from the nodes that forward to it'
+set firewall.spl_rule_dns.src='spl_mesh'
+set firewall.spl_rule_dns.family='ipv4'
+add_list firewall.spl_rule_dns.proto='tcp'
+add_list firewall.spl_rule_dns.proto='udp'
+add_list firewall.spl_rule_dns.src_ip='10.100.0.2'
+add_list firewall.spl_rule_dns.src_ip='10.100.0.3'
+add_list firewall.spl_rule_dns.src_ip='10.100.0.4'
+add_list firewall.spl_rule_dns.dest_ip='192.168.1.1'
+set firewall.spl_rule_dns.dest_port='53'
+set firewall.spl_rule_dns.target='ACCEPT'
+set firewall.spl_rule_dns_lan='rule'
+set firewall.spl_rule_dns_lan.name='[SPLOT] DNS from the nodes that forward to it, to lan'
+set firewall.spl_rule_dns_lan.src='spl_mesh'
+set firewall.spl_rule_dns_lan.dest='lan'
+set firewall.spl_rule_dns_lan.family='ipv4'
+add_list firewall.spl_rule_dns_lan.proto='tcp'
+add_list firewall.spl_rule_dns_lan.proto='udp'
+add_list firewall.spl_rule_dns_lan.src_ip='10.100.0.2'
+add_list firewall.spl_rule_dns_lan.src_ip='10.100.0.3'
+add_list firewall.spl_rule_dns_lan.src_ip='10.100.0.4'
+add_list firewall.spl_rule_dns_lan.dest_ip='192.168.1.1'
+set firewall.spl_rule_dns_lan.dest_port='53'
+set firewall.spl_rule_dns_lan.target='ACCEPT'
 set firewall.spl_rule_in_Home_ssh_from_spl_mesh='rule'
 set firewall.spl_rule_in_Home_ssh_from_spl_mesh.name='[SPLOT] in: Home ssh, from spl_mesh'
 set firewall.spl_rule_in_Home_ssh_from_spl_mesh.src='spl_mesh'
@@ -234,7 +259,7 @@ set firewall.spl_redirect_Home_nas_https_203_0_113_7_32.dest_ip='192.168.1.20'
 set firewall.spl_redirect_Home_nas_https_203_0_113_7_32.dest_port='443'
 set firewall.spl_redirect_Home_nas_https_203_0_113_7_32.reflection='0'
 add_list firewall.spl_redirect_Home_nas_https_203_0_113_7_32.proto='tcp'
-# dhcp
+# dhcp: splot's host, hostrecord, cname
 set dhcp.spl_host_tv='host'
 set dhcp.spl_host_tv.name='tv'
 set dhcp.spl_host_tv.ip='192.168.10.20'
@@ -251,6 +276,35 @@ set dhcp.spl_host_Phone='host'
 set dhcp.spl_host_Phone.name='Phone'
 set dhcp.spl_host_Phone.ip='192.168.1.50'
 add_list dhcp.spl_host_Phone.mac='aa:bb:cc:00:00:01'
+set dhcp.spl_hostrecord_tv='hostrecord'
+set dhcp.spl_hostrecord_tv.name='tv.home.example.org'
+set dhcp.spl_hostrecord_tv.ip='192.168.10.20'
+set dhcp.spl_hostrecord_nas='hostrecord'
+set dhcp.spl_hostrecord_nas.name='nas.home.example.org'
+set dhcp.spl_hostrecord_nas.ip='192.168.1.20'
+set dhcp.spl_hostrecord_printer='hostrecord'
+set dhcp.spl_hostrecord_printer.name='printer.home.example.org'
+set dhcp.spl_hostrecord_printer.ip='192.168.1.16'
+set dhcp.spl_hostrecord_lte_cam='hostrecord'
+set dhcp.spl_hostrecord_lte_cam.name='lte-cam.home.example.org'
+set dhcp.spl_hostrecord_lte_cam.ip='10.100.10.10'
+set dhcp.spl_hostrecord_Phone='hostrecord'
+set dhcp.spl_hostrecord_Phone.name='Phone.home.example.org'
+set dhcp.spl_hostrecord_Phone.ip='192.168.1.50'
+set dhcp.spl_cname_files='cname'
+set dhcp.spl_cname_files.cname='files.home.example.org'
+set dhcp.spl_cname_files.target='nas.home.example.org'
+set dhcp.spl_cname_photos='cname'
+set dhcp.spl_cname_photos.cname='photos.home.example.org'
+set dhcp.spl_cname_photos.target='nas.home.example.org'
+# dnsmasq sections: splot's values
+server /home.example.org/
+server /barn.example.org/192.168.4.2
+server /cabin.example.org/192.168.2.1
+server /wg.cabin.example.org/#
+rebind_domain barn.example.org
+rebind_domain cabin.example.org
+of domains home.example.org, barn.example.org, cabin.example.org
 # owned
 from spl_mesh to any zone
 from iot to spl_mesh

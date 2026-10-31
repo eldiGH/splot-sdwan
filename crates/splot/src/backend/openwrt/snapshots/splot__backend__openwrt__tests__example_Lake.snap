@@ -2,7 +2,7 @@
 source: crates/splot/src/backend/openwrt/mod.rs
 expression: output
 ---
-# network
+# network: splot's interface, wireguard_spl_mesh
 set network.spl_mesh='interface'
 set network.spl_mesh.proto='wireguard'
 set network.spl_mesh.private_key='<private key>'
@@ -47,7 +47,7 @@ set network.spl_wireguard_spl_mesh_Phone.public_key='ReplacePhonePublicKeyAAAAAA
 set network.spl_wireguard_spl_mesh_Phone.preshared_key='<preshared key>'
 set network.spl_wireguard_spl_mesh_Phone.route_allowed_ips='0'
 add_list network.spl_wireguard_spl_mesh_Phone.allowed_ips='10.100.0.100/32'
-# firewall
+# firewall: splot's zone, rule, redirect, nat
 set firewall.spl_zone_mesh='zone'
 set firewall.spl_zone_mesh.name='spl_mesh'
 set firewall.spl_zone_mesh.input='DROP'
@@ -78,6 +78,16 @@ set firewall.spl_rule_deny_lan_to_spl_mesh.src='lan'
 set firewall.spl_rule_deny_lan_to_spl_mesh.dest='spl_mesh'
 set firewall.spl_rule_deny_lan_to_spl_mesh.proto='all'
 set firewall.spl_rule_deny_lan_to_spl_mesh.target='DROP'
+# dhcp: splot's hostrecord, cname
+# dnsmasq sections: splot's values
+server /barn.example.org/192.168.4.2
+server /cabin.example.org/192.168.2.1
+server /home.example.org/192.168.1.1
+server /wg.cabin.example.org/#
+rebind_domain barn.example.org
+rebind_domain cabin.example.org
+rebind_domain home.example.org
+of domains barn.example.org, cabin.example.org, home.example.org
 # owned
 from spl_mesh to any zone
 from lan to spl_mesh

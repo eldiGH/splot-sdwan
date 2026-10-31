@@ -123,6 +123,12 @@ impl Hostname {
     }
 }
 
+impl AsRef<str> for Hostname {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
 impl AsRef<str> for DnsLabel {
     fn as_ref(&self) -> &str {
         &self.0

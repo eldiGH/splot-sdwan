@@ -1,9 +1,12 @@
-//! The node's DHCP as a dnsmasq config file of splot's own, which the
+//! The node's DHCP and DNS as a dnsmasq config file of splot's own, which the
 //! operator's dnsmasq reads (`conf-file=/etc/splot/dnsmasq.conf` in its
-//! config): a `dhcp-host` for each lease, and on a zone whose gateway is
-//! another box, the routes through the node (option 121) for requests that
-//! come in on the zone's interfaces. dnsmasq sets a tag named after the
-//! interface a request comes in on.
+//! config). The DHCP: a `dhcp-host` for each lease, and on a zone whose
+//! gateway is another box, the routes through the node (option 121) for
+//! requests that come in on the zone's interfaces (dnsmasq sets a tag named
+//! after the interface a request comes in on). The DNS: the node's own domain
+//! answered there alone, its names (`host-record`, an address and its reverse;
+//! `cname`, an alias), the other nodes' domains forwarded to them, and the
+//! endpoint names inside a mesh domain sent to the usual upstream servers.
 
 use std::fmt::Write;
 
@@ -11,7 +14,10 @@ use splot_core::consts::DNSMASQ_PATH;
 
 use crate::{
     model::platform::Platform,
-    plan::dhcp::{DhcpPlan, Lease, ZoneRoutes},
+    plan::{
+        dhcp::{DhcpPlan, Lease, ZoneRoutes},
+        dns::DnsPlan,
+    },
     types::identifier::Identifier,
 };
 
@@ -44,12 +50,64 @@ fn routes(routes: &ZoneRoutes, platform: &Platform) -> Vec<String> {
         .collect()
 }
 
-/// The file, its parts labelled in the config's notation.
-pub(super) fn render(node: &Identifier, dhcp: &DhcpPlan, platform: &Platform) -> String {
+/// The DNS's lines.
+fn dns(text: &mut String, dns: &DnsPlan) {
+    if let Some(domain) = &dns.local {
+        let _ = write!(
+            text,
+            "\n# {domain}, answered here alone\nlocal=/{domain}/\n"
+        );
+    }
+    for record in &dns.records {
+        let _ = write!(
+            text,
+            "\n# {}\nhost-record={},{}\n",
+            record.host, record.name, record.ip
+        );
+    }
+    for alias in &dns.aliases {
+        let _ = write!(
+            text,
+            "\n# {} {}\ncname={},{}\n",
+            alias.host, alias.service, alias.name, alias.target
+        );
+    }
+    for forward in &dns.forwards {
+        let _ = write!(
+            text,
+            "\n# {}'s domain, forwarded to it\nserver=/{}/{}\nrebind-domain-ok=/{}/\n",
+            forward.node, forward.domain, forward.address, forward.domain
+        );
+    }
+    for name in &dns.public {
+        let _ = write!(
+            text,
+            "\n# an endpoint, asked of public DNS: never through the mesh\nserver=/{name}/#\n"
+        );
+    }
+}
+
+/// The file, its parts labelled in the config's notation; none where splot
+/// leaves both the DHCP and the DNS alone.
+pub(super) fn render(
+    node: &Identifier,
+    dhcp: Option<&DhcpPlan>,
+    dns: Option<&DnsPlan>,
+    platform: &Platform,
+) -> Option<String> {
+    if dhcp.is_none() && dns.is_none() {
+        return None;
+    }
     let mut text = format!(
-        "# splot's DHCP for node {node}: dnsmasq reads it where its config says\n\
-         # conf-file={DNSMASQ_PATH}. Written by splot: don't edit.\n"
+        "# splot's DHCP and DNS for node {node}: dnsmasq reads it where its config\n\
+         # says conf-file={DNSMASQ_PATH}. Written by splot: don't edit.\n"
     );
+    if let Some(dns) = dns {
+        self::dns(&mut text, dns);
+    }
+    let Some(dhcp) = dhcp else {
+        return Some(text);
+    };
 
     for lease in &dhcp.leases {
         let _ = write!(text, "\n# {}\n{}\n", lease.host, self::lease(lease));
@@ -65,7 +123,7 @@ pub(super) fn render(node: &Identifier, dhcp: &DhcpPlan, platform: &Platform) ->
         }
     }
 
-    text
+    Some(text)
 }
 
 #[cfg(test)]
@@ -116,7 +174,13 @@ nodes:
         let node = network.node(&"Barn".parse().unwrap()).unwrap();
         let plan = plan::plan(&network, node.name()).unwrap();
 
-        render(node.name(), plan.dhcp.as_ref().unwrap(), node.platform())
+        render(
+            node.name(),
+            plan.dhcp.as_ref(),
+            plan.dns.as_ref(),
+            node.platform(),
+        )
+        .unwrap()
     }
 
     #[test]

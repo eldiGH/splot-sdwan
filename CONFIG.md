@@ -90,7 +90,7 @@ platform:
 | `wireguard` | `netifd` (OpenWrt), `wg-quick` (Linux), `none`     | OpenWrt: no (`netifd`); Linux: yes    | The mesh interface and its peers.                                           |
 | `firewall`  | `fw4` (OpenWrt), `nftables` (Linux), `none`        | OpenWrt: no (`fw4`); Linux: yes       | The mesh zone, access between zones (the rules `allowFrom` grants, a drop for the rest), the port forwards `wan` makes, the WireGuard listen port on the WAN. See [Access between zones](#access-between-zones). |
 | `dhcp`      | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | Static leases for devices and global clients.                               |
-| `dns`       | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | Nothing yet: splot generates no DNS config so far.                          |
+| `dns`       | `dnsmasq`, `none`                                  | OpenWrt: no (`dnsmasq`); Linux: yes   | The node's names, and forwarding the other nodes' domains. See [DNS](#dns). |
 | `ssh`       | anything `ssh` takes                               | no                                    | Where splot reaches the node. See below.                                    |
 | `interfaces` | map of zone → interface name or list              | with `firewall: nftables`             | The interfaces each zone, and the `wanZone`, are on (Linux only). See below. |
 
@@ -123,9 +123,9 @@ With `firewall: nftables`:
 - **Your own tables stay as they are**, and splot never runs `flush ruleset`. What splot drops stays dropped whatever they say; what it accepts gets through only where they accept it too. So the dry run warns about each of your chains that drops what it doesn't accept (`policy drop`, Docker's `FORWARD` say): let through there what splot's services grant.
 - **A ruleset loaded with `flush ruleset` removes splot's table too.** Debian's `nftables.service` loads `/etc/nftables.conf` with one: splot's unit loads after it at boot, and again whenever it restarts or reloads. Starting it when it wasn't running, or `nft -f` of such a file by hand, leaves splot's table out: run `systemctl reload splot-firewall`, or apply again (the dry run says the table isn't loaded).
 
-With `dhcp: dnsmasq`:
+With `dhcp: dnsmasq` or `dns: dnsmasq`:
 
-- **Your dnsmasq, running as `dnsmasq.service`,** with your pools and options. splot writes one file, `/etc/splot/dnsmasq.conf` (rewritten whole: don't edit it): a `dhcp-host` for each lease, and on a zone whose `gateway` is another box, the routes through the node (option 121).
+- **Your dnsmasq, running as `dnsmasq.service`,** with your pools and options. splot writes one file, `/etc/splot/dnsmasq.conf` (rewritten whole: don't edit it): a `dhcp-host` for each lease, and on a zone whose `gateway` is another box, the routes through the node (option 121); its names, and the other nodes' domains forwarded to them.
 - **Add `conf-file=/etc/splot/dnsmasq.conf` to dnsmasq's config**, once (on Debian, a file in `/etc/dnsmasq.d`). The dry run warns when neither `/etc/dnsmasq.conf` nor `/etc/dnsmasq.d` has that line.
 - **A changed file restarts dnsmasq**, which reads its config only when it starts; it keeps its leases across. dnsmasq checks the file first, and `splot apply` refuses while dnsmasq isn't running: splot never starts, stops or enables it.
 
@@ -338,6 +338,8 @@ Where splot manages a node's DNS (`dns` in its [platform](#platform); on OpenWrt
 
 A node without `dns` has no domain: no names of its own, but it still forwards the others'. Where splot leaves a node's DNS alone (`dns: none`), a domain on it is yours to serve: the others still forward it there.
 
+On OpenWrt, splot's names are sections of its own in `/etc/config/dhcp`, and the forwarding goes into your `dnsmasq` section's `server` and `rebind_domain` lists, the only place dnsmasq there reads it: splot adds and removes only its own values (those that name a mesh domain, and those it recorded adding, in `spl_server` and `spl_rebind_domain` beside them), and leaves the rest as it is. https-dns-proxy leaves them be. On Linux they're lines of splot's dnsmasq file (see [Linux](#linux)).
+
 ---
 
 ## WAN exposure
@@ -473,7 +475,7 @@ Where splot runs a node's firewall, it decides what crosses between zones, at on
 | VLANs, switch ports, access points | access between zones, local and over the mesh (`services`) |
 | internet access per zone, NAT, PPPoE | the drop between its zones, for everything no service grants |
 | DHCP pools | the WireGuard mesh: sites, global clients, hub clients |
-| the WAN zone, zones `splot.yml` doesn't declare | static leases (DNS records planned) |
+| the WAN zone, zones `splot.yml` doesn't declare | static leases, DNS names and forwarding |
 | what reaches the router from your zones (DHCP, DNS, LuCI, ssh from the LAN) | port forwards (`wan`) |
 
 ### The default policy

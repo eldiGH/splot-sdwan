@@ -26,6 +26,9 @@ pub struct FirewallPlan {
     pub ping: Option<Ping>,
     /// None on a node nobody dials, or whose WireGuard splot leaves alone.
     pub listen_port: Option<ListenPort>,
+    /// None on a node without a domain, without a mesh zone, or that no other
+    /// node forwards to.
+    pub dns: Option<DnsIn>,
     /// Ingress rules first, then egress.
     pub rules: Vec<Rule>,
     /// What becomes of what no rule accepts.
@@ -99,6 +102,20 @@ pub struct ListenPort {
     pub port: Port,
 }
 
+/// The other nodes whose DNS splot manages forward the node's domain to its
+/// DNS address, over the mesh: DNS (UDP and TCP 53) to that address, from
+/// each one's mesh IP. The address may be the node's own, or another host's on
+/// one of its zones: it's let in as the node's input, and as a forward into
+/// that zone; the one that doesn't apply never matches.
+#[derive(Debug)]
+pub struct DnsIn {
+    pub address: Ipv4Addr,
+    /// The zone the address is on; none for the node's mesh IP.
+    pub zone: Option<ZoneRef>,
+    /// Each forwarder, and its mesh IP.
+    pub from: Vec<(Identifier, Ipv4Addr)>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     Accept,
@@ -143,6 +160,24 @@ pub(super) fn plan(
             wan_zone: wan_zone.clone(),
             port: wireguard.listen_port,
         });
+    let dns = mesh_zone.and(own.dns()).and_then(|dns| {
+        let from: Vec<(Identifier, Ipv4Addr)> = network
+            .nodes()
+            .filter(|node| node.name() != own.name() && node.platform().dns().is_some())
+            .map(|node| (node.name().clone(), node.mesh_address().ip()))
+            .collect();
+        let zone = own
+            .zones()
+            .iter()
+            .find(|(_, zone)| zone.network().contains(dns.address()))
+            .map(|(name, _)| ZoneRef::Named(name.clone()));
+
+        (!from.is_empty()).then(|| DnsIn {
+            address: dns.address(),
+            zone,
+            from,
+        })
+    });
     let mut redirects = redirect::redirects(network, own);
     if mesh_zone.is_none() {
         redirects.retain(|redirect| redirect.dest_zone != ZoneRef::Mesh);
@@ -152,6 +187,7 @@ pub(super) fn plan(
         mesh_zone,
         ping,
         listen_port,
+        dns,
         rules,
         default_policy,
         redirects,
@@ -199,6 +235,20 @@ impl fmt::Display for FirewallPlan {
         }
         if let Some(ListenPort { wan_zone, port }) = &self.listen_port {
             writeln!(f, "listen port: {wan_zone} udp/{port}")?;
+        }
+        if let Some(DnsIn {
+            address,
+            zone,
+            from,
+        }) = &self.dns
+        {
+            let zone = zone
+                .as_ref()
+                .map_or_else(String::new, |zone| format!(", on {zone}"));
+            let from = from
+                .iter()
+                .map(|(node, address)| format!("{node} {address}"));
+            writeln!(f, "dns to {address}{zone} from {}", super::list(from))?;
         }
 
         for rule in &self.rules {

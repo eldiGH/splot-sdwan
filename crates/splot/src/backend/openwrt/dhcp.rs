@@ -4,10 +4,12 @@ use super::section::{Section, UciSection, UciSectionBuilder};
 use crate::plan::dhcp::{DhcpPlan, Lease};
 
 pub(super) const FILE: &str = "dhcp";
+/// The section types splot owns in the file for the DHCP.
+pub(super) const TYPES: [&str; 1] = ["host"];
 
 impl UciSection for Lease {
     fn section_type(&self) -> &str {
-        "host"
+        TYPES[0]
     }
 
     fn id(&self) -> impl IntoIterator<Item = &str> {

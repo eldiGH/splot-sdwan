@@ -2,13 +2,14 @@
 //! and commits it with uci, and reloads the services.
 
 mod dhcp;
+mod dns;
 mod firewall;
 mod naming;
 mod network;
 mod section;
 
 use log::info;
-use splot_core::protocol::openwrt::Rendered;
+use splot_core::protocol::openwrt::{File, Rendered};
 
 use crate::plan::NodePlan;
 
@@ -21,18 +22,43 @@ pub fn render(plan: &NodePlan) -> Rendered {
     let mut files = Vec::new();
     let mut secrets = Vec::new();
     let mut owned = Vec::new();
+    let file = |name: &str, types: &[&str], sections| File {
+        name: name.to_owned(),
+        types: types
+            .iter()
+            .map(|&section_type| section_type.to_owned())
+            .collect(),
+        sections,
+    };
 
     if let Some(wireguard) = &plan.wireguard {
         let (network, slots) = network::render(wireguard);
-        files.push((network::FILE.to_owned(), network));
+        let types = network::types();
+        let types: Vec<&str> = types.iter().map(String::as_str).collect();
+        files.push(file(network::FILE, &types, network));
         secrets = slots;
     }
     if let Some(firewall) = &plan.firewall {
-        files.push((firewall::FILE.to_owned(), firewall::render(firewall)));
+        files.push(file(
+            firewall::FILE,
+            &firewall::TYPES,
+            firewall::render(firewall),
+        ));
         owned = firewall::owned(firewall);
     }
-    if let Some(dhcp) = &plan.dhcp {
-        files.push((dhcp::FILE.to_owned(), dhcp::render(dhcp)));
+    // One file for both: each brings its types.
+    if plan.dhcp.is_some() || plan.dns.is_some() {
+        let mut types = Vec::new();
+        let mut sections = Vec::new();
+        if let Some(dhcp) = &plan.dhcp {
+            types.extend(dhcp::TYPES);
+            sections.extend(dhcp::render(dhcp));
+        }
+        if let Some(dns) = &plan.dns {
+            types.extend(dns::TYPES);
+            sections.extend(dns::render(dns));
+        }
+        files.push(file(dhcp::FILE, &types, sections));
     }
 
     Rendered {
@@ -42,6 +68,7 @@ pub fn render(plan: &NodePlan) -> Rendered {
         files,
         secrets,
         owned,
+        dnsmasq: plan.dns.as_ref().map(dns::values),
     }
 }
 
@@ -119,17 +146,29 @@ nodes:
         assert!(all.wireguard);
         assert!(!all.owned.is_empty());
 
-        let network_only = rendered("      firewall: none\n      dhcp: none");
+        let network_only = rendered("      firewall: none\n      dhcp: none\n      dns: none");
         assert_eq!(network_only.files(), ["network"]);
         assert_eq!(network_only.secrets.len(), 1);
+        assert!(network_only.dnsmasq.is_none());
         // Nor anything splot owns there: the operator's sections decide.
         let no_firewall = rendered("      firewall: none");
         assert_eq!(no_firewall.files(), ["network", "dhcp"]);
         assert!(no_firewall.owned.is_empty());
+        // DHCP and DNS share a file: each brings its own section types, and
+        // a concern left alone keeps its old sections there.
+        let types = |platform: &str| {
+            let rendered = rendered(platform);
+            let dhcp = rendered.files.iter().find(|file| file.name == "dhcp");
+            dhcp.map(|file| file.types.clone()).unwrap_or_default()
+        };
+        assert_eq!(types(""), ["host", "hostrecord", "cname"]);
+        assert_eq!(types("      dns: none"), ["host"]);
+        assert_eq!(types("      dhcp: none"), ["hostrecord", "cname"]);
         assert_eq!(
-            rendered("      dhcp: none").files(),
+            rendered("      dhcp: none\n      dns: none").files(),
             ["network", "firewall"]
         );
+        assert!(rendered("      dhcp: none").dnsmasq.is_some());
 
         // Without WireGuard, no key to fill in either, and the node's own
         // WireGuard says it's this peer.
@@ -152,7 +191,12 @@ nodes:
             assert!(!rendered.secrets.is_empty());
 
             let mut placeholders = 0;
-            for (file, sections) in &rendered.files {
+            for File {
+                name: file,
+                sections,
+                ..
+            } in &rendered.files
+            {
                 for section in sections {
                     for (option, value) in &section.options {
                         let slot = rendered.secrets.iter().find(|slot| {
@@ -223,9 +267,35 @@ nodes:
 
         for node in openwrt_nodes(&network) {
             let plan = plan::plan(&network, node.name()).unwrap();
-            for (file, sections) in &render(&plan).files {
+            for File {
+                name: file,
+                sections,
+                ..
+            } in &render(&plan).files
+            {
                 let read_back = export::parse(&exported(sections)).unwrap();
                 assert_eq!(read_back, *sections, "{} {file}", node.name());
+            }
+        }
+    }
+
+    #[test]
+    fn every_section_rendered_is_of_a_type_splot_owns_in_its_file() {
+        // Otherwise the agent would never take back one splot stops rendering.
+        let network = example();
+
+        for node in openwrt_nodes(&network) {
+            let plan = plan::plan(&network, node.name()).unwrap();
+            for file in &render(&plan).files {
+                for section in &file.sections {
+                    assert!(
+                        file.types.contains(&section.section_type),
+                        "{} {}.{}",
+                        node.name(),
+                        file.name,
+                        section.name
+                    );
+                }
             }
         }
     }
@@ -239,11 +309,26 @@ nodes:
 
             let rendered = render(&plan);
             let mut output = String::new();
-            for (file, sections) in &rendered.files {
-                writeln!(output, "# {file}").unwrap();
+            for File {
+                name: file,
+                types,
+                sections,
+            } in &rendered.files
+            {
+                writeln!(output, "# {file}: splot's {}", types.join(", ")).unwrap();
                 for command in sections.iter().flat_map(|section| section.commands(file)) {
                     writeln!(output, "{command}").unwrap();
                 }
+            }
+            if let Some(dnsmasq) = &rendered.dnsmasq {
+                writeln!(output, "# dnsmasq sections: splot's values").unwrap();
+                for value in &dnsmasq.server {
+                    writeln!(output, "server {value}").unwrap();
+                }
+                for value in &dnsmasq.rebind_domain {
+                    writeln!(output, "rebind_domain {value}").unwrap();
+                }
+                writeln!(output, "of domains {}", dnsmasq.domains.join(", ")).unwrap();
             }
             writeln!(output, "# owned").unwrap();
             for crossing in &rendered.owned {

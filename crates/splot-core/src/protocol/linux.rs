@@ -1,5 +1,5 @@
 //! The config of a Linux node: its WireGuard as a wg-quick file, its firewall
-//! as an nft file, its DHCP as a dnsmasq file.
+//! as an nft file, its DHCP and DNS as a dnsmasq file.
 
 use std::collections::BTreeSet;
 
@@ -20,9 +20,9 @@ pub struct Rendered {
     /// The nft file of splot's own table; none where splot leaves the firewall
     /// alone. It holds no secret.
     pub firewall: Option<String>,
-    /// splot's dnsmasq file; none where splot leaves the DHCP alone. It holds
-    /// no secret.
-    pub dhcp: Option<String>,
+    /// splot's dnsmasq file, its DHCP and its DNS; none where splot leaves both
+    /// alone. It holds no secret.
+    pub dnsmasq: Option<String>,
 }
 
 /// A line of the file: as it is, or a key whose value is a secret.

@@ -1,9 +1,26 @@
 ---
 source: crates/splot/src/backend/linux/mod.rs
-expression: rendered_node.dhcp.unwrap()
+expression: rendered_node.dnsmasq.unwrap()
 ---
-# splot's DHCP for node Barn: dnsmasq reads it where its config says
-# conf-file=/etc/splot/dnsmasq.conf. Written by splot: don't edit.
+# splot's DHCP and DNS for node Barn: dnsmasq reads it where its config
+# says conf-file=/etc/splot/dnsmasq.conf. Written by splot: don't edit.
+
+# barn.example.org, answered here alone
+local=/barn.example.org/
+
+# Barn.nvr
+host-record=nvr.barn.example.org,192.168.4.10
+
+# Cabin's domain, forwarded to it
+server=/cabin.example.org/192.168.2.1
+rebind-domain-ok=/cabin.example.org/
+
+# Home's domain, forwarded to it
+server=/home.example.org/192.168.1.1
+rebind-domain-ok=/home.example.org/
+
+# an endpoint, asked of public DNS: never through the mesh
+server=/wg.cabin.example.org/#
 
 # Barn.nvr
 dhcp-host=aa:bb:cc:00:00:07,192.168.4.10,nvr

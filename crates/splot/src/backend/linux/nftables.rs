@@ -16,7 +16,7 @@ use splot_core::consts::{MESH_DEVICE, NFT_FAMILY, NFT_TABLE};
 use crate::{
     model::platform::Platform,
     plan::firewall::{
-        FirewallPlan, ListenPort, Ping, Verdict, ZonePolicy,
+        DnsIn, FirewallPlan, ListenPort, Ping, Verdict, ZonePolicy,
         redirect::Redirect,
         rules::{Destination, Direction, Rule},
         zone_ref::ZoneRef,
@@ -217,6 +217,35 @@ pub(super) fn render(node: &Identifier, firewall: &FirewallPlan, platform: &Plat
             "WireGuard listen port",
             format!("iifname {} udp dport {port} accept", zones.named(wan_zone)),
         );
+    }
+    // To the node itself, and into the zone its DNS address is on: whichever
+    // it turns out to be, the other never matches.
+    if let Some(DnsIn {
+        address,
+        zone,
+        from,
+    }) = &firewall.dns
+    {
+        let from: Vec<Ipv4Network> = from
+            .iter()
+            .map(|(_, address)| Ipv4Network::host(*address))
+            .collect();
+        for proto in ["tcp", "udp"] {
+            let rule = format!(
+                "ip saddr {} ip daddr {address} {proto} dport 53 accept",
+                addresses(&from)
+            );
+            input.push(
+                "DNS from the nodes that forward to it",
+                format!("iifname {mesh} {rule}"),
+            );
+            if let Some(zone) = zone {
+                forward.push(
+                    format!("DNS from the nodes that forward to it, to {zone}"),
+                    format!("iifname {mesh} oifname {} {rule}", zones.of(zone)),
+                );
+            }
+        }
     }
 
     for rule in &firewall.rules {

@@ -272,6 +272,10 @@ EOF
 		fail "the dry run, here, holds no key of the router's: placeholders only" "leaked:$leaked"$'\n'"$output"
 	fi
 
+	# An upstream server of the operator's own, in the dnsmasq section where
+	# splot puts its forwarding too: it stays.
+	run "uci add_list dhcp.@dnsmasq[0].server='9.9.9.9' && uci commit dhcp"
+
 	log_lines=$(run 'logread | wc -l')
 	if output=$(splot --config "$work/splot.yml" apply --node Home --yes 2>&1); then
 		pass "splot apply over ssh: $(sed -n 's/^== Home: //p' <<<"$output")"
@@ -462,6 +466,40 @@ EOF
 		fail "dnsmasq running"
 	fi
 
+	# Home's names answer at its dnsmasq: a device's, and a service's alias of
+	# its host's. A name in its domain splot doesn't know gets no answer from
+	# public DNS: Home answers its domain alone.
+	local lookups=
+	lookup() { run "nslookup $1 127.0.0.1 2>&1" || true; }
+	grep -q 'Address: 192\.168\.1\.16' <<<"$(lookup printer.home.example.org)" || lookups+="printer;"
+	grep -q 'Address: 192\.168\.1\.20' <<<"$(lookup files.home.example.org)" || lookups+="files;"
+	grep -q 'Address: 10\.100\.10\.10' <<<"$(lookup lte-cam.home.example.org)" || lookups+="lte-cam;"
+	grep -q 'NXDOMAIN' <<<"$(lookup nothing.home.example.org)" || lookups+="nothing;"
+	if [ -z "$lookups" ]; then
+		pass "DNS: Home's names answer, an alias too; an unknown one in its domain doesn't"
+	else
+		fail "DNS: Home's names answer, an alias too; an unknown one in its domain doesn't" \
+			"$lookups"$'\n'"$(lookup printer.home.example.org)"$'\n'"$(lookup files.home.example.org)"$'\n'"$(lookup nothing.home.example.org)"
+	fi
+
+	# The others' domains forwarded, their answers allowed private addresses,
+	# Cabin's endpoint name sent to public DNS: in dnsmasq's config, the
+	# operator's upstream server beside them, and what splot added recorded.
+	output=$(run "cat /var/etc/dnsmasq.conf.*; uci show dhcp.@dnsmasq[0]") || true
+	local missing=
+	for line in server=/home.example.org/ server=/cabin.example.org/192.168.2.1 \
+		server=/barn.example.org/192.168.4.2 server=/wg.cabin.example.org/# \
+		rebind-domain-ok=cabin.example.org server=9.9.9.9; do
+		grep -qxF "$line" <<<"$output" || missing+=" $line"
+	done
+	grep -qF "spl_server='/home.example.org/'" <<<"$output" || missing+=" spl_server"
+	if [ -z "$missing" ]; then
+		pass "DNS: the others' domains forwarded, Cabin's endpoint to public DNS; the operator's server kept"
+	else
+		fail "DNS: the others' domains forwarded, Cabin's endpoint to public DNS; the operator's server kept" \
+			"missing:$missing"$'\n'"$output"
+	fi
+
 	local interfaces interface
 	interfaces=$(run "uci show network | sed -n \"s/^network\\.\\(spl_[A-Za-z0-9_]*\\)\\.proto='wireguard'\$/\\1/p\"")
 	for interface in $interfaces; do
@@ -572,14 +610,15 @@ EOF
 		fail "dry run warns about the operator's forwarding and rule where splot decides" "$output"
 	fi
 
-	# A peer change: Cabin's endpoint moves. WireGuard must see it without a reboot.
+	# A peer change: Cabin's port moves. WireGuard must see it without a reboot.
+	# (Not its endpoint name: one inside a mesh domain is in the DNS too.)
 	local renew
 	renew=$(run 'ubus call network get_proto_handlers | jsonfilter -e @.wireguard.renew_available')
 	before=$(run 'cat /sys/class/net/spl_mesh/ifindex 2>/dev/null') || true
-	sed -i "s/$CABIN_ENDPOINT/203.0.113.21/" "$work/splot.yml"
+	sed -i '/^  Cabin:$/,/^  [A-Z]/ s/listenPort: 51820$/listenPort: 51821/' "$work/splot.yml"
 	# Only that peer's endpoint is staged, then the network file is committed.
 	output=$(splot --config "$work/splot.yml" apply --node Home --dry-run 2>/dev/null | grep -v '^#') || true
-	expected="== Home: network"$'\n'"set network.spl_wireguard_spl_mesh_Cabin.endpoint_host='203.0.113.21'"$'\n'"commit network"
+	expected="== Home: network"$'\n'"set network.spl_wireguard_spl_mesh_Cabin.endpoint_port='51821'"$'\n'"commit network"
 	if [ "$output" = "$expected" ]; then
 		pass "peer change stages only that peer"
 	else
@@ -589,7 +628,7 @@ EOF
 		fail "peer update: apply" "$output"
 	else
 		sleep 3
-		if run 'wg show spl_mesh endpoints' | grep -q '203\.0\.113\.21:'; then
+		if run 'wg show spl_mesh endpoints' | grep -qF "$CABIN_ADDRESS:51821"; then
 			pass "peer update reaches WireGuard (renew available: $renew)"
 		else
 			fail "peer update reaches WireGuard (renew available: $renew)" "$(run 'wg show spl_mesh endpoints' 2>&1)"
@@ -697,12 +736,13 @@ EOF
 			"$nft_setup"$'\n'"exit $status: $output"$'\n'"last: $last"$'\n'"before: $nft_before"$'\n'"after: $nft_after"$'\n'"live: $nft_live"
 	fi
 
-	# Concerns left alone: with `firewall: none` and `dhcp: none` on Home, splot
-	# renders neither file, so it stages, deletes, commits and reloads nothing
-	# there, though the config changes what both would hold (the ssh port, the
-	# printer's MAC). Its sections from before stay as they were.
-	awk '!done && /^      os: openwrt$/ { print; print "      firewall: none"; print "      dhcp: none"; done = 1; next } 1' \
-		"$work/splot.yml" | sed 's/port: 22$/port: 2222/; s/aa:bb:cc:00:00:02/aa:bb:cc:00:00:12/' >"$work/splot-none.yml"
+	# Concerns left alone: with `firewall: none`, `dhcp: none` and `dns: none`
+	# on Home, splot renders neither file, so it stages, deletes, commits and
+	# reloads nothing there, though the config changes what both would hold
+	# (the ssh port, the printer's MAC and an alias). Its sections and values
+	# from before stay as they were.
+	awk '!done && /^      os: openwrt$/ { print; print "      firewall: none"; print "      dhcp: none"; print "      dns: none"; done = 1; next } 1' \
+		"$work/splot.yml" | sed 's/port: 22$/port: 2222/; s/aa:bb:cc:00:00:02/aa:bb:cc:00:00:12/; s/dns: \[files, photos\]/dns: [files]/' >"$work/splot-none.yml"
 	local left_alone='/etc/config/firewall /etc/config/dhcp'
 	before=$(run "ls -i $left_alone; md5sum $left_alone")
 	local sections dry_run

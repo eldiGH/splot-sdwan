@@ -1,6 +1,6 @@
 # splot-sdwan
 
-Declarative WireGuard mesh networking for OpenWRT routers. You describe your network — routers, zones, devices, services — in a single YAML file; splot translates it into OpenWRT `network`, `dhcp`, and `firewall` configuration via `uci`.
+Declarative WireGuard mesh networking for OpenWRT routers and Linux hosts. You describe your network — routers, zones, devices, services — in a single YAML file; splot translates it into each node's configuration: on OpenWrt the `network`, `dhcp`, and `firewall` files via `uci`; on Linux wg-quick, an nftables table of its own, and a dnsmasq file.
 
 > **Status:** work in progress, hobby/learning project. The core pipeline works (config parsing, validation, UCI generation for network/DHCP/firewall) behind a small CLI (`check`, `apply --dry-run`), but the config format may still change. Not production-ready — see [STATUS.md](STATUS.md) for what's done and [ROADMAP.md](ROADMAP.md) for what's next.
 
@@ -9,7 +9,8 @@ Declarative WireGuard mesh networking for OpenWRT routers. You describe your net
 - Builds a **WireGuard mesh** between your OpenWRT routers — interfaces, peers, and keys are generated from the config.
 - **Zero-trust by default**: between the zones splot knows, and out of its mesh zone, splot drops whatever no service grants; access is granted only through explicit per-service rules. There is no broad zone-to-zone forwarding.
 - **Tag-based access control**: every service declares `allowFrom` using tags or names (nodes, zones, devices, clients). Splot resolves these to IPs/subnets and emits scoped firewall rules.
-- **Static DHCP leases** for devices and roaming clients with declared MACs.
+- **Static DHCP leases** for devices and roaming clients with declared MACs, and the routes through a node that isn't its zone's gateway (option 121).
+- **DNS across the mesh**: each node's domain with a name for each of its devices (and aliases for services), the other nodes' domains forwarded to them over the mesh.
 - **WAN exposure** declared on the service itself — port forwards with optional CIDR allowlists, including cross-node forwarding over the mesh.
 - One config file, synced across routers. Each router is named with `--node`, checks its WireGuard key is that node's, and applies only its own slice.
 - Each node says which software it runs (`platform`), and which concerns splot leaves to you (`none`).

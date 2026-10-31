@@ -382,13 +382,14 @@ mod tests {
                 files: Vec::new(),
                 secrets: Vec::new(),
                 owned: Vec::new(),
+                dnsmasq: None,
             }),
             Os::OpenWrt => Rendered::Linux(linux_protocol::Rendered {
                 node,
                 public_key,
                 wireguard: None,
                 firewall: None,
-                dhcp: None,
+                dnsmasq: None,
             }),
         };
         let os = match found {

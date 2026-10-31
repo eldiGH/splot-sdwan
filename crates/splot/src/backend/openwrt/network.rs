@@ -19,14 +19,27 @@ const PRIVATE_KEY: &str = "private_key";
 /// A peer's option that holds its pair's preshared key: a placeholder too.
 const PRESHARED_KEY: &str = "preshared_key";
 
+/// The section types splot owns in the file: the mesh interface, and its
+/// peers (a type netifd names after the interface's section).
+pub(super) fn types() -> Vec<String> {
+    vec![
+        MeshInterface::TYPE.to_owned(),
+        format!("wireguard_{}", naming::mesh_interface()),
+    ]
+}
+
 /// The mesh interface.
 struct MeshInterface<'a> {
     plan: &'a WireGuardPlan,
 }
 
+impl MeshInterface<'_> {
+    const TYPE: &'static str = "interface";
+}
+
 impl UciSection for MeshInterface<'_> {
     fn section_type(&self) -> &str {
-        "interface"
+        Self::TYPE
     }
 
     fn id(&self) -> impl IntoIterator<Item = &str> {

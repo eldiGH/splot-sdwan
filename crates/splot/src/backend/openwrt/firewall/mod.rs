@@ -1,4 +1,5 @@
 mod deny;
+mod dns;
 mod listen_port;
 mod ping;
 mod redirect;
@@ -21,6 +22,8 @@ use crate::{
 use zones::MeshZone;
 
 pub(super) const FILE: &str = "firewall";
+/// The section types splot owns in the file.
+pub(super) const TYPES: [&str; 4] = ["zone", "rule", "redirect", "nat"];
 
 /// A host's part of a section id, with its node's name when it's inside a node,
 /// so it can't clash with another node's host of the same name.
@@ -81,6 +84,8 @@ pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
         .listen_port
         .as_ref()
         .map(|listen_port| listen_port.to_section());
+    let dns = firewall.dns.iter().flat_map(dns::rules);
+    let dns = dns.map(|rule| rule.to_section());
     let rules = firewall.rules.iter().map(|rule| rule.to_section());
     let denies = deny::denies(&firewall.default_policy);
     let denies = denies.iter().map(|deny| deny.to_section());
@@ -96,6 +101,7 @@ pub(super) fn render(firewall: &FirewallPlan) -> Vec<Section> {
     zone.into_iter()
         .chain(ping)
         .chain(listen_port)
+        .chain(dns)
         .chain(rules)
         .chain(denies)
         .chain(redirects)

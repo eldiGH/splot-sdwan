@@ -17,7 +17,7 @@ use crate::{
 
 /// The protocol's version: splot and an agent talk only when theirs are the
 /// same. A change to a request or a reply bumps it.
-pub const PROTOCOL: u32 = 10;
+pub const PROTOCOL: u32 = 12;
 
 /// What splot asks of the agent.
 #[derive(Debug, Serialize, Deserialize)]
@@ -195,9 +195,10 @@ mod tests {
                 .parse()
                 .unwrap(),
             wireguard: true,
-            files: vec![(
-                "network".to_owned(),
-                vec![Section {
+            files: vec![openwrt::File {
+                name: "network".to_owned(),
+                types: vec!["interface".to_owned(), "wireguard_spl_mesh".to_owned()],
+                sections: vec![Section {
                     name: "spl_wireguard_spl_mesh_Cabin".to_owned(),
                     section_type: "wireguard_spl_mesh".to_owned(),
                     options: vec![
@@ -211,7 +212,7 @@ mod tests {
                         ),
                     ],
                 }],
-            )],
+            }],
             secrets: vec![Slot {
                 file: "network".to_owned(),
                 section: "spl_wireguard_spl_mesh_Cabin".to_owned(),
@@ -232,6 +233,11 @@ mod tests {
                     to: Dest::Node,
                 },
             ],
+            dnsmasq: Some(openwrt::DnsmasqValues {
+                server: vec!["/cabin.example.org/192.168.2.1".to_owned()],
+                rebind_domain: vec!["cabin.example.org".to_owned()],
+                domains: vec!["cabin.example.org".to_owned()],
+            }),
         })
     }
 
@@ -255,7 +261,7 @@ mod tests {
             firewall: Some(
                 "table inet splot\ndelete table inet splot\ntable inet splot {\n}\n".to_owned(),
             ),
-            dhcp: Some("dhcp-host=aa:bb:cc:00:00:07,192.168.4.10,nvr\n".to_owned()),
+            dnsmasq: Some("dhcp-host=aa:bb:cc:00:00:07,192.168.4.10,nvr\n".to_owned()),
         })
     }
 

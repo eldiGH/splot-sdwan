@@ -8,6 +8,7 @@ pub(crate) mod key_store;
 mod reload;
 mod slot;
 mod uci;
+mod values;
 
 use std::path::PathBuf;
 
@@ -29,8 +30,8 @@ fn with_secrets(rendered: &Rendered, store: &UciKeyStore) -> Result<Rendered, Er
     for (slot, value) in rendered.secrets.iter().zip(values) {
         let option = files
             .iter_mut()
-            .filter(|(file, _)| *file == slot.file)
-            .flat_map(|(_, sections)| sections.iter_mut())
+            .filter(|file| file.name == slot.file)
+            .flat_map(|file| file.sections.iter_mut())
             .filter(|section| section.name == slot.section)
             .flat_map(|section| section.options.iter_mut())
             .find(|(option, _)| *option == slot.option);
@@ -112,6 +113,26 @@ fn empty() -> Rendered {
         files: Vec::new(),
         secrets: Vec::new(),
         owned: Vec::new(),
+        dnsmasq: None,
+    }
+}
+
+/// File `name` with `sections`, splot owning their types there.
+#[cfg(test)]
+fn file(
+    name: &str,
+    sections: Vec<splot_core::uci::section::Section>,
+) -> splot_core::protocol::openwrt::File {
+    let mut types: Vec<String> = sections
+        .iter()
+        .map(|section| section.section_type.clone())
+        .collect();
+    types.dedup();
+
+    splot_core::protocol::openwrt::File {
+        name: name.to_owned(),
+        types,
+        sections,
     }
 }
 
@@ -148,13 +169,13 @@ mod tests {
         let placeholder = Secret::PrivateKey.placeholder();
         let rendered = Rendered {
             files: vec![
-                (
-                    "dhcp".to_owned(),
-                    // A section of the same name in another file: no slot.
+                // A section of the same name in another file: no slot.
+                file(
+                    "dhcp",
                     vec![section("spl_mesh", "host", &[("private_key", placeholder)])],
                 ),
-                (
-                    "network".to_owned(),
+                file(
+                    "network",
                     vec![
                         // The same option in another section: no slot.
                         section("spl_other", "interface", &[("private_key", placeholder)]),
@@ -180,7 +201,11 @@ mod tests {
         let commands: Vec<String> = filled
             .files
             .iter()
-            .flat_map(|(file, sections)| sections.iter().flat_map(|section| section.commands(file)))
+            .flat_map(|file| {
+                file.sections
+                    .iter()
+                    .flat_map(|section| section.commands(&file.name))
+            })
             .map(|command| command.to_string())
             .collect();
         assert_eq!(
@@ -229,7 +254,7 @@ mod tests {
     fn psk_peers(peers: &[HostRef]) -> Rendered {
         let (sections, secrets) = peers.iter().map(psk_peer).unzip();
         Rendered {
-            files: vec![("network".to_owned(), sections)],
+            files: vec![file("network", sections)],
             secrets,
             ..empty()
         }
@@ -243,7 +268,7 @@ mod tests {
         let filled = with_secrets(&psk_peers(&[cabin(), phone()]), &store).unwrap();
 
         let commands: Vec<String> = filled.files[0]
-            .1
+            .sections
             .iter()
             .flat_map(|section| section.commands("network"))
             .map(|command| command.to_string())

@@ -105,9 +105,15 @@ fn option_changes<'a>(current: &'a Section, desired: &'a Section) -> Vec<Change<
 }
 
 /// What turns the splot sections in `current` (a file's sections, in file order)
-/// into `desired`, leaving every other section alone. splot's sections end up as
-/// one block after the operator's, in `desired`'s order.
-pub(super) fn diff<'a>(current: &'a [Section], desired: &'a [Section]) -> Vec<Change<'a>> {
+/// of the `types` splot owns there into `desired`, leaving every other section
+/// alone: the operator's, and splot's of a concern it leaves alone. splot's
+/// sections end up as one block after the others, in `desired`'s order.
+pub(super) fn diff<'a>(
+    current: &'a [Section],
+    desired: &'a [Section],
+    types: &[String],
+) -> Vec<Change<'a>> {
+    let is_splot = |section: &Section| is_splot(section) && types.contains(&section.section_type);
     let found: HashMap<&str, &Section> = current
         .iter()
         .filter(|section| is_splot(section))
@@ -265,6 +271,13 @@ config redirect 'spl_redirect_Home_nas_https'
         export::parse(text).unwrap()
     }
 
+    /// Every type the tests' sections have: splot owns them all.
+    fn types() -> Vec<String> {
+        ["zone", "rule", "redirect", "wireguard_spl_mesh", "host"]
+            .map(str::to_owned)
+            .to_vec()
+    }
+
     /// CURRENT without the operator's zone: what splot renders.
     fn rendered() -> String {
         CURRENT.replace("config zone\n\toption name 'lan'\n", "")
@@ -308,7 +321,10 @@ config redirect 'spl_redirect_Home_nas_https'
     /// The changes from CURRENT to `desired`, described.
     fn changes_to(desired: &str) -> Vec<String> {
         let (current, desired) = (sections(CURRENT), sections(desired));
-        diff(&current, &desired).iter().map(describe).collect()
+        diff(&current, &desired, &types())
+            .iter()
+            .map(describe)
+            .collect()
     }
 
     #[test]
@@ -408,7 +424,10 @@ config redirect 'spl_redirect_Home_nas_https'
     fn an_operator_section_after_splots_reorders_the_block() {
         let current = sections(&format!("{CURRENT}\nconfig rule 'operator'\n"));
         let desired = sections(&rendered());
-        let changes: Vec<String> = diff(&current, &desired).iter().map(describe).collect();
+        let changes: Vec<String> = diff(&current, &desired, &types())
+            .iter()
+            .map(describe)
+            .collect();
         assert_eq!(
             changes,
             [r#"reorder ["spl_rule_in_Home_ssh", "spl_redirect_Home_nas_https"]"#]
@@ -419,7 +438,7 @@ config redirect 'spl_redirect_Home_nas_https'
     fn operator_sections_are_left_alone() {
         // splot renders none of them, and removes none.
         let current = sections(&format!("{CURRENT}\nconfig rule 'operator'\n"));
-        let changes: Vec<String> = diff(&current, &[]).iter().map(describe).collect();
+        let changes: Vec<String> = diff(&current, &[], &types()).iter().map(describe).collect();
         assert_eq!(
             changes,
             [
@@ -620,8 +639,41 @@ config redirect 'spl_redirect_Home_nas_https'
 
         let key = |key: char| format!("{}A=", key.to_string().repeat(42));
         assert_eq!(
-            psk_changed(&diff(&current, &desired)),
+            psk_changed(&diff(&current, &desired, &types())),
             [key('C'), key('L'), key('B')]
+        );
+    }
+
+    #[test]
+    fn a_splot_section_of_a_type_splot_doesnt_own_there_is_left_alone() {
+        // DHCP left alone in the file DNS shares: its old lease stays, where
+        // it is, and the new record is added after it.
+        let current = sections(
+            "
+config dnsmasq
+
+config host 'spl_host_printer'
+	option name 'printer'
+
+config hostrecord 'spl_hostrecord_nas'
+	option name 'nas.home.example.org'
+",
+        );
+        let desired = sections(
+            "
+config hostrecord 'spl_hostrecord_tv'
+	option name 'tv.home.example.org'
+",
+        );
+        let types = ["hostrecord".to_owned(), "cname".to_owned()];
+        let changes: Vec<String> = diff(&current, &desired, &types)
+            .iter()
+            .map(describe)
+            .collect();
+
+        assert_eq!(
+            changes,
+            ["remove spl_hostrecord_nas", "add spl_hostrecord_tv"]
         );
     }
 }
