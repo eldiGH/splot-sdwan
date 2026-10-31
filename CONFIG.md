@@ -122,6 +122,12 @@ With `firewall: nftables`:
 - **Your own tables stay as they are**, and splot never runs `flush ruleset`. What splot drops stays dropped whatever they say; what it accepts gets through only where they accept it too. So the dry run warns about each of your chains that drops what it doesn't accept (`policy drop`, Docker's `FORWARD` say): let through there what splot's services grant.
 - **A ruleset loaded with `flush ruleset` removes splot's table too.** Debian's `nftables.service` loads `/etc/nftables.conf` with one: splot's unit loads after it at boot, and again whenever it restarts or reloads. Starting it when it wasn't running, or `nft -f` of such a file by hand, leaves splot's table out: run `systemctl reload splot-firewall`, or apply again (the dry run says the table isn't loaded).
 
+With `dhcp: dnsmasq`:
+
+- **Your dnsmasq, running as `dnsmasq.service`,** with your pools and options. splot writes one file, `/etc/splot/dnsmasq.conf` (rewritten whole: don't edit it): a `dhcp-host` for each lease, and on a zone whose `gateway` is another box, the routes through the node (option 121).
+- **Add `conf-file=/etc/splot/dnsmasq.conf` to dnsmasq's config**, once (on Debian, a file in `/etc/dnsmasq.d`). The dry run warns when neither `/etc/dnsmasq.conf` nor `/etc/dnsmasq.d` has that line.
+- **A changed file restarts dnsmasq**, which reads its config only when it starts; it keeps its leases across. dnsmasq checks the file first, and `splot apply` refuses while dnsmasq isn't running: splot never starts, stops or enables it.
+
 ---
 
 ## Zone
@@ -139,6 +145,7 @@ lan:
 | Field     | Type                      | Required | Description                                                         |
 | --------- | ------------------------- | -------- | ------------------------------------------------------------------- |
 | `address` | CIDR (`x.x.x.x/prefix`)   | yes      | The router's IP and subnet on this zone.                            |
+| `gateway` | IPv4 address              | no       | The zone's gateway, when it's another box than the node (a Raspberry Pi behind the site's ISP router, say): hosts there reach the internet through it, and the mesh through the node. Where splot runs the node's DHCP, it hands out the routes through the node (option 121), so hosts answer the mesh through the node, not the gateway. On Linux the zone then needs its interfaces in `platform.interfaces`; on OpenWrt splot can't hand them out yet, and `splot apply` refuses the node. Leave it out where the node is the zone's gateway. |
 | `devices` | map of name → ZoneDevice  | no       | Known devices on this zone.                                         |
 | `tags`    | string or list of strings | no       | Explicit tags assigned to this zone. Resolves to the zone's subnet. |
 

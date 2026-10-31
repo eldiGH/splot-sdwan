@@ -8,7 +8,7 @@ use crate::{
     config::{self, Client, Config},
     model::{
         host::{Host, HostAddress, HostRef, Place, WgPeer},
-        node::Node,
+        node::{Node, Zone},
         platform::Platform,
         validator::types::{ValidationError, ValidationReport},
     },
@@ -156,7 +156,28 @@ fn check_node(
             zone: zone_name.clone(),
         };
 
-        zones.insert(zone_name.clone(), zone_network);
+        let gateway = zone.gateway.filter(|&gateway| {
+            let at = || {
+                ConfigLocation::Node(
+                    node_name.clone(),
+                    NodeLoc::Zone(zone_name.clone(), ZoneLoc::Gateway),
+                )
+            };
+            if gateway == zone.address.ip() {
+                report
+                    .errors
+                    .push(ValidationError::GatewayIsTheNode { at: at() });
+                return false;
+            }
+            host_address(gateway, zone_network, place.clone(), report, at).is_some()
+        });
+        zones.insert(
+            zone_name.clone(),
+            Zone {
+                address: zone.address,
+                gateway,
+            },
+        );
         addresses.push(HostAddress {
             interface: zone.address,
             place: place.clone(),
@@ -1144,5 +1165,50 @@ clients:
             "nodes.Home.hub.clients.b-cam.ip",
             |e| matches!(e, ValidationError::IpCollision { with, .. } if with.to_string() == "nodes.Home.hub.clients.a-cam.ip")
         ));
+    }
+
+    /// Home, its lan's gateway `gateway`.
+    fn gateway(gateway: &str) -> ValidationReport {
+        report(&format!(
+            "
+meshNetwork: 10.100.0.0/16
+nodes:
+  Home:
+    platform:
+      os: openwrt
+      dhcp: none
+    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    endpoint: 1.2.3.4
+    wanZone: wan
+    listenPort: 51820
+    meshIp: 10.100.0.1
+    zones:
+      lan:
+        address: 192.168.1.2/24
+        gateway: {gateway}
+"
+        ))
+    }
+
+    #[test]
+    fn a_zones_gateway_is_another_host_on_the_zone() {
+        const AT: &str = "nodes.Home.zones.lan.gateway";
+
+        assert!(gateway("192.168.1.1").errors.is_empty());
+        assert!(error_at(&gateway("192.168.2.1"), AT, |e| matches!(
+            e,
+            ValidationError::IpOutsideSubnet { .. }
+        )));
+        assert!(error_at(&gateway("192.168.1.255"), AT, |e| matches!(
+            e,
+            ValidationError::ReservedHostAddress {
+                kind: ReservedAddress::Broadcast,
+                ..
+            }
+        )));
+        assert!(error_at(&gateway("192.168.1.2"), AT, |e| matches!(
+            e,
+            ValidationError::GatewayIsTheNode { .. }
+        )));
     }
 }

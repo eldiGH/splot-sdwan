@@ -870,21 +870,19 @@ nodes:
 
     #[test]
     fn a_node_splot_cant_apply_yet_stops_the_run_before_it_starts() {
-        let barn = "      os: linux
-      wireguard: wg-quick
-      firewall: nftables
-      dhcp: dnsmasq
-      dns: none
-      ssh: barn
-      interfaces: { wan: eth0 }";
-        let network = mesh(HOME_SSH, barn);
+        // Its DHCP can't hand out the routes through it on OpenWrt yet.
+        let cabin = "      os: openwrt
+      ssh: cabin
+    zones:
+      lan: { address: 192.168.2.2/24, gateway: 192.168.2.1 }";
+        let network = mesh(HOME_SSH, cabin);
         for err in [
             members(&network).err().unwrap(),
             member(&network, &name("Cabin")).err().unwrap(),
         ] {
             assert!(
                 err.to_string()
-                    .starts_with("splot can't manage Cabin's dhcp (dnsmasq) on Linux yet"),
+                    .starts_with("splot can't hand out the routes through Cabin on OpenWrt yet"),
                 "{err}"
             );
         }

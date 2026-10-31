@@ -63,6 +63,13 @@ pub enum ValidationError {
         at: ConfigLocation,
     },
     #[error(
+        "{at}: no interface for zone '{zone}' - its gateway is another box, and dnsmasq hands out the routes through the node (DHCP option 121) on the zone's interfaces"
+    )]
+    RoutedZoneWithoutInterface {
+        zone: Identifier,
+        at: ConfigLocation,
+    },
+    #[error(
         "{at}: zones {zones} share {interface} - splot couldn't tell them apart, so each zone needs an interface of its own"
     )]
     SharedInterface {
@@ -114,6 +121,10 @@ pub enum ValidationError {
         network: Ipv4Network,
         at: ConfigLocation,
     },
+    #[error(
+        "{at}: that's the node's own address on the zone - leave gateway out where the node is the zone's gateway"
+    )]
+    GatewayIsTheNode { at: ConfigLocation },
     #[error("{at}: IP {ip} is the {kind} address of {network} and can't be assigned to a host")]
     ReservedHostAddress {
         ip: Ipv4Addr,
@@ -295,6 +306,8 @@ impl ValidationError {
             Self::InvalidWanVia { at, .. } => at,
             Self::IpCollision { at, .. } => at,
             Self::IpOutsideSubnet { at, .. } => at,
+            Self::GatewayIsTheNode { at } => at,
+            Self::RoutedZoneWithoutInterface { at, .. } => at,
             Self::ReservedHostAddress { at, .. } => at,
             Self::LocalNameCollision { at, .. } => at,
             Self::MacMissing { at, .. } => at,
@@ -579,6 +592,11 @@ mod tests {
             },
             ValidationError::UnknownRef {
                 reference: "Home.nas".parse().unwrap(),
+                at: at(),
+            },
+            ValidationError::GatewayIsTheNode { at: at() },
+            ValidationError::RoutedZoneWithoutInterface {
+                zone: id("lan"),
                 at: at(),
             },
             ValidationError::IpOutsideSubnet {

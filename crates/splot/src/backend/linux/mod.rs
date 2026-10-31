@@ -1,7 +1,7 @@
 //! Linux: the plan as the files of the programs a Linux node runs: its
-//! WireGuard with wg-quick, its firewall with nftables. splot doesn't manage a
-//! Linux node's DHCP yet, and `apply` refuses a node that asks it to.
+//! WireGuard with wg-quick, its firewall with nftables, its DHCP with dnsmasq.
 
+mod dnsmasq;
 mod nftables;
 mod wg_quick;
 
@@ -26,6 +26,10 @@ pub fn render(plan: &NodePlan, platform: &Platform) -> Rendered {
             .firewall
             .as_ref()
             .map(|firewall| nftables::render(&plan.node, firewall, platform)),
+        dhcp: plan
+            .dhcp
+            .as_ref()
+            .map(|dhcp| dnsmasq::render(&plan.node, dhcp, platform)),
     }
 }
 
@@ -38,7 +42,7 @@ mod tests {
     fn example_config_snapshot() {
         // The wg-quick file splot renders for every Linux node of the example,
         // with its secrets as placeholders: what the dry run shows. Then its
-        // nft file.
+        // nft file, and its dnsmasq file.
         let network = test_support::checked(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../splot.example.yml"
@@ -57,6 +61,10 @@ mod tests {
             insta::assert_snapshot!(
                 format!("example_{}_nftables", node.name()),
                 rendered_node.firewall.unwrap()
+            );
+            insta::assert_snapshot!(
+                format!("example_{}_dnsmasq", node.name()),
+                rendered_node.dhcp.unwrap()
             );
             rendered += 1;
         }

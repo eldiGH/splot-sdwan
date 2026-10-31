@@ -1,0 +1,12 @@
+---
+source: crates/splot/src/backend/linux/mod.rs
+expression: rendered_node.dhcp.unwrap()
+---
+# splot's DHCP for node Barn: dnsmasq reads it where its config says
+# conf-file=/etc/splot/dnsmasq.conf. Written by splot: don't edit.
+
+# Barn.nvr
+dhcp-host=aa:bb:cc:00:00:07,192.168.4.10,nvr
+
+# routes on lan: the default through its gateway, the rest through Barn
+dhcp-option=tag:eth0,option:classless-static-route,0.0.0.0/0,192.168.4.1,10.100.0.0/16,192.168.4.2,192.168.1.0/24,192.168.4.2,192.168.2.0/24,192.168.4.2,192.168.3.0/24,192.168.4.2,192.168.10.0/24,192.168.4.2,192.168.40.0/24,192.168.4.2

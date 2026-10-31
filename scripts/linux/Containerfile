@@ -1,10 +1,18 @@
 # Test node for scripts/linux-check.sh: Debian booted with systemd, with
 # wg-quick, nftables, iproute2 and ping, as a Linux node that runs the mesh and
-# its firewall, and sshd for splot to reach it. The packages are fetched over
-# IPv4: the container may have no working IPv6 route.
+# its firewall, dnsmasq for its DHCP (and busybox's udhcpc, a DHCP client to
+# ask it), and sshd for splot to reach it. The packages are fetched over IPv4:
+# the container may have no working IPv6 route.
 FROM docker.io/library/debian:trixie
 RUN apt-get -o Acquire::ForceIPv4=true update && \
 	DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true install -y --no-install-recommends \
-		systemd systemd-sysv dbus wireguard-tools nftables iproute2 iputils-ping openssh-server && \
+		systemd systemd-sysv dbus wireguard-tools nftables iproute2 iputils-ping openssh-server \
+		dnsmasq busybox && \
 	apt-get clean && rm -rf /var/lib/apt/lists/*
+# AppArmor matches profiles by executable path, and the host's profile for
+# /usr/sbin/dnsmasq (if it has one) confines the container's dnsmasq too: it
+# may then read only the host's usual config paths, and root here can't even
+# signal it, so systemd can't restart it. Run from another path, it's out of
+# that profile.
+RUN mv /usr/sbin/dnsmasq /usr/lib/dnsmasq-bin && ln -s /usr/lib/dnsmasq-bin /usr/sbin/dnsmasq
 CMD ["/sbin/init"]

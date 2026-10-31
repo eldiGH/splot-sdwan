@@ -94,6 +94,8 @@ pub struct NodeHub {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeZone {
     pub address: Ipv4Interface,
+    /// The zone's router, when it's another box than the node.
+    pub gateway: Option<Ipv4Addr>,
 
     #[serde(default)]
     pub devices: BTreeMap<Identifier, NodeZoneDevice>,

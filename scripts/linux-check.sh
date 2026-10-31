@@ -2,10 +2,10 @@
 # Checks what splot does on a Linux node against real Linux: boots a Debian
 # container with systemd, and runs splot here, as an operator would, carrying
 # the x86_64 agent and reaching the container over ssh at its platform.ssh, as
-# node Barn of splot.example.yml (its DHCP set to none: splot doesn't manage a
-# Linux node's DHCP yet; its firewall too at first, then splot's own beside
-# tables of the operator's). It asks systemd, wg, ip and nft whether the result
-# works.
+# node Barn of splot.example.yml (its firewall and DHCP left alone at first;
+# then splot's own firewall beside tables of the operator's, and its DHCP
+# through the node's dnsmasq). It asks systemd, wg, ip, nft, dnsmasq and a DHCP
+# client whether the result works.
 #
 #   scripts/linux-check.sh
 #
@@ -34,6 +34,7 @@ UNIT=wg-quick@spl_mesh
 FIREWALL=/etc/splot/firewall.nft
 FIREWALL_UNIT=splot-firewall
 FIREWALL_UNIT_FILE=/etc/systemd/system/$FIREWALL_UNIT.service
+DNSMASQ=/etc/splot/dnsmasq.conf
 
 failures=0
 pass() { printf '  PASS  %s\n' "$1"; }
@@ -92,8 +93,10 @@ exec $(command -v ssh) -F "$work/ssh_config" "\$@"
 EOF
 chmod +x "$work/bin/ssh"
 # The example with Barn's firewall and DHCP left alone, reached as `barn`. The
-# firewall is turned on for its own checks, after the WireGuard's.
-sed 's/ssh: root@192.168.4.1/ssh: barn/' splot.example.yml >"$work/splot.example.yml"
+# firewall is turned on for its own checks, after the WireGuard's, then the
+# DHCP. Barn's LAN is the check's own interface, dhcp0, where a DHCP client
+# asks Barn's dnsmasq.
+sed 's/ssh: root@192.168.4.2/ssh: barn/; s/^        lan: eth0$/        lan: dhcp0/' splot.example.yml >"$work/splot.example.yml"
 sed 's/firewall: nftables/firewall: none/; s/dhcp: dnsmasq/dhcp: none/' "$work/splot.example.yml" >"$work/splot.yml"
 
 # What splot printed, with its exit status when it failed. Without the config's
@@ -156,14 +159,6 @@ run 'install -d -m 700 /root/.ssh && install -m 600 /root/authorized_keys /root/
 if ! reachable; then
 	fail "ssh: the node answers within 30 s" "$(run 'systemctl status ssh --no-pager' 2>&1)"
 	exit 1
-fi
-
-# The example as it is asks splot for Barn's DHCP.
-output=$(config=$work/splot.example.yml splot apply --node Barn --dry-run)
-if printf '%s' "$output" | grep -q "splot can't manage Barn's dhcp (dnsmasq) on Linux yet"; then
-	pass "apply refuses a DHCP splot can't manage on Linux yet"
-else
-	fail "apply refuses a DHCP splot can't manage on Linux yet" "$output"
 fi
 
 # Only init writes the key: until it has run, the dry run says so and creates
@@ -514,6 +509,76 @@ else
 		"$(cut_off_shown)"
 fi
 sed -i '/^      # SSH to Barn itself/,/port:/ s/port: 2223$/port: 2222/' "$work/splot.yml"
+
+# The DHCP: the node's own dnsmasq, which reads splot's file once its config
+# says so. Barn's LAN here: dhcp0, its client end in a network namespace of its
+# own with the nvr's MAC, asking with busybox's udhcpc for its address and the
+# routes (option 121). Barn isn't the LAN's gateway (192.168.4.1): the routes
+# through Barn are the mesh, the zones behind the other nodes, and its iot zone.
+# Into the namespace with nsenter: `ip netns exec` (and `ip -n`) remount /sys,
+# which a rootless container can't, and give up.
+client() { echo "nsenter --net=/run/netns/client $1"; }
+run "ip netns add client 2>/dev/null; ip link add dhcp0 type veth peer name dhcp1 &&
+	ip link set dhcp1 netns client && ip address add 192.168.4.2/24 dev dhcp0 && ip link set dhcp0 up &&
+	$(client 'ip link set dhcp1 address aa:bb:cc:00:00:07') && $(client 'ip link set dhcp1 up')"
+run 'printf "interface=dhcp0\nbind-dynamic\ndhcp-range=192.168.4.100,192.168.4.199,1h\n" >/etc/dnsmasq.d/operator
+	printf "#!/bin/sh\n[ \"\$1\" = bound ] && echo \"\$ip \$staticroutes\" >/root/lease\nexit 0\n" >/root/udhcpc.sh
+	chmod +x /root/udhcpc.sh
+	systemctl restart dnsmasq'
+# What the client gets: its address, then option 121's routes, each `network gateway`.
+lease() {
+	run "rm -f /root/lease; $(client 'busybox udhcpc -i dhcp1 -n -q -t 5 -O staticroutes -s /root/udhcpc.sh') >/dev/null 2>&1; cat /root/lease" 2>&1 || true
+}
+# Cabin's guest zone among them, from the route change above.
+LEASE='192.168.4.10 0.0.0.0/0 192.168.4.1 10.100.0.0/16 192.168.4.2 192.168.1.0/24 192.168.4.2 192.168.2.0/24 192.168.4.2 192.168.3.0/24 192.168.4.2 192.168.5.0/24 192.168.4.2 192.168.10.0/24 192.168.4.2 192.168.40.0/24 192.168.4.2'
+lease_before=$(lease)
+sed -i '/^  Barn:$/,$ s/^      dhcp: none$/      dhcp: dnsmasq/' "$work/splot.yml"
+
+# dnsmasq's config doesn't read splot's file yet: the dry run says so.
+output=$(PATH="$work/bin:$PATH" "$BINARY" --config "$work/splot.yml" apply --node Barn --dry-run 2>&1) || true
+if grep -q "^# $DNSMASQ becomes:$" <<<"$output" && grep -q '^dhcp-host=aa:bb:cc:00:00:07,192.168.4.10,nvr$' <<<"$output" &&
+	grep -q '^#   systemctl restart dnsmasq$' <<<"$output" &&
+	grep -qF "warning: Barn: dnsmasq's config (/etc/dnsmasq.conf, /etc/dnsmasq.d) doesn't read splot's file: add \`conf-file=$DNSMASQ\`" <<<"$output" &&
+	! run "[ -e $DNSMASQ ]"; then
+	pass "DHCP, dry run: the file, then dnsmasq's restart; a warning that its config doesn't read it; writes nothing"
+else
+	fail "DHCP, dry run: the file, then dnsmasq's restart; a warning that its config doesn't read it; writes nothing" "$output"
+fi
+
+run "echo conf-file=$DNSMASQ >>/etc/dnsmasq.d/operator"
+output=$(PATH="$work/bin:$PATH" "$BINARY" --config "$work/splot.yml" apply --node Barn --yes 2>&1) || true
+lease_after=$(lease)
+if applied "$(grep -v '^warning: ' <<<"$output")" "$DNSMASQ, dnsmasq restarted" &&
+	! grep -q "warning: Barn: dnsmasq's config" <<<"$output" &&
+	[ "$(run "stat -c %a $DNSMASQ")" = 600 ] && run 'systemctl is-active --quiet dnsmasq' &&
+	[[ $lease_before == 192.168.4.1[0-9][0-9]* ]] && [ "$lease_after" = "$LEASE" ]; then
+	pass "DHCP, apply: the file (0600), dnsmasq restarted; the nvr gets its address, and the routes through Barn"
+else
+	fail "DHCP, apply: the file (0600), dnsmasq restarted; the nvr gets its address, and the routes through Barn" \
+		"$output"$'\n'"before: $lease_before"$'\n'"after: $lease_after"
+fi
+
+dnsmasq_state() { run "stat -c '%i %Y' $DNSMASQ; systemctl show -p MainPID --value dnsmasq"; }
+before=$(dnsmasq_state)
+output=$(splot apply --node Barn --yes)
+if [ "$output" = "$NOTHING" ] && [ "$before" = "$(dnsmasq_state)" ]; then
+	pass "DHCP, second apply: nothing to change, the file untouched, dnsmasq not restarted"
+else
+	fail "DHCP, second apply: nothing to change, the file untouched, dnsmasq not restarted" "$output"
+fi
+
+# Cut off after a change (the nvr moves): the node puts back the file it had,
+# and dnsmasq hands out the old address again.
+sed -i 's/^            ip: 192.168.4.10$/            ip: 192.168.4.11/' "$work/splot.yml"
+cut_off_apply "md5sum $DNSMASQ"
+lease_after=$(lease)
+if put_back_by_itself && [ "$lease_after" = "$LEASE" ] && run 'systemctl is-active --quiet dnsmasq'; then
+	pass "DHCP, cut off before the confirm: the node put back its file at the deadline, the old lease handed out"
+else
+	fail "DHCP, cut off before the confirm: the node put back its file at the deadline, the old lease handed out" \
+		"$(cut_off_shown)"$'\n'"lease: $lease_after"
+fi
+sed -i 's/^            ip: 192.168.4.11$/            ip: 192.168.4.10/' "$work/splot.yml"
 
 # splot on the node itself (--local): the agent's code in splot, and splot
 # itself keeps the deadline. A peer's endpoint moves, and it's confirmed.

@@ -1,6 +1,6 @@
 //! Nodes: the mesh's routers.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, net::Ipv4Addr};
 
 use super::platform::Platform;
 use crate::types::{
@@ -25,8 +25,8 @@ pub struct Node {
     /// Its mesh IP with the mesh network's prefix: the address of its mesh
     /// interface.
     pub(super) mesh_address: Ipv4Interface,
-    /// Its zones' subnets, by zone name.
-    pub(super) zones: BTreeMap<Identifier, Ipv4Network>,
+    /// Its zones, by name.
+    pub(super) zones: BTreeMap<Identifier, Zone>,
     pub(super) hub: Option<Ipv4Network>,
     /// The firewall zone it reaches the internet through, if it exposes services.
     pub(super) wan_zone: Option<Identifier>,
@@ -64,15 +64,39 @@ impl Node {
     /// What sits behind it: its zones and its hub. Other nodes route these
     /// through it, the hub even while it has no clients.
     pub fn networks(&self) -> impl Iterator<Item = Ipv4Network> {
-        self.zones.values().copied().chain(self.hub)
+        self.zones.values().map(Zone::network).chain(self.hub)
     }
 
     /// Its zones, by name.
-    pub fn zones(&self) -> impl Iterator<Item = &Identifier> {
-        self.zones.keys()
+    pub fn zones(&self) -> &BTreeMap<Identifier, Zone> {
+        &self.zones
     }
 
     pub fn wan_zone(&self) -> Option<&Identifier> {
         self.wan_zone.as_ref()
+    }
+}
+
+/// One of a node's zones: the node's address there, with the zone's prefix,
+/// and the zone's gateway when that's another box.
+#[derive(Debug)]
+pub struct Zone {
+    pub(super) address: Ipv4Interface,
+    pub(super) gateway: Option<Ipv4Addr>,
+}
+
+impl Zone {
+    pub fn address(&self) -> Ipv4Interface {
+        self.address
+    }
+
+    pub fn network(&self) -> Ipv4Network {
+        self.address.network()
+    }
+
+    /// The zone's router, when the node isn't it: hosts there reach the
+    /// internet through it, and the mesh through the node.
+    pub fn gateway(&self) -> Option<Ipv4Addr> {
+        self.gateway
     }
 }

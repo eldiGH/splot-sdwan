@@ -15,9 +15,9 @@ table inet splot {
 		# ping from its peers
 		iifname "spl_mesh" ip saddr { 10.100.0.1, 10.100.0.2, 10.100.0.3, 10.100.0.100 } ip daddr 10.100.0.4 icmp type echo-request accept
 		# WireGuard listen port
-		iifname "eth1" udp dport 51820 accept
+		iifname "eth0" udp dport 51820 accept
 		# in: Barn ssh, from spl_mesh
-		iifname "spl_mesh" ip saddr { 10.100.0.100, 192.168.1.50 } ip daddr { 10.100.0.4, 192.168.4.1, 192.168.40.1 } tcp dport 22 accept
+		iifname "spl_mesh" ip saddr { 10.100.0.100, 192.168.1.50 } ip daddr { 10.100.0.4, 192.168.4.2, 192.168.40.1 } tcp dport 22 accept
 		# the mesh zone's input
 		iifname "spl_mesh" drop
 	}
@@ -31,9 +31,9 @@ table inet splot {
 		# out: Cabin.camera rtsp, from lan
 		iifname "eth0" oifname "spl_mesh" ip saddr 192.168.4.10 ip daddr 192.168.2.30 tcp dport 554 accept
 		# from the WAN: Barn.nvr web
-		iifname "eth1" ip saddr { 198.51.100.0/24, 203.0.113.7 } ip daddr 192.168.4.10 tcp dport 443 ct status dnat accept
+		iifname "eth0" ip saddr { 198.51.100.0/24, 203.0.113.7 } ip daddr 192.168.4.10 tcp dport 443 ct status dnat accept
 		# from the WAN: Cabin.weather http
-		iifname "eth1" ip daddr 192.168.2.40 tcp dport 80 ct status dnat accept
+		iifname "eth0" ip daddr 192.168.2.40 tcp dport 80 ct status dnat accept
 		# within the mesh zone
 		iifname "spl_mesh" oifname "spl_mesh" drop
 		# deny: spl_mesh to any zone
@@ -57,9 +57,9 @@ table inet splot {
 	chain dstnat {
 		type nat hook prerouting priority dstnat; policy accept;
 		# Barn.nvr web
-		iifname "eth1" ip saddr { 198.51.100.0/24, 203.0.113.7 } tcp dport 8443 dnat ip to 192.168.4.10:443
+		iifname "eth0" ip saddr { 198.51.100.0/24, 203.0.113.7 } tcp dport 8443 dnat ip to 192.168.4.10:443
 		# Cabin.weather http
-		iifname "eth1" tcp dport 8080 dnat ip to 192.168.2.40:80
+		iifname "eth0" tcp dport 8080 dnat ip to 192.168.2.40:80
 	}
 
 	chain srcnat {

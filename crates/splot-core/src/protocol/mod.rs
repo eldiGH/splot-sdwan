@@ -17,7 +17,7 @@ use crate::{
 
 /// The protocol's version: splot and an agent talk only when theirs are the
 /// same. A change to a request or a reply bumps it.
-pub const PROTOCOL: u32 = 9;
+pub const PROTOCOL: u32 = 10;
 
 /// What splot asks of the agent.
 #[derive(Debug, Serialize, Deserialize)]
@@ -255,6 +255,7 @@ mod tests {
             firewall: Some(
                 "table inet splot\ndelete table inet splot\ntable inet splot {\n}\n".to_owned(),
             ),
+            dhcp: Some("dhcp-host=aa:bb:cc:00:00:07,192.168.4.10,nvr\n".to_owned()),
         })
     }
 

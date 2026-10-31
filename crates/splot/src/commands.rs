@@ -285,21 +285,26 @@ pub fn psk_set(
 }
 
 /// Refuses a node that asks splot for what it can check but not do yet: on
-/// Linux, its DHCP. Applying the rest alone would leave the node short of what
-/// the config says.
+/// OpenWrt, the routes through the node on a zone whose gateway is another box
+/// (DHCP option 121: OpenWrt tags a zone's DHCP by the operator's own section).
+/// Applying the rest alone would leave the node short of what the config says.
 pub(crate) fn check_applicable(network: &Network, node: &Identifier) -> anyhow::Result<()> {
     let Some(node) = network.node(node) else {
         return Ok(());
     };
     let platform = node.platform();
-    if platform.os() != Os::Linux {
+    if platform.os() != Os::OpenWrt || platform.dhcp().is_none() {
         return Ok(());
     }
 
-    match platform.dhcp() {
+    match node
+        .zones()
+        .iter()
+        .find(|(_, zone)| zone.gateway().is_some())
+    {
         None => Ok(()),
-        Some(program) => bail!(
-            "splot can't manage {}'s {} ({program}) on Linux yet: set it to `none` to apply the rest",
+        Some((zone, _)) => bail!(
+            "splot can't hand out the routes through {0} on OpenWrt yet (DHCP option 121, for zone {zone}, whose gateway is another box): set {0}'s {1} to `none`, or leave the gateway out, to apply the rest",
             node.name(),
             Concern::Dhcp
         ),
@@ -473,73 +478,60 @@ clients:
     }
 
     #[test]
-    fn on_linux_splot_applies_only_what_it_manages_there() {
-        // On OpenWrt everything. On Linux the WireGuard and the firewall so far:
-        // a node that asks splot for its DHCP there is refused, not half
-        // applied. DNS generates nothing on any platform yet.
-        let linux = |name: &str, key: char, ip: u8, platform: &str| {
+    fn splot_applies_only_what_it_can_do_on_the_platform() {
+        // Everything on Linux. On OpenWrt, the routes through the node on a
+        // zone whose gateway is another box can't be handed out yet: a node
+        // whose DHCP splot manages there and that has one is refused, not half
+        // applied.
+        let openwrt = |name: &str, key: char, ip: u8, dhcp: &str, gateway: &str| {
             format!(
                 "
   {name}:
     platform:
-      os: linux
-{platform}
+      os: openwrt
+      dhcp: {dhcp}
     publicKey: {}A=
+    endpoint: 1.2.3.{ip}
+    wanZone: wan
     listenPort: 51820
     meshIp: 10.100.0.{ip}
-",
+    zones:
+      lan:
+        address: 192.168.{ip}.2/24
+{gateway}",
                 key.to_string().repeat(42)
             )
         };
+        let gateway = |ip: u8| format!("        gateway: 192.168.{ip}.1\n");
         let network = checked(&format!(
             "
 meshNetwork: 10.100.0.0/16
 nodes:
-  Home:
+  Pond:
     platform:
-      os: openwrt
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    wanZone: wan
+      os: linux
+      wireguard: wg-quick
+      firewall: none
+      dhcp: dnsmasq
+      dns: none
+    publicKey: EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEA=
     listenPort: 51820
-    meshIp: 10.100.0.1
-{}{}{}{}",
-            linux(
-                "Barn",
-                'B',
-                2,
-                "      wireguard: wg-quick\n      firewall: none\n      dhcp: none\n      dns: dnsmasq"
-            ),
-            linux(
-                "Lake",
-                'C',
-                3,
-                "      wireguard: none\n      firewall: none\n      dhcp: none\n      dns: none"
-            ),
-            linux(
-                "Mill",
-                'D',
-                4,
-                "      wireguard: wg-quick\n      firewall: nftables\n      dhcp: none\n      dns: none"
-            ),
-            linux(
-                "Pond",
-                'E',
-                5,
-                "      wireguard: wg-quick\n      firewall: nftables\n      dhcp: dnsmasq\n      dns: none"
-            ),
+    meshIp: 10.100.0.5
+{}{}{}",
+            openwrt("Home", 'A', 1, "dnsmasq", ""),
+            openwrt("Cabin", 'C', 2, "dnsmasq", &gateway(2)),
+            openwrt("Lake", 'D', 3, "none", &gateway(3)),
         ));
         let applicable = |node: &str| {
             check_applicable(&network, &node.parse().unwrap()).map_err(|err| err.to_string())
         };
 
+        assert!(applicable("Pond").is_ok());
         assert!(applicable("Home").is_ok());
-        assert!(applicable("Barn").is_ok());
         assert!(applicable("Lake").is_ok());
-        assert!(applicable("Mill").is_ok());
         assert_eq!(
-            applicable("Pond").unwrap_err(),
-            "splot can't manage Pond's dhcp (dnsmasq) on Linux yet: set it to `none` to apply the rest"
+            applicable("Cabin").unwrap_err(),
+            "splot can't hand out the routes through Cabin on OpenWrt yet (DHCP option 121, for zone lan, whose gateway is another box): set Cabin's dhcp to `none`, or leave the gateway out, to apply the rest"
         );
     }
 

@@ -1,7 +1,9 @@
 //! Linux: the rendered files made live through systemd: the WireGuard with
-//! wg-quick, the firewall as splot's own nft table. DHCP not yet.
+//! wg-quick, the firewall as splot's own nft table, the DHCP with the
+//! operator's dnsmasq reading splot's file.
 
 mod apply;
+mod dnsmasq;
 mod file;
 pub(crate) mod key_store;
 mod nftables;
@@ -18,6 +20,7 @@ use crate::{
     secret::{self, MissingPsks},
 };
 pub use apply::{Error, Kept as WgQuickKept};
+pub use dnsmasq::Kept as DnsmasqKept;
 use key_store::FileKeyStore;
 pub use nftables::Kept as NftablesKept;
 
@@ -91,6 +94,10 @@ pub fn dry_run(rendered: &Rendered) -> Result<(Changes, Vec<String>), Error> {
     if let Some((config, text)) = wireguard {
         changes.push(apply::print(config, &text)?);
     }
+    if let Some(text) = &rendered.dhcp {
+        changes.push(dnsmasq::print(text)?);
+        warnings.extend(dnsmasq::warnings());
+    }
 
     Ok((joined(changes), warnings))
 }
@@ -100,6 +107,7 @@ pub fn dry_run(rendered: &Rendered) -> Result<(Changes, Vec<String>), Error> {
 pub struct Prepared {
     firewall: Option<nftables::Prepared>,
     wireguard: Option<apply::Prepared>,
+    dhcp: Option<dnsmasq::Prepared>,
     changes: Changes,
 }
 
@@ -110,6 +118,7 @@ impl Prepared {
         Self {
             firewall: None,
             wireguard: None,
+            dhcp: None,
             changes: Changes::none(),
         }
     }
@@ -132,17 +141,24 @@ pub fn prepare(rendered: &Rendered, run: &Run) -> Result<Prepared, Error> {
         Some(text) => nftables::prepare(text)?,
         None => None,
     };
+    let dhcp = match &rendered.dhcp {
+        Some(text) => dnsmasq::prepare(text)?,
+        None => None,
+    };
 
-    let backup = (firewall.is_some() || wireguard.is_some()).then(|| Backup::Linux {
-        firewall: firewall.as_ref().map(|prepared| prepared.kept.clone()),
-        wireguard: wireguard.as_ref().map(|prepared| prepared.kept.clone()),
-    });
+    let backup =
+        (firewall.is_some() || wireguard.is_some() || dhcp.is_some()).then(|| Backup::Linux {
+            firewall: firewall.as_ref().map(|prepared| prepared.kept.clone()),
+            wireguard: wireguard.as_ref().map(|prepared| prepared.kept.clone()),
+            dhcp: dhcp.as_ref().map(|prepared| prepared.kept.clone()),
+        });
     run::begin(run, INTERFACE, backup)?;
 
     let changes = joined(
         [
             firewall.as_ref().map(|prepared| prepared.changes.clone()),
             wireguard.as_ref().map(|prepared| prepared.changes.clone()),
+            dhcp.as_ref().map(|prepared| prepared.changes.clone()),
         ]
         .into_iter()
         .flatten(),
@@ -150,13 +166,15 @@ pub fn prepare(rendered: &Rendered, run: &Run) -> Result<Prepared, Error> {
     Ok(Prepared {
         firewall,
         wireguard,
+        dhcp,
         changes,
     })
 }
 
 /// Makes what run `id` prepared live: the firewall first, so the mesh comes up,
-/// or changes, behind the rules meant for it. When any of it fails, puts back
-/// what the node had. Returns what changed.
+/// or changes, behind the rules meant for it; the DHCP last, once the mesh it
+/// routes to is there. When any of it fails, puts back what the node had.
+/// Returns what changed.
 pub fn go(prepared: &Prepared, id: &str) -> Result<Vec<String>, Error> {
     run::go(id)?;
 
@@ -166,6 +184,9 @@ pub fn go(prepared: &Prepared, id: &str) -> Result<Vec<String>, Error> {
         }
         if let Some(wireguard) = &prepared.wireguard {
             apply::go(wireguard)?;
+        }
+        if let Some(dhcp) = &prepared.dhcp {
+            dnsmasq::go(dhcp)?;
         }
         Ok(())
     })();
@@ -180,17 +201,19 @@ pub fn go(prepared: &Prepared, id: &str) -> Result<Vec<String>, Error> {
     Ok(prepared.changes.summary.clone())
 }
 
-/// Puts back what a run changed, each concern it kept: the WireGuard first,
-/// the reverse of the go. The firewall is put back even when the WireGuard
-/// fails to be.
+/// Puts back what a run changed, each concern it kept, the reverse of the go:
+/// the DHCP, the WireGuard, then the firewall. Each is put back even when one
+/// before it fails to be.
 pub(crate) fn restore(
     firewall: Option<&NftablesKept>,
     wireguard: Option<&WgQuickKept>,
+    dhcp: Option<&DnsmasqKept>,
 ) -> Result<(), Error> {
+    let dhcp = dhcp.map_or(Ok(()), dnsmasq::restore);
     let wireguard = wireguard.map_or(Ok(()), apply::restore);
     let firewall = firewall.map_or(Ok(()), nftables::restore);
 
-    wireguard.and(firewall)
+    dhcp.and(wireguard).and(firewall)
 }
 
 #[cfg(test)]

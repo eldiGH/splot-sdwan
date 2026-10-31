@@ -7,7 +7,7 @@
 //! itself, so what's live is always wg-quick's own.
 //!
 //! The errors of applying on Linux, and how the programs are run, are here
-//! for the firewall too.
+//! for the firewall and the DHCP too.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -76,6 +76,12 @@ pub enum Error {
     NotTheUnits,
     #[error("nft refuses the firewall splot rendered: {0}")]
     NftRefused(String),
+    #[error("dnsmasq refuses the DHCP splot rendered: {0}")]
+    DnsmasqRefused(String),
+    #[error(
+        "dnsmasq isn't running: splot's DHCP file is read by your dnsmasq, which is yours to run (`systemctl enable --now dnsmasq`)"
+    )]
+    DnsmasqNotRunning,
 }
 
 /// `program args`, as an error message shows it.

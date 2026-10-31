@@ -388,6 +388,7 @@ mod tests {
                 public_key,
                 wireguard: None,
                 firewall: None,
+                dhcp: None,
             }),
         };
         let os = match found {

@@ -226,12 +226,15 @@ nodes:
           nas:
             ip: 192.168.3.20
 
-  # A Linux host that runs the mesh at its site, a Raspberry Pi say. Linux
-  # has no usual setup to assume, so its platform names the program behind
-  # every concern (`none` where splot should leave one alone). nftables tells
-  # its zones apart by their interfaces, so `interfaces` says which each zone,
-  # and the WAN, is on. On Linux splot doesn't apply DHCP yet: `splot apply`
-  # refuses Barn until its `dhcp` is `none` too.
+  # A Linux host that runs the mesh at its site, a Raspberry Pi say, behind
+  # the site's ISP router: that router is its LAN's gateway, and forwards
+  # Barn's WireGuard port and its port forwards to it, so the WAN comes in on
+  # the LAN's interface. Linux has no usual setup to assume, so its platform
+  # names the program behind every concern (`none` where splot should leave
+  # one alone). nftables tells its zones apart by their interfaces, so
+  # `interfaces` says which each zone, and the WAN, is on. Its DHCP is your
+  # dnsmasq, which reads splot's file (`conf-file=/etc/splot/dnsmasq.conf` in
+  # its config): the leases, and the routes through Barn on the LAN.
   Barn:
     platform:
       os: linux
@@ -239,11 +242,11 @@ nodes:
       firewall: nftables
       dhcp: dnsmasq
       dns: dnsmasq
-      ssh: root@192.168.4.1
+      ssh: root@192.168.4.2
       interfaces:
         lan: eth0
         iot: eth0.20
-        wan: eth1
+        wan: eth0
     publicKey: ReplaceBarnPublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 203.0.113.30
     listenPort: 51820
@@ -259,7 +262,11 @@ nodes:
 
     zones:
       lan:
-        address: 192.168.4.1/24
+        address: 192.168.4.2/24
+        # The ISP router: hosts here reach the internet through it, and the
+        # mesh and the iot VLAN through Barn, which splot's DHCP tells them
+        # (option 121).
+        gateway: 192.168.4.1
         devices:
           # A video recorder: it records Cabin's camera over the mesh (see
           # the camera's allowFrom).

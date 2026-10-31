@@ -17,6 +17,8 @@ nodes.Home.meshIp: name 'lan' is already used in the same node
 nodes.Home.meshIp: name 'Home_x' uses reserved prefix 'Home_'
 nodes.Home.meshIp: tag 'Home' collides with a name used elsewhere in the global namespace
 nodes.Home.meshIp: unknown identifier 'Home.nas'
+nodes.Home.meshIp: that's the node's own address on the zone - leave gateway out where the node is the zone's gateway
+nodes.Home.meshIp: no interface for zone 'lan' - its gateway is another box, and dnsmasq hands out the routes through the node (DHCP option 121) on the zone's interfaces
 nodes.Home.meshIp: IP 10.0.0.1 is outside subnet 10.0.0.0/24
 nodes.Home.meshIp: IP 10.0.0.1 is the network address of 10.0.0.0/24 and can't be assigned to a host
 nodes.Home.meshIp: subnet 10.0.0.0/24 overlaps with another subnet 10.1.0.0/16

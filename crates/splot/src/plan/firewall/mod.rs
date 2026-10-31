@@ -119,7 +119,7 @@ pub(super) fn plan(
         forward: Verdict::Drop,
     });
     let rules = rules::rules(network, own, mesh_zone.is_some());
-    let declared = own.zones().map(|zone| ZoneRef::Named(zone.clone()));
+    let declared = own.zones().keys().map(|zone| ZoneRef::Named(zone.clone()));
     let default_policy = DefaultPolicy {
         zones: mesh_zone
             .map(|_| ZoneRef::Mesh)

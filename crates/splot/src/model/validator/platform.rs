@@ -131,6 +131,19 @@ fn check_interfaces(
                 });
             }
         }
+    // dnsmasq hands out the routes through the node by the interface a
+    // request comes in on.
+    } else if platform.dhcp.is_some() {
+        for (zone, _) in node.zones.iter().filter(|(_, zone)| zone.gateway.is_some()) {
+            if !interfaces.contains_key(zone) {
+                report
+                    .errors
+                    .push(ValidationError::RoutedZoneWithoutInterface {
+                        zone: zone.clone(),
+                        at: at(PlatformLoc::Interfaces),
+                    });
+            }
+        }
     }
 }
 
@@ -701,5 +714,47 @@ nodes:
         );
         let err = parse(&home("      os: openwrt\n      routing: bird"));
         assert!(err.contains("unknown field `routing`"), "{err}");
+    }
+
+    /// Home on Linux, its firewall left alone and its DHCP `dhcp`, its lan's
+    /// gateway another box, and `interfaces` (the lines of its key).
+    fn routed(dhcp: &str, interfaces: &str) -> ValidationReport {
+        let platform = format!(
+            "      os: linux
+      wireguard: wg-quick
+      firewall: none
+      dhcp: {dhcp}
+      dns: none
+{interfaces}"
+        );
+        report(&format!(
+            "{}    zones:
+      iot: {{ address: 192.168.10.1/24 }}
+      lan: {{ address: 192.168.1.2/24, gateway: 192.168.1.1 }}
+",
+            home(&platform)
+        ))
+    }
+
+    #[test]
+    fn dnsmasq_hands_out_the_routes_on_a_zone_whose_gateway_is_another_box_by_its_interfaces() {
+        let without = |r: &ValidationReport, zone: &str| {
+            error_at(
+                r,
+                "nodes.Home.platform.interfaces",
+                |e| matches!(e, ValidationError::RoutedZoneWithoutInterface { zone: z, .. } if z.as_ref() == zone),
+            )
+        };
+
+        let r = routed("dnsmasq", "");
+        assert!(without(&r, "lan"), "{:?}", messages(&r));
+        // Not iot: the node is its gateway.
+        assert!(!without(&r, "iot"), "{:?}", messages(&r));
+
+        let r = routed("dnsmasq", "      interfaces: { lan: eth0 }");
+        assert!(r.errors.is_empty(), "{:?}", messages(&r));
+        // splot's DHCP left alone: no routes to hand out.
+        let r = routed("none", "");
+        assert!(r.errors.is_empty(), "{:?}", messages(&r));
     }
 }

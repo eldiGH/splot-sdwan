@@ -54,6 +54,7 @@ pub enum Backup {
     Linux {
         firewall: Option<linux::NftablesKept>,
         wireguard: Option<linux::WgQuickKept>,
+        dhcp: Option<linux::DnsmasqKept>,
     },
 }
 
@@ -65,7 +66,8 @@ impl Backup {
             Self::Linux {
                 firewall,
                 wireguard,
-            } => linux::restore(firewall.as_ref(), wireguard.as_ref())?,
+                dhcp,
+            } => linux::restore(firewall.as_ref(), wireguard.as_ref(), dhcp.as_ref())?,
         }
 
         Ok(())
@@ -437,6 +439,7 @@ mod tests {
                 active: true,
                 enabled: true,
             }),
+            dhcp: None,
         }
     }
 

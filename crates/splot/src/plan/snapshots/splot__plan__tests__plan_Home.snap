@@ -22,7 +22,7 @@ accept in Home.nas https: tcp/443 from mesh [10.100.0.100/32] to lan [192.168.1.
 accept in Home.printer print: tcp/9100 from mesh [10.100.0.100/32] to lan [192.168.1.16/32]
 accept in Home.lte-cam rtsp: tcp/554 from mesh [10.100.0.100/32] to mesh [10.100.10.10/32]
 accept in Home.lte-cam rtsp: tcp/554 from lan [192.168.1.50/32] to mesh [10.100.10.10/32]
-accept out Barn ssh: tcp/22 from lan [192.168.1.50/32] to mesh [10.100.0.4/32, 192.168.40.1/32, 192.168.4.1/32]
+accept out Barn ssh: tcp/22 from lan [192.168.1.50/32] to mesh [10.100.0.4/32, 192.168.40.1/32, 192.168.4.2/32]
 accept out Barn.nvr web: tcp/443 from lan [192.168.1.50/32] to mesh [192.168.4.10/32]
 accept out Cabin.camera rtsp: tcp/554 from lan [192.168.1.50/32] to mesh [192.168.2.30/32]
 accept out Phone sync: tcp/22000 from lan [192.168.1.20/32] to mesh [10.100.0.100/32]

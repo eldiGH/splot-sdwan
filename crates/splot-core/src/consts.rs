@@ -10,3 +10,7 @@ pub const MESH_DEVICE: &str = "spl_mesh";
 /// touches another.
 pub const NFT_FAMILY: &str = "inet";
 pub const NFT_TABLE: &str = "splot";
+/// splot's dnsmasq config file on a Linux node, which the operator's dnsmasq
+/// reads (`conf-file=` it in its config): splot renders it, the agent writes
+/// it and has dnsmasq read it.
+pub const DNSMASQ_PATH: &str = "/etc/splot/dnsmasq.conf";

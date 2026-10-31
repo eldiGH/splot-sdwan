@@ -110,6 +110,7 @@ impl Display for WanLoc {
 pub enum ZoneLoc {
     Root,
     Address,
+    Gateway,
     Tags,
     Device(Identifier, DeviceLoc),
 }
@@ -119,6 +120,7 @@ impl Display for ZoneLoc {
         match self {
             Self::Root => write!(f, ""),
             Self::Address => write!(f, ".address"),
+            Self::Gateway => write!(f, ".gateway"),
             Self::Tags => write!(f, ".tags"),
             Self::Device(device_id, device_loc) => write!(f, ".devices.{device_id}{device_loc}"),
         }
