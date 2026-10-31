@@ -167,7 +167,7 @@ Printer:
 | Field      | Type                      | Required | Description                                                             |
 | ---------- | ------------------------- | -------- | ----------------------------------------------------------------------- |
 | `ip`       | IPv4 address              | yes      | Device's IP. Must fall within its containing zone's `address` subnet.   |
-| `macs`     | MAC string or list        | no       | MAC addresses. Used to generate static DHCP leases on the hosting node. |
+| `macs`     | MAC string or list        | no       | MAC addresses. Used to generate static DHCP leases on the hosting node, which hand the device its name as its host name (see [Allowed characters](#allowed-characters)). |
 | `tags`     | string or list of strings | no       | Explicit tags assigned to this device.                                  |
 | `services` | map of name → Service     | no       | Services exposed by this device.                                        |
 
@@ -580,6 +580,8 @@ Cabin lets it in from the mesh. Home itself gets no rule for it: what a node sen
 ### Allowed characters
 
 Names must contain only alphanumeric characters, `-`, and `_`. Spaces, dots, and other special characters are forbidden — names are used as part of generated UCI section identifiers, and `.` is reserved as the qualified-reference separator.
+
+A name splot hands out as a host name must also be one: a device with `macs` on a node whose DHCP splot manages, and a global client with `macs` and an address on such a node. Its static lease gives the device its name, so it takes letters, digits and hyphens, no hyphen at either end, at most 63 characters (`my_printer` is an error there; `my-printer` isn't). Case is kept as written; DNS ignores it.
 
 ### Names of splot's own
 

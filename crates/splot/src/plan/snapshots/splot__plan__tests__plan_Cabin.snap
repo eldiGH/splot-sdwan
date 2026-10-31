@@ -22,5 +22,5 @@ accept in Cabin.weather http via Home: tcp/80 from mesh [10.100.0.1/32] to lan [
 otherwise drop: between [mesh, lan], and from mesh to any zone
 
 [dhcp]
-lease Cabin.camera: 192.168.2.30 for [aa:bb:cc:00:00:04]
-lease Cabin.weather: 192.168.2.40 for [aa:bb:cc:00:00:06]
+lease Cabin.camera as camera: 192.168.2.30 for [aa:bb:cc:00:00:04]
+lease Cabin.weather as weather: 192.168.2.40 for [aa:bb:cc:00:00:06]

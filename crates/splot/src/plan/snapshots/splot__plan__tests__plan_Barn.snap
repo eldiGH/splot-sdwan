@@ -23,4 +23,4 @@ forward Barn.nvr web: wan tcp/8443 from [198.51.100.0/24, 203.0.113.7/32] to lan
 forward Cabin.weather http: wan tcp/8080 from [] to mesh 192.168.2.40:80 as 10.100.0.4
 
 [dhcp]
-lease Barn.nvr: 192.168.4.10 for [aa:bb:cc:00:00:07]
+lease Barn.nvr as nvr: 192.168.4.10 for [aa:bb:cc:00:00:07]

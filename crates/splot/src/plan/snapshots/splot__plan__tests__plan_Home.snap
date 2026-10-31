@@ -31,7 +31,7 @@ forward Cabin.weather http: wan tcp/8080 from [] to mesh 192.168.2.40:80 as 10.1
 forward Home.nas https: wan tcp/8443 from [198.51.100.0/24, 203.0.113.7/32] to lan 192.168.1.20:443
 
 [dhcp]
-lease Home.tv: 192.168.10.20 for [aa:bb:cc:00:00:05]
-lease Home.nas: 192.168.1.20 for [aa:bb:cc:00:00:03]
-lease Home.printer: 192.168.1.16 for [aa:bb:cc:00:00:02]
-lease Phone: 192.168.1.50 for [aa:bb:cc:00:00:01]
+lease Home.tv as tv: 192.168.10.20 for [aa:bb:cc:00:00:05]
+lease Home.nas as nas: 192.168.1.20 for [aa:bb:cc:00:00:03]
+lease Home.printer as printer: 192.168.1.16 for [aa:bb:cc:00:00:02]
+lease Phone as Phone: 192.168.1.50 for [aa:bb:cc:00:00:01]

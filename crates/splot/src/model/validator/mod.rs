@@ -1,3 +1,4 @@
+mod dhcp;
 mod endpoints;
 mod entities;
 mod names;
@@ -20,10 +21,10 @@ use crate::{
         node::Node,
         service::Service,
         validator::{
-            endpoints::check_endpoints, entities::check_entities, names::validate_names,
-            networks::check_networks, platform::check_platforms, ports::check_ports,
-            services::check_services, tags::validate_tags, types::ValidationReport,
-            unmanaged::check_unmanaged, wan::check_wan_zones,
+            dhcp::check_dhcp, endpoints::check_endpoints, entities::check_entities,
+            names::validate_names, networks::check_networks, platform::check_platforms,
+            ports::check_ports, services::check_services, tags::validate_tags,
+            types::ValidationReport, unmanaged::check_unmanaged, wan::check_wan_zones,
         },
     },
     types::{allow_from_ref::AllowFromRef, identifier::Identifier},
@@ -49,6 +50,7 @@ pub(super) fn check(config: &Config) -> Checked {
     let refs: HashSet<AllowFromRef> = names.into_iter().chain(tags).collect();
 
     check_entities(config, &mut report);
+    check_dhcp(config, &platforms, &mut report);
 
     let (nodes, hosts) = check_networks(config, &platforms, &mut report);
     check_endpoints(config, &mut report);

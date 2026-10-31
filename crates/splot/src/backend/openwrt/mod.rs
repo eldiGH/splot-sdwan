@@ -261,9 +261,10 @@ nodes:
 
     #[test]
     fn hyphen_and_underscore_names_clash_in_real_output() {
-        // `my-printer` and `my_printer` are distinct identifiers, but both map to
-        // the uci section `spl_host_my_printer`. The guard must catch what the
-        // generators produce, not just hand-built commands.
+        // `my-printer` and `my_printer` are distinct identifiers, but their port
+        // forwards both map to the same uci section. The guard must catch what
+        // the generators produce, not just hand-built commands. (A name splot's
+        // DHCP hands out has no `_`, so leases can't clash this way.)
         let rendered = render(
             &plan::plan(
                 &test_support::checked(
@@ -284,10 +285,14 @@ nodes:
         devices:
           my-printer:
             ip: 192.168.1.20
-            macs: AA:BB:CC:DD:EE:01
+            macs: []
+            services:
+              web: { port: \"80\", proto: tcp, wan: { via: Home } }
           my_printer:
             ip: 192.168.1.21
-            macs: AA:BB:CC:DD:EE:02
+            macs: []
+            services:
+              web: { port: \"8080:80\", proto: tcp, wan: { via: Home } }
 ",
                 ),
                 &"Home".parse().unwrap(),
@@ -296,7 +301,7 @@ nodes:
         );
         assert_eq!(
             splot_agent::openwrt::find_duplicate_sections(&rendered),
-            ["dhcp.spl_host_my_printer"]
+            ["firewall.spl_redirect_Home_my_printer_web"]
         );
     }
 }

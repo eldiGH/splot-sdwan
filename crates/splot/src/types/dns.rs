@@ -22,6 +22,11 @@ pub enum ParseHostnameError {
     NumericLastLabel,
 }
 
+/// One label of a DNS name, the name a host is given by DHCP: letters, digits
+/// and hyphens, not at either end, at most 63 characters.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DnsLabel(String);
+
 /// The longest name DNS carries, written without a trailing dot.
 const MAX_NAME_LEN: usize = 253;
 const MAX_LABEL_LEN: usize = 63;
@@ -73,8 +78,78 @@ impl FromStr for Hostname {
     }
 }
 
+impl FromStr for DnsLabel {
+    type Err = ParseHostnameError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        check_label(s)?;
+
+        Ok(Self(s.to_string()))
+    }
+}
+
+impl AsRef<str> for DnsLabel {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for DnsLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 impl fmt::Display for Hostname {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn label(s: &str) -> Result<DnsLabel, ParseHostnameError> {
+        s.parse()
+    }
+
+    #[test]
+    fn a_label_is_kept_as_written() {
+        for name in ["printer", "Printer", "srv-01", "a", "1", "123"] {
+            assert_eq!(label(name).unwrap().to_string(), name);
+        }
+        assert!(label(&"a".repeat(63)).is_ok());
+    }
+
+    #[test]
+    fn a_label_has_no_dot_and_none_of_what_a_hostname_refuses() {
+        assert_eq!(
+            label("my_printer"),
+            Err(ParseHostnameError::InvalidCharacter {
+                found: '_',
+                label: "my_printer".to_string()
+            })
+        );
+        assert_eq!(
+            label("printer.lan"),
+            Err(ParseHostnameError::InvalidCharacter {
+                found: '.',
+                label: "printer.lan".to_string()
+            })
+        );
+        assert_eq!(
+            label("printer-"),
+            Err(ParseHostnameError::HyphenAtEdge {
+                label: "printer-".to_string()
+            })
+        );
+        assert_eq!(
+            label(&"a".repeat(64)),
+            Err(ParseHostnameError::LabelTooLong {
+                label: "a".repeat(64)
+            })
+        );
+        assert_eq!(label(""), Err(ParseHostnameError::EmptyLabel));
     }
 }

@@ -1,9 +1,6 @@
 use log::{Level, debug, info, log_enabled};
 
-use super::{
-    naming,
-    section::{Section, UciSection, UciSectionBuilder},
-};
+use super::section::{Section, UciSection, UciSectionBuilder};
 use crate::plan::dhcp::{DhcpPlan, Lease};
 
 pub(super) const FILE: &str = "dhcp";
@@ -19,7 +16,7 @@ impl UciSection for Lease {
 
     fn options(&self, section: UciSectionBuilder) -> UciSectionBuilder {
         section
-            .set("name", naming::name_prefixed(self.host.name().as_ref()))
+            .set("name", self.hostname.as_ref())
             .set("ip", self.ip.to_string())
             .extend_list("mac", &self.macs)
     }
@@ -82,7 +79,7 @@ nodes:
             commands,
             [
                 "set dhcp.spl_host_printer='host'",
-                "set dhcp.spl_host_printer.name='[SPLOT] printer'",
+                "set dhcp.spl_host_printer.name='printer'",
                 "set dhcp.spl_host_printer.ip='192.168.1.50'",
                 "add_list dhcp.spl_host_printer.mac='aa:bb:cc:dd:ee:01'",
                 "add_list dhcp.spl_host_printer.mac='aa:bb:cc:dd:ee:ff'",

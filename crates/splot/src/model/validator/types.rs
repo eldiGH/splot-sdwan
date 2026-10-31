@@ -5,6 +5,7 @@ use splot_core::consts::MESH_DEVICE;
 use crate::types::{
     allow_from_ref::AllowFromRef,
     config_location::ConfigLocation,
+    dns::ParseHostnameError,
     identifier::Identifier,
     interface::InterfaceName,
     ip::{Ipv4Network, ReservedAddress},
@@ -181,6 +182,17 @@ pub enum ValidationError {
         at: ConfigLocation,
     },
 
+    // dhcp
+    #[error(
+        "{at}: splot's DHCP on {node} hands out '{name}' as a host name, which it can't be: {reason} - rename it"
+    )]
+    InvalidHostname {
+        name: Identifier,
+        node: Identifier,
+        reason: ParseHostnameError,
+        at: ConfigLocation,
+    },
+
     // endpoints
     #[error(
         "{at}: no node has an endpoint - at least one must, or no node can dial another and the mesh never forms"
@@ -282,6 +294,7 @@ impl ValidationError {
             Self::ReservedHostAddress { at, .. } => at,
             Self::LocalNameCollision { at, .. } => at,
             Self::MacMissing { at } => at,
+            Self::InvalidHostname { at, .. } => at,
             Self::NetworkCollision { at, .. } => at,
             Self::HubOutsideMeshNetwork { at, .. } => at,
             Self::MeshIpInHubNetwork { at, .. } => at,
@@ -492,7 +505,7 @@ impl ValidationReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::config_location::NodeLoc;
+    use crate::types::{config_location::NodeLoc, dns::DnsLabel};
 
     #[test]
     fn every_error_message() {
@@ -600,6 +613,12 @@ mod tests {
                 at: at(),
             },
             ValidationError::MacMissing { at: at() },
+            ValidationError::InvalidHostname {
+                name: id("my_printer"),
+                node: id("Home"),
+                reason: "my_printer".parse::<DnsLabel>().unwrap_err(),
+                at: at(),
+            },
             ValidationError::PublicKeyMissing { at: at() },
             ValidationError::NodeMissing {
                 node_name: id("Lake"),

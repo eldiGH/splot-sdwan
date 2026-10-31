@@ -8,7 +8,7 @@ use crate::{
         host::{HostRef, Place},
         node::Node,
     },
-    types::mac::MacAddress,
+    types::{dns::DnsLabel, mac::MacAddress},
 };
 
 #[derive(Debug)]
@@ -16,10 +16,12 @@ pub struct DhcpPlan {
     pub leases: Vec<Lease>,
 }
 
-/// A static lease: the host's IP on one of this node's zones, for its MACs.
+/// A static lease: the host's IP on one of this node's zones, for its MACs,
+/// and the host name it's handed: the host's own name.
 #[derive(Debug)]
 pub struct Lease {
     pub host: HostRef,
+    pub hostname: DnsLabel,
     pub ip: Ipv4Addr,
     pub macs: BTreeSet<MacAddress>,
 }
@@ -39,6 +41,12 @@ pub(super) fn plan(network: &Network, own: &Node) -> DhcpPlan {
                 })
                 .map(|address| Lease {
                     host: host.id().clone(),
+                    hostname: host
+                        .id()
+                        .name()
+                        .as_ref()
+                        .parse()
+                        .expect("checked: a host splot leases an address to is named as a host"),
                     ip: address.ip(),
                     macs: host.macs().clone(),
                 })
@@ -50,8 +58,18 @@ pub(super) fn plan(network: &Network, own: &Node) -> DhcpPlan {
 
 impl fmt::Display for DhcpPlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for Lease { host, ip, macs } in &self.leases {
-            writeln!(f, "lease {host}: {ip} for {}", super::list(macs))?;
+        for Lease {
+            host,
+            hostname,
+            ip,
+            macs,
+        } in &self.leases
+        {
+            writeln!(
+                f,
+                "lease {host} as {hostname}: {ip} for {}",
+                super::list(macs)
+            )?;
         }
 
         Ok(())
@@ -124,8 +142,8 @@ clients:
         assert_eq!(
             leases(),
             [
-                "lease Home.printer: 192.168.1.50 for [aa:bb:cc:dd:ee:ff]",
-                "lease Phone: 192.168.1.60 for [bb:cc:dd:ee:ff:00]",
+                "lease Home.printer as printer: 192.168.1.50 for [aa:bb:cc:dd:ee:ff]",
+                "lease Phone as Phone: 192.168.1.60 for [bb:cc:dd:ee:ff:00]",
             ]
         );
         // Not: macless (no MACs), Cabin.nas and Phone's Cabin IP (Cabin's to

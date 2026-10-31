@@ -343,6 +343,13 @@ A WireGuard keepalive is sent by the host it's set on, to its peers. It keeps th
 - **Only toward the peers a host dials**, the ones with an endpoint. A peer without one (a client, a node nobody can dial) never gets a keepalive in another host's config: it can't be sent to anyway, and that peer decides for itself.
 - No per-host setting yet. One is planned for when client profiles exist, mainly to opt a host out.
 
+### DHCP
+
+Where splot manages a node's DHCP, it writes a static lease for each address a host with MACs has on the node's zones: its devices, and the global clients on them.
+
+- **A lease hands out the host's name** as its host name (the name dnsmasq gives the device, and puts into DNS), never a label: the section's own name marks it as splot's.
+- **So the name must be a host name** (decided): letters, digits and hyphens, no hyphen at either end, at most 63 characters, case as written. Anything else is a validation error where splot hands the name out (`my_printer` on a node whose DHCP it manages), not mapped: nothing is guessed, and a mapping could make two names one. dnsmasq accepts `_`, but RFC host names, Kea and many clients don't; a name dnsmasq refuses (`[SPLOT] printer` once was) stops its DHCP and DNS altogether.
+
 ### Preshared keys
 
 A WireGuard pair can also share a preshared key (PSK). It adds nothing against today's attackers (the keys authenticate both ends), but protects recorded traffic against a future quantum computer breaking the key exchange.
