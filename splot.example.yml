@@ -220,6 +220,11 @@ nodes:
     zones:
       lan:
         address: 192.168.3.1/24
+        devices:
+          # No macs: Lake's DHCP is yours, and its address is a fact you make
+          # true there. Where splot manages DHCP, every device needs them.
+          nas:
+            ip: 192.168.3.20
 
   # A Linux host that runs the mesh at its site, a Raspberry Pi say. Linux
   # has no usual setup to assume, so its platform names the program behind

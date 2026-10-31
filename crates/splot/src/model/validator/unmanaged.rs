@@ -615,8 +615,12 @@ clients:
     fn concerns_splot_manages_and_dhcp_or_dns_left_alone_say_nothing() {
         assert!(report(&mesh("")).warnings.is_empty());
         // Nothing undone yet: the addresses are facts the config states, and
-        // splot generates no DNS config.
-        let r = report(&mesh("      dhcp: none\n      dns: none"));
+        // splot generates no DNS config. (The printer's MACs would be unused,
+        // which the DHCP pass warns about.)
+        let r = report(
+            &mesh("      dhcp: none\n      dns: none")
+                .replace("macs: AA:BB:CC:DD:EE:01", "macs: []"),
+        );
         assert!(r.warnings.is_empty(), "{:?}", messages(&r.warnings));
     }
 }

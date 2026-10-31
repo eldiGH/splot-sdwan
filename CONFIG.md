@@ -167,7 +167,7 @@ Printer:
 | Field      | Type                      | Required | Description                                                             |
 | ---------- | ------------------------- | -------- | ----------------------------------------------------------------------- |
 | `ip`       | IPv4 address              | yes      | Device's IP. Must fall within its containing zone's `address` subnet.   |
-| `macs`     | MAC string or list        | no       | MAC addresses. Used to generate static DHCP leases on the hosting node, which hand the device its name as its host name (see [Allowed characters](#allowed-characters)). |
+| `macs`     | MAC string or list        | no\*     | MAC addresses. Used to generate static DHCP leases on the hosting node, which hand the device its name as its host name (see [Allowed characters](#allowed-characters)). \*Required where splot manages the node's DHCP: a device with a static address lists them too, so the reservation keeps the pool from handing its address to another. Where splot leaves the node's DHCP alone (`dhcp: none`) they're unused, and a warning says to remove them. |
 | `tags`     | string or list of strings | no       | Explicit tags assigned to this device.                                  |
 | `services` | map of name → Service     | no       | Services exposed by this device.                                        |
 
@@ -248,7 +248,7 @@ Phone:
 | `meshIp`    | IPv4 address                                        | no       | The client's IP on the mesh interface (within `meshNetwork`). Set when the client connects directly to the mesh via WireGuard.       |
 | `publicKey` | string                                              | no       | WireGuard public key as printed by `wg pubkey` (44 characters, ending in `=`; unique across all nodes and clients). Required if `meshIp` is set — otherwise the client can't be a WireGuard peer.                          |
 | `psk`       | boolean                                             | no       | For a client with a `publicKey`: whether its WireGuard pairs use a preshared key. Default `true`. See [Preshared keys](#preshared-keys). |
-| `macs`      | MAC string or list                                  | no       | MAC addresses. Used to generate static DHCP leases for the client's zone IPs on each node.                                           |
+| `macs`      | MAC string or list                                  | no\*      | MAC addresses. Used to generate static DHCP leases for the client's zone IPs on each node. \*Required when one of its `ips` is on a node whose DHCP splot manages; unused (a warning) when none is. |
 | `ips`       | map of nodeName → (map of localName → IPv4 address) | no       | The client's IPs on each node, keyed by zone name within that node. See [Tags](#tags) for resolution.                                |
 | `services`  | map of name → Service                               | no       | Services exposed by this client.                                                                                                     |
 | `tags`      | string or list of strings                           | no       | Explicit tags assigned to this client.                                                                                               |

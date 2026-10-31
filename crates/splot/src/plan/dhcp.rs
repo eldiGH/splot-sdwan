@@ -99,9 +99,6 @@ nodes:
           printer:
             ip: 192.168.1.50
             macs: AA:BB:CC:DD:EE:FF
-          macless:
-            ip: 192.168.1.51
-            macs: []
   Cabin:
     platform:
       os: openwrt
@@ -146,7 +143,7 @@ clients:
                 "lease Phone as Phone: 192.168.1.60 for [bb:cc:dd:ee:ff:00]",
             ]
         );
-        // Not: macless (no MACs), Cabin.nas and Phone's Cabin IP (Cabin's to
-        // lease), MeshOnly (no zone IP).
+        // Not: Cabin.nas and Phone's Cabin IP (Cabin's to lease), MeshOnly (no
+        // zone IP).
     }
 }

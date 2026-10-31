@@ -157,9 +157,6 @@ pub enum ValidationError {
     },
 
     // entities
-    #[error("{at}: client has zone IPs but no macs — MAC required for DHCP lease generation")]
-    MacMissing { at: ConfigLocation },
-
     #[error("{at}: public key required (client has a mesh IP)")]
     PublicKeyMissing { at: ConfigLocation },
 
@@ -183,6 +180,13 @@ pub enum ValidationError {
     },
 
     // dhcp
+    #[error(
+        "{at}: no macs - splot's DHCP on {node} reserves the address by MAC, so add them (for a host with a static address too: the reservation keeps the pool off it)"
+    )]
+    MacMissing {
+        node: Identifier,
+        at: ConfigLocation,
+    },
     #[error(
         "{at}: splot's DHCP on {node} hands out '{name}' as a host name, which it can't be: {reason} - rename it"
     )]
@@ -293,7 +297,7 @@ impl ValidationError {
             Self::IpOutsideSubnet { at, .. } => at,
             Self::ReservedHostAddress { at, .. } => at,
             Self::LocalNameCollision { at, .. } => at,
-            Self::MacMissing { at } => at,
+            Self::MacMissing { at, .. } => at,
             Self::InvalidHostname { at, .. } => at,
             Self::NetworkCollision { at, .. } => at,
             Self::HubOutsideMeshNetwork { at, .. } => at,
@@ -351,11 +355,12 @@ pub enum ValidationWarning {
         at: ConfigLocation,
     },
 
-    // entities
+    // dhcp
     UnusedMac {
         at: ConfigLocation,
     },
 
+    // entities
     UnusedPublicKey {
         at: ConfigLocation,
     },
@@ -450,7 +455,7 @@ impl fmt::Display for ValidationWarning {
             }
             Self::UnusedMac { at } => write!(
                 f,
-                "{at}: macs are declared but client has no zone IPs that would use them"
+                "{at}: unused - no DHCP of splot's leases this host an address (it has none on a node whose DHCP splot manages), so remove them"
             ),
             Self::UnusedPublicKey { at } => {
                 write!(f, "{at}: publicKey is declared but client has no mesh IP")
@@ -612,7 +617,10 @@ mod tests {
                 existing_zone: with(),
                 at: at(),
             },
-            ValidationError::MacMissing { at: at() },
+            ValidationError::MacMissing {
+                node: id("Home"),
+                at: at(),
+            },
             ValidationError::InvalidHostname {
                 name: id("my_printer"),
                 node: id("Home"),

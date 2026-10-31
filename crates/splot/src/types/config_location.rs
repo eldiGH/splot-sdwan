@@ -129,6 +129,7 @@ impl Display for ZoneLoc {
 pub enum DeviceLoc {
     Root,
     Ip,
+    Macs,
     Tags,
     Service(Identifier, ServiceLoc),
 }
@@ -138,6 +139,7 @@ impl Display for DeviceLoc {
         match self {
             Self::Root => write!(f, ""),
             Self::Ip => write!(f, ".ip"),
+            Self::Macs => write!(f, ".macs"),
             Self::Tags => write!(f, ".tags"),
             Self::Service(service_id, service_loc) => {
                 write!(f, ".services.{service_id}{service_loc}")

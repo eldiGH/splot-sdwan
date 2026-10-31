@@ -24,7 +24,7 @@ nodes.Home.meshIp: hub network 10.0.0.0/24 must lie inside meshNetwork 10.1.0.0/
 nodes.Home.meshIp: mesh IP 10.0.0.1 lies inside the hub network at nodes.Cabin.meshIp - a hub network is routed to its node as a whole, so it can't hold another peer's address
 nodes.Home.meshIp: IP 10.0.0.1 is already used at nodes.Cabin.meshIp
 nodes.Home.meshIp: client has IP on zone 'iot', but already has an IP on another zone at nodes.Cabin.meshIp (max one zone per (client, node))
-nodes.Home.meshIp: client has zone IPs but no macs — MAC required for DHCP lease generation
+nodes.Home.meshIp: no macs - splot's DHCP on Home reserves the address by MAC, so add them (for a host with a static address too: the reservation keeps the pool off it)
 nodes.Home.meshIp: splot's DHCP on Home hands out 'my_printer' as a host name, which it can't be: invalid character '_' in "my_printer" (only letters, digits and hyphens) - rename it
 nodes.Home.meshIp: public key required (client has a mesh IP)
 nodes.Home.meshIp: node 'Lake' does not exist

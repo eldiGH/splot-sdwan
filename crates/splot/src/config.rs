@@ -50,6 +50,7 @@ pub struct Service {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeZoneDevice {
     pub ip: Ipv4Addr,
+    #[serde(default)]
     pub macs: OneOrManyUnique<MacAddress>,
 
     #[serde(default)]

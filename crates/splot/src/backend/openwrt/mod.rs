@@ -274,6 +274,7 @@ nodes:
   Home:
     platform:
       os: openwrt
+      dhcp: none
     publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     endpoint: 1.2.3.4
     wanZone: wan
@@ -285,12 +286,10 @@ nodes:
         devices:
           my-printer:
             ip: 192.168.1.20
-            macs: []
             services:
               web: { port: \"80\", proto: tcp, wan: { via: Home } }
           my_printer:
             ip: 192.168.1.21
-            macs: []
             services:
               web: { port: \"8080:80\", proto: tcp, wan: { via: Home } }
 ",

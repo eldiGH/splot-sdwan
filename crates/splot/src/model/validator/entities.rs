@@ -1,40 +1,13 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use crate::{
-    config::{Client, Config},
+    config::Config,
     model::validator::types::{ValidationError, ValidationReport, ValidationWarning},
     types::{
         config_location::{ClientIpLoc, ClientLoc, ConfigLocation, HubClientLoc, HubLoc, NodeLoc},
         wg_key::WgPublicKey,
     },
 };
-
-fn client_is_in_any_zone(client: &Client, config: &Config) -> bool {
-    client.ips.iter().any(|(node_name, client_zones)| {
-        config.nodes.get(node_name).is_some_and(|node| {
-            client_zones
-                .keys()
-                .any(|zone| node.zones.contains_key(zone))
-        })
-    })
-}
-
-fn check_clients_macs(config: &Config, report: &mut ValidationReport) {
-    for (client_name, client) in &config.clients {
-        match (
-            client_is_in_any_zone(client, config),
-            client.macs.is_empty(),
-        ) {
-            (true, true) => report.errors.push(ValidationError::MacMissing {
-                at: ConfigLocation::Client(client_name.clone(), ClientLoc::Macs),
-            }),
-            (false, false) => report.warnings.push(ValidationWarning::UnusedMac {
-                at: ConfigLocation::Client(client_name.clone(), ClientLoc::Macs),
-            }),
-            _ => {}
-        };
-    }
-}
 
 /// A client is a WireGuard peer exactly when it has a mesh IP.
 fn check_clients_public_key(config: &Config, report: &mut ValidationReport) {
@@ -158,7 +131,6 @@ fn check_public_key_uniqueness(config: &Config, report: &mut ValidationReport) {
 
 pub(super) fn check_entities(config: &Config, report: &mut ValidationReport) {
     check_client_networks(config, report);
-    check_clients_macs(config, report);
     check_clients_public_key(config, report);
     check_public_key_uniqueness(config, report);
     check_unreachable_clients(config, report);
@@ -173,63 +145,6 @@ mod tests {
         },
         test_support::{error_at, has_error, has_warning, report},
     };
-
-    #[test]
-    fn entities_mac_missing() {
-        // Client with a zone IP but no macs.
-        let r = report(
-            "
-meshNetwork: 10.100.0.0/24
-nodes:
-  Home:
-    platform:
-      os: openwrt
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    wanZone: wan
-    listenPort: 51820
-    meshIp: 10.100.0.1
-    zones:
-      lan:
-        address: 192.168.1.1/24
-clients:
-  Phone:
-    ips:
-      Home:
-        lan: 192.168.1.50
-",
-        );
-        assert!(has_error(&r, |e| matches!(
-            e,
-            ValidationError::MacMissing { .. }
-        )));
-    }
-
-    #[test]
-    fn entities_unused_mac_warning() {
-        // Client with macs but no zone IPs.
-        let r = report(
-            "
-meshNetwork: 10.100.0.0/24
-nodes:
-  Home:
-    platform:
-      os: openwrt
-    publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    endpoint: 1.2.3.4
-    wanZone: wan
-    listenPort: 51820
-    meshIp: 10.100.0.1
-clients:
-  Phone:
-    macs: AA:BB:CC:DD:EE:FF
-",
-        );
-        assert!(has_warning(&r, |w| matches!(
-            w,
-            ValidationWarning::UnusedMac { .. }
-        )));
-    }
 
     #[test]
     fn entities_public_key_missing_for_mesh() {
