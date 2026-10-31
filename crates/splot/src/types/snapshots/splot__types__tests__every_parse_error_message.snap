@@ -18,7 +18,7 @@ PortOrRange: "x" → invalid port: invalid port format: invalid digit found in s
 PortOrRange: "80-22" → invalid port range: range is invalid, it should be {lower}-{higher}
 ServicePort: "x" → invalid port: invalid port format: invalid digit found in string
 ServicePort: "80-22" → invalid port range: range is invalid, it should be {lower}-{higher}
-ServicePort: "1000-1010:2000-2005" → both ranges should have same width: 1000-1010 and 2000-2005
+ServicePort: "1000-1010:2000-2010" → can't forward a range onto another range (1000-1010:2000-2010) - NAT sends every connection to the first free port of 2000-2010, not port for port: forward 1000-1010 as it is, or onto one port
 ServicePort: "80:1000-1010" → invalid translation: should never be port:range (80:1000-1010)
 Identifier: "" → identifier is empty
 Identifier: "a b" → invalid character ' ' at position 1

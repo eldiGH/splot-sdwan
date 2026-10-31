@@ -104,7 +104,7 @@ mod tests {
             error::<PortOrRange>("80-22"),
             error::<ServicePort>("x"),
             error::<ServicePort>("80-22"),
-            error::<ServicePort>("1000-1010:2000-2005"),
+            error::<ServicePort>("1000-1010:2000-2010"),
             error::<ServicePort>("80:1000-1010"),
             error::<Identifier>(""),
             error::<Identifier>("a b"),

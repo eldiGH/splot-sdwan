@@ -97,10 +97,6 @@ impl TryFrom<String> for PortRange {
 }
 
 impl PortRange {
-    pub fn width(&self) -> u16 {
-        self.to.value() - self.from.value()
-    }
-
     pub fn contains(&self, port: Port) -> bool {
         self.from <= port && self.to >= port
     }
@@ -193,8 +189,10 @@ pub enum ParseServicePortError {
     InvalidPort(ParsePortError),
     #[error("invalid port range: {0}")]
     InvalidRange(ParsePortRangeError),
-    #[error("both ranges should have same width: {external} and {internal}")]
-    MismatchedRangeWidths {
+    #[error(
+        "can't forward a range onto another range ({external}:{internal}) - NAT sends every connection to the first free port of {internal}, not port for port: forward {external} as it is, or onto one port"
+    )]
+    RangeOntoRange {
         external: PortRange,
         internal: PortRange,
     },
@@ -215,18 +213,8 @@ impl From<ParsePortOrRangeError> for ParseServicePortError {
 #[serde(try_from = "String")]
 pub enum ServicePort {
     Same(PortOrRange),
-    Translation {
-        external: Port,
-        internal: Port,
-    },
-    RangeCollapse {
-        external: PortRange,
-        internal: Port,
-    },
-    RangeMap {
-        external: PortRange,
-        internal: PortRange,
-    },
+    Translation { external: Port, internal: Port },
+    RangeCollapse { external: PortRange, internal: Port },
 }
 
 impl FromStr for ServicePort {
@@ -251,15 +239,17 @@ impl FromStr for ServicePort {
                         Ok(Self::RangeCollapse { external, internal })
                     }
 
+                    // NAT onto a range keeps no offset: every connection would
+                    // reach the first free port of the internal range.
                     (PortOrRange::Range(external), PortOrRange::Range(internal)) => {
-                        if external.width() != internal.width() {
-                            return Err(ParseServicePortError::MismatchedRangeWidths {
+                        if external != internal {
+                            return Err(ParseServicePortError::RangeOntoRange {
                                 external,
                                 internal,
                             });
                         }
 
-                        Ok(Self::RangeMap { external, internal })
+                        Ok(Self::Same(PortOrRange::Range(external)))
                     }
 
                     (PortOrRange::Single(external), PortOrRange::Range(internal)) => {
@@ -285,7 +275,6 @@ impl fmt::Display for ServicePort {
             Self::Same(port_or_range) => port_or_range.fmt(f),
             Self::Translation { external, internal } => write!(f, "{external}:{internal}",),
             Self::RangeCollapse { external, internal } => write!(f, "{external}:{internal}",),
-            Self::RangeMap { external, internal } => write!(f, "{external}:{internal}"),
         }
     }
 }
@@ -302,10 +291,6 @@ impl ServicePort {
                 external: _,
                 internal,
             } => PortOrRange::Single(*internal),
-            Self::RangeMap {
-                external: _,
-                internal,
-            } => PortOrRange::Range(*internal),
         }
     }
 
@@ -317,10 +302,6 @@ impl ServicePort {
                 internal: _,
             } => PortOrRange::Single(*external),
             Self::RangeCollapse {
-                external,
-                internal: _,
-            } => PortOrRange::Range(*external),
-            Self::RangeMap {
                 external,
                 internal: _,
             } => PortOrRange::Range(*external),
@@ -363,7 +344,6 @@ mod tests {
         let r: PortRange = "22-80".parse().unwrap();
         assert_eq!(r.from.value(), 22);
         assert_eq!(r.to.value(), 80);
-        assert_eq!(r.width(), 58);
         assert_eq!(r.to_string(), "22-80");
     }
 
@@ -458,19 +438,27 @@ mod tests {
     }
 
     #[test]
-    fn service_port_range_map() {
-        let sp: ServicePort = "1000-2000:3000-4000".parse().unwrap();
-        assert!(matches!(sp, ServicePort::RangeMap { .. }));
-        assert_eq!(sp.external().to_string(), "1000-2000");
-        assert_eq!(sp.internal().to_string(), "3000-4000");
+    fn service_port_range_onto_the_same_range_is_the_range() {
+        let sp: ServicePort = "1000-2000:1000-2000".parse().unwrap();
+        assert_eq!(sp, "1000-2000".parse().unwrap());
     }
 
     #[test]
     fn service_port_errors() {
-        assert!(matches!(
-            "1000-2000:3000-4500".parse::<ServicePort>(),
-            Err(ParseServicePortError::MismatchedRangeWidths { .. })
-        ));
+        // Not port for port: every connection would reach 3000.
+        for port in [
+            "1000-2000:3000-4000",
+            "1000-2000:3000-4500",
+            "1000-2000:1000-2001",
+        ] {
+            assert!(
+                matches!(
+                    port.parse::<ServicePort>(),
+                    Err(ParseServicePortError::RangeOntoRange { .. })
+                ),
+                "{port}"
+            );
+        }
         assert!(matches!(
             "80:1000-2000".parse::<ServicePort>(),
             Err(ParseServicePortError::SingleToRangeTranslation { .. })

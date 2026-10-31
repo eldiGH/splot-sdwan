@@ -259,7 +259,7 @@ The same `splot.yml` must behave the same on every backend, so splot never relie
 
 The only mechanism for access control. Each service declares:
 
-- `port` — port number or range (string). `"external:internal"` form translates ports for WAN forwards; bare `"22"` means same external/internal.
+- `port` — port number or range (string). `"external:internal"` form translates ports for WAN forwards; bare `"22"` means same external/internal. A range forwards as itself or onto one port, never onto another range (decided): the kernel's NAT keeps no offset, so every connection to `1000-1010` forwarded onto `2000-2010` would reach 2000 (checked in a network namespace with nft, on both backends' path).
 - `proto` — `tcp`, `udp`, or array (`OneOrMany`)
 - `allowFrom` — optional; one or more tag/name references granting LAN/mesh access
 - `wan` — optional; declares WAN exposure on listed routers (see below)

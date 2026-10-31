@@ -288,7 +288,7 @@ ssh:
 
 | Field       | Type                      | Required | Description                                                                                                                         |
 | ----------- | ------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `port`      | string                    | yes      | Port number or range. Use `"external:internal"` form to translate ports for WAN forwards; bare `"22"` means same external/internal. |
+| `port`      | string                    | yes      | Port number or range. Use `"external:internal"` form to translate ports for WAN forwards; bare `"22"` means same external/internal. A range forwards as it is (`"6000-6010"`) or onto one port (`"6000-6010:6000"`), never onto another range: NAT would send every connection to that range's first free port, not port for port. |
 | `proto`     | string or list of strings | yes      | Protocol(s). Accepted values: `tcp`, `udp`.                                                                                         |
 | `allowFrom` | string or list of strings | no       | Tags or qualified references whose resolved addresses are granted LAN/mesh access. See [Tags](#tags).                               |
 | `wan`       | WAN exposure object       | no       | Declares external (WAN) exposure of this service. See [WAN exposure](#wan-exposure).                                                |
