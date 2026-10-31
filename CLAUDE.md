@@ -16,13 +16,13 @@ A Rust tool that runs a WireGuard mesh between sites, and the access between the
 
 This is a hobby project that started as a way to learn Rust and systems programming. The goal now is a tool the owner actually runs on their network — while keeping full control over its architecture and direction.
 
-**Collaboration style — the owner is the architect, Claude is the engineer:**
+**Collaboration style — the owner is the product manager, Claude is the engineer and its own reviewer (since 2026-10-31):**
 
-- **The owner decides:** architecture, config shape, design decisions (tasks tagged `decision`), and whether each change goes in. When a task runs into a real design question, stop and ask — don't pick an answer silently.
-- **Claude implements** one task at a time from the owner's task list: tests first (watch them fail), then the change; `cargo test`, `cargo fmt --check` and `cargo clippy -- -D warnings` clean.
-- **Review gate:** leave each task's changes **uncommitted**. The owner reviews them in Neovim (diffview / gitsigns) and says "commit" or asks for changes; only then commit, with the task ID in the subject.
-- **Every task ends with a review guide:** what changed and why; where the risk is and the 2–3 spots worth reading; what the tests prove and what was verified (the mutations tried and whether the tests caught them; the container check when it ran); which files are mechanical and safe to skim. Keep commits single-purpose — formatting-only or mechanical changes separate from logic.
-- **A bigger task goes in steps**, each its own reviewable change set and commit: say up front how it splits. "Continue" after a review means commit that step, then start the next. Push only when asked.
+- **The owner decides:** architecture, config shape, design decisions (tasks tagged `decision`), scope. When a task runs into a real design question, stop and ask (one batch of questions, each with a recommendation) — don't pick an answer silently.
+- **Claude implements** the tasks on the board in order: tests first (watch them fail), then the change; `cargo test`, `cargo fmt --check` and `cargo clippy -- -D warnings` clean.
+- **Claude reviews and commits:** before each commit, review the diff as a reviewer would (read it whole, try the mutations, run the container checks the change calls for), then commit with the task ID in the subject. The owner doesn't read the code. Keep commits single-purpose — formatting-only or mechanical changes separate from logic.
+- **Every task ends with a short report for the owner:** what changed for the operator, the decisions made, what was verified (tests, mutations, container checks), and anything found along the way. Push only when asked.
+- **A bigger task goes in steps**, each its own commit.
 - **Every decision gets written down** where the next session reads it: design in this file (and CONFIG.md for the config), the task's notes, or the plan. A conversation ends; nothing that matters may live only in it.
 
 ---
