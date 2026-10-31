@@ -2,6 +2,7 @@
 //! platform in it: each backend renders it its own way.
 
 pub mod dhcp;
+pub mod dns;
 pub mod firewall;
 pub mod wireguard;
 
@@ -12,6 +13,7 @@ use crate::{
     types::{identifier::Identifier, port::PortOrRange, protocol::Protocol, wg_key::WgPublicKey},
 };
 use dhcp::DhcpPlan;
+use dns::DnsPlan;
 use firewall::FirewallPlan;
 use wireguard::WireGuardPlan;
 
@@ -26,6 +28,7 @@ pub struct NodePlan {
     pub wireguard: Option<WireGuardPlan>,
     pub firewall: Option<FirewallPlan>,
     pub dhcp: Option<DhcpPlan>,
+    pub dns: Option<DnsPlan>,
 }
 
 /// The plan for the node named `node`; none when the network has no such node.
@@ -46,6 +49,7 @@ pub fn plan(network: &Network, node: &Identifier) -> Option<NodePlan> {
         wireguard,
         firewall,
         dhcp: platform.dhcp().map(|_| dhcp::plan(network, node)),
+        dns: platform.dns().map(|_| dns::plan(network, node)),
     })
 }
 
@@ -56,7 +60,8 @@ impl fmt::Display for NodePlan {
         writeln!(f, "# {}: key {}", self.node, self.public_key.as_str())?;
         writeln!(f, "\n[wireguard]\n{}", Section(&self.wireguard))?;
         writeln!(f, "[firewall]\n{}", Section(&self.firewall))?;
-        write!(f, "[dhcp]\n{}", Section(&self.dhcp))
+        writeln!(f, "[dhcp]\n{}", Section(&self.dhcp))?;
+        write!(f, "[dns]\n{}", Section(&self.dns))
     }
 }
 
@@ -130,6 +135,7 @@ nodes:
       os: openwrt
       wireguard: none
       dhcp: none
+      dns: none
     publicKey: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=
     endpoint: 5.6.7.8
     listenPort: 51820
@@ -154,6 +160,8 @@ peer Cabin at 10.100.0.2: key CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=, allo
 none: left alone
 
 [dhcp]
+
+[dns]
 "
         );
 
@@ -161,7 +169,12 @@ none: left alone
         assert!(cabin.wireguard.is_none());
         assert!(cabin.firewall.is_some());
         assert!(cabin.dhcp.is_none());
-        assert!(cabin.to_string().ends_with("[dhcp]\nnone: left alone\n"));
+        assert!(cabin.dns.is_none());
+        assert!(
+            cabin
+                .to_string()
+                .ends_with("[dhcp]\nnone: left alone\n\n[dns]\nnone: left alone\n")
+        );
         // Its key stays: it's who the plan is for.
         assert_eq!(
             cabin.public_key.as_str(),

@@ -26,7 +26,7 @@ CONTAINER=splot-linux
 
 # Cabin's endpoint in splot.example.yml, a name, and the address the container
 # resolves it to: a name that doesn't resolve keeps the whole interface down.
-CABIN_ENDPOINT=cabin.example.net
+CABIN_ENDPOINT=wg.cabin.example.org
 CABIN_ADDRESS=203.0.113.20
 
 CONF=/etc/wireguard/spl_mesh.conf

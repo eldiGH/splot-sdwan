@@ -4,7 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     model::host::{HostAddress, Place},
-    types::{identifier::Identifier, ip::Ipv4Network, port::ServicePort, protocol::Protocol},
+    types::{
+        dns::DnsLabel, identifier::Identifier, ip::Ipv4Network, port::ServicePort,
+        protocol::Protocol,
+    },
 };
 
 /// A service a host offers.
@@ -14,6 +17,8 @@ pub struct Service {
     pub(super) proto: BTreeSet<Protocol>,
     pub(super) sources: Sources,
     pub(super) wan: Option<Wan>,
+    /// The names it's known by in its host's node's domain.
+    pub(super) dns: BTreeSet<DnsLabel>,
 }
 
 impl Service {
@@ -33,6 +38,10 @@ impl Service {
     /// How it's exposed to the internet, if it is.
     pub fn wan(&self) -> Option<&Wan> {
         self.wan.as_ref()
+    }
+
+    pub fn dns(&self) -> &BTreeSet<DnsLabel> {
+        &self.dns
     }
 }
 

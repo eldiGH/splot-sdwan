@@ -8,7 +8,7 @@ use crate::{
     config::{self, Client, Config},
     model::{
         host::{Host, HostAddress, HostRef, Place, WgPeer},
-        node::{Node, Zone},
+        node::{Node, NodeDns, Zone},
         platform::Platform,
         validator::types::{ValidationError, ValidationReport},
     },
@@ -219,6 +219,10 @@ fn check_node(
         zones,
         hub,
         wan_zone: node.wan_zone.clone(),
+        dns: node.dns.as_ref().map(|dns| NodeDns {
+            domain: dns.domain.clone(),
+            address: dns.address,
+        }),
     });
     let node_host = Host {
         id: HostRef::Node(node_name.clone()),

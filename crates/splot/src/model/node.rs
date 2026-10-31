@@ -4,6 +4,7 @@ use std::{collections::BTreeMap, net::Ipv4Addr};
 
 use super::platform::Platform;
 use crate::types::{
+    dns::Hostname,
     endpoint::EndpointHost,
     identifier::Identifier,
     ip::{Ipv4Interface, Ipv4Network},
@@ -30,6 +31,7 @@ pub struct Node {
     pub(super) hub: Option<Ipv4Network>,
     /// The firewall zone it reaches the internet through, if it exposes services.
     pub(super) wan_zone: Option<Identifier>,
+    pub(super) dns: Option<NodeDns>,
 }
 
 impl Node {
@@ -74,6 +76,29 @@ impl Node {
 
     pub fn wan_zone(&self) -> Option<&Identifier> {
         self.wan_zone.as_ref()
+    }
+
+    /// Its DNS domain, and where it answers it; none when it has no domain.
+    pub fn dns(&self) -> Option<&NodeDns> {
+        self.dns.as_ref()
+    }
+}
+
+/// A node's DNS domain, and the address it answers it at: the other nodes
+/// forward the domain there, over the mesh. Checked to be on the node.
+#[derive(Debug)]
+pub struct NodeDns {
+    pub(super) domain: Hostname,
+    pub(super) address: Ipv4Addr,
+}
+
+impl NodeDns {
+    pub fn domain(&self) -> &Hostname {
+        &self.domain
+    }
+
+    pub fn address(&self) -> Ipv4Addr {
+        self.address
     }
 }
 

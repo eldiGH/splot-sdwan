@@ -22,7 +22,7 @@ BINARY=target/$TARGET/release/splot
 
 # Cabin's endpoint in splot.example.yml, a name, and the address the container
 # resolves it to. The name is changed to an address to test a live peer update.
-CABIN_ENDPOINT=cabin.example.net
+CABIN_ENDPOINT=wg.cabin.example.org
 CABIN_ADDRESS=203.0.113.20
 
 failures=0

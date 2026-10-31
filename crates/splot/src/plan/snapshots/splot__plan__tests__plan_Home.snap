@@ -7,7 +7,7 @@ expression: plan.to_string()
 [wireguard]
 interface: listen 51820, address 10.100.0.1/16
 peer Barn at 10.100.0.4: key ReplaceBarnPublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.4/32, 192.168.40.0/24, 192.168.4.0/24], routed, endpoint 203.0.113.30:51820, psk
-peer Cabin at 10.100.0.2: key ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.2/32, 192.168.2.0/24], routed, endpoint cabin.example.net:51820, psk
+peer Cabin at 10.100.0.2: key ReplaceCabinPublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.2/32, 192.168.2.0/24], routed, endpoint wg.cabin.example.org:51820, psk
 peer Lake at 10.100.0.3: key ReplaceLakePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.3/32, 192.168.3.0/24], routed, psk
 peer Phone at 10.100.0.100: key ReplacePhonePublicKeyAAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.0.100/32], psk
 peer Home.lte-cam at 10.100.10.10: key ReplaceLteCamPublicKeyAAAAAAAAAAAAAAAAAAAAA=, allowed [10.100.10.10/32]
@@ -35,3 +35,16 @@ lease Home.tv as tv: 192.168.10.20 for [aa:bb:cc:00:00:05]
 lease Home.nas as nas: 192.168.1.20 for [aa:bb:cc:00:00:03]
 lease Home.printer as printer: 192.168.1.16 for [aa:bb:cc:00:00:02]
 lease Phone as Phone: 192.168.1.50 for [aa:bb:cc:00:00:01]
+
+[dns]
+local home.example.org
+record tv.home.example.org: 192.168.10.20 (Home.tv)
+record nas.home.example.org: 192.168.1.20 (Home.nas)
+record printer.home.example.org: 192.168.1.16 (Home.printer)
+record lte-cam.home.example.org: 10.100.10.10 (Home.lte-cam)
+record Phone.home.example.org: 192.168.1.50 (Phone)
+alias files.home.example.org -> nas.home.example.org (Home.nas https)
+alias photos.home.example.org -> nas.home.example.org (Home.nas https)
+forward barn.example.org to 192.168.4.2 (Barn)
+forward cabin.example.org to 192.168.2.1 (Cabin)
+public wg.cabin.example.org

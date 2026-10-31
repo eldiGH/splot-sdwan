@@ -28,6 +28,13 @@ nodes.Home.meshIp: IP 10.0.0.1 is already used at nodes.Cabin.meshIp
 nodes.Home.meshIp: client has IP on zone 'iot', but already has an IP on another zone at nodes.Cabin.meshIp (max one zone per (client, node))
 nodes.Home.meshIp: no macs - splot's DHCP on Home reserves the address by MAC, so add them (for a host with a static address too: the reservation keeps the pool off it)
 nodes.Home.meshIp: splot's DHCP on Home hands out 'my_printer' as a host name, which it can't be: invalid character '_' in "my_printer" (only letters, digits and hyphens) - rename it
+nodes.Home.meshIp: 10.0.0.1 isn't on the node - the others forward its domain there over the mesh, so it's in one of its zones, or its meshIp
+nodes.Home.meshIp: cabin.home.example.org overlaps Home's domain home.example.org - each node answers a domain of its own, and the others forward it there
+nodes.Home.meshIp: splot's DNS on Home names 'my_printer' in its domain, which it can't: invalid character '_' in "my_printer" (only letters, digits and hyphens) - rename it
+nodes.Home.meshIp: printer.home.example.org is a name in its domain already, at nodes.Cabin.meshIp (DNS ignores case)
+nodes.Home.meshIp: only a service of a device or a hub client gets names, in its node's domain
+nodes.Home.meshIp: cabin.example.org is Cabin's domain itself - splot sends an endpoint name to public DNS, and the domain to Cabin: dial a name inside it (wg.cabin.example.org)
+nodes.Home.meshIp: Home has no domain to name it in - give it one (`dns: { domain, address }`)
 nodes.Home.meshIp: public key required (client has a mesh IP)
 nodes.Home.meshIp: node 'Lake' does not exist
 nodes.Home.meshIp: public key is already used at nodes.Cabin.meshIp - every node and client needs its own key

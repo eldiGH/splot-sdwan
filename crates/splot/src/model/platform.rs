@@ -42,6 +42,10 @@ impl Platform {
         self.dhcp
     }
 
+    pub fn dns(&self) -> Option<DnsProgram> {
+        self.dns
+    }
+
     pub fn ssh(&self) -> Option<&SshDestination> {
         self.ssh.as_ref()
     }

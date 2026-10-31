@@ -39,6 +39,16 @@ impl TryFrom<String> for EndpointHost {
     }
 }
 
+impl EndpointHost {
+    /// The name, when it's one.
+    pub fn name(&self) -> Option<&Hostname> {
+        match self {
+            Self::Ip(_) => None,
+            Self::Name(name) => Some(name),
+        }
+    }
+}
+
 impl fmt::Display for EndpointHost {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

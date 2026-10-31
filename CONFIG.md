@@ -56,6 +56,7 @@ HomeRouter:
 | `services`      | map of name → Service      | no       | Services exposed by the router itself (e.g. SSH, admin UI).                                                                                                                                                       |
 | `wanZone`       | string                     | no\*     | Name of the OpenWRT firewall zone that is WAN-facing on this router (where splot manages the firewall, not starting with a digit, as fw4's zone names don't). Splot does not manage this zone; it only references it when generating port forwards, and to let the node's WireGuard `listenPort` in. \*Required if any service uses this node in `wan.via`, or the node has an `endpoint` (others dial it), unless the node leaves its firewall alone (`firewall: none`). An `endpoint` doesn't need it where splot leaves the WireGuard alone (`wireguard: none`). |
 | `tags`          | string or list of strings  | no       | Explicit tags assigned to the node. See [Tags](#tags).                                                                                                                                                            |
+| `dns`           | DNS                        | no       | The node's DNS domain, and the address it answers it at. See [DNS](#dns). |
 
 ---
 
@@ -299,6 +300,7 @@ ssh:
 | `proto`     | string or list of strings | yes      | Protocol(s). Accepted values: `tcp`, `udp`.                                                                                         |
 | `allowFrom` | string or list of strings | no       | Tags or qualified references whose resolved addresses are granted LAN/mesh access. See [Tags](#tags).                               |
 | `wan`       | WAN exposure object       | no       | Declares external (WAN) exposure of this service. See [WAN exposure](#wan-exposure).                                                |
+| `dns`       | string or list of strings | no       | Names the service is known by in its host's node's domain: each `<name>.<domain>` an alias (CNAME) of the host's own name. Only for a device's or a hub client's service, on a node with a domain. See [DNS](#dns). |
 
 A service must grant access in at least one direction — either `allowFrom` or `wan` must be set. A service with neither is operationally meaningless (warning).
 
@@ -308,6 +310,33 @@ Services may be declared on:
 - A **zone device** (`zone.devices.<name>.services`) — the device hosts the service
 - A **hub client** (`hub.clients.<name>.services`) — the client hosts the service
 - A **global client** (`client.services`) — the client hosts the service, reached at its `meshIp` and at its IPs on the zones (see [Client (global)](#client-global))
+
+---
+
+## DNS
+
+A node's DNS domain, and the address it answers it at.
+
+```yaml
+HomeRouter:
+  dns:
+    domain: home.example.org
+    address: 192.168.1.1
+```
+
+| Field     | Type         | Required | Description |
+| --------- | ------------ | -------- | ----------- |
+| `domain`  | DNS name     | yes      | The node's domain. No two nodes' domains overlap (one inside another included). |
+| `address` | IPv4 address | yes      | Where the node's DNS answers the domain: the other nodes forward it there, over the mesh. An address on one of its zones (its own, a role address like `10.49.0.53` on it, or another box's, a Pi-hole say), or its `meshIp`. |
+
+Where splot manages a node's DNS (`dns` in its [platform](#platform); on OpenWrt dnsmasq, unless `none`):
+
+- **Names in its domain:** each of its devices and hub clients, and each global client with an address on its zones, gets `<name>.<domain>` at that address (`printer.home.example.org`); a service's `dns` names are aliases of its host's (`photos.home.example.org` → `nas.home.example.org`). The node itself gets none. Each name must be a host name (letters, digits, hyphens), and appear once in the domain, case aside (DNS ignores it: `Printer` and `printer` are one name).
+- **Its own domain is answered there alone:** a name in it that neither splot nor your own config knows gets no answer from public DNS.
+- **The other nodes' domains are forwarded** to their `address`, over the mesh; the node itself needs no domain for that. splot lets port 53 in at each node's `address`, from the nodes that forward to it.
+- **Endpoint names inside a mesh domain** (`wg.cabin.example.org`) are asked of public DNS on every such node: the tunnel can't need itself to come up. So an endpoint can't be a domain itself.
+
+A node without `dns` has no domain: no names of its own, but it still forwards the others'. Where splot leaves a node's DNS alone (`dns: none`), a domain on it is yours to serve: the others still forward it there.
 
 ---
 

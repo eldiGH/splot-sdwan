@@ -5,7 +5,7 @@ use splot_core::consts::MESH_DEVICE;
 use crate::types::{
     allow_from_ref::AllowFromRef,
     config_location::ConfigLocation,
-    dns::ParseHostnameError,
+    dns::{Hostname, ParseHostnameError},
     identifier::Identifier,
     interface::InterfaceName,
     ip::{Ipv4Network, ReservedAddress},
@@ -208,6 +208,56 @@ pub enum ValidationError {
         at: ConfigLocation,
     },
 
+    // dns
+    #[error(
+        "{at}: {address} isn't on the node - the others forward its domain there over the mesh, so it's in one of its zones, or its meshIp"
+    )]
+    DnsAddressOffNode {
+        address: Ipv4Addr,
+        at: ConfigLocation,
+    },
+    #[error(
+        "{at}: {domain} overlaps {node}'s domain {other} - each node answers a domain of its own, and the others forward it there"
+    )]
+    DomainOverlap {
+        domain: Hostname,
+        node: Identifier,
+        other: Hostname,
+        at: ConfigLocation,
+    },
+    #[error(
+        "{at}: splot's DNS on {node} names '{name}' in its domain, which it can't: {reason} - rename it"
+    )]
+    InvalidDnsName {
+        name: String,
+        node: Identifier,
+        reason: ParseHostnameError,
+        at: ConfigLocation,
+    },
+    #[error("{at}: {name} is a name in its domain already, at {with} (DNS ignores case)")]
+    DnsNameTaken {
+        name: Hostname,
+        with: ConfigLocation,
+        at: ConfigLocation,
+    },
+    #[error("{at}: only a service of a device or a hub client gets names, in its node's domain")]
+    DnsNameNotOnAHost { at: ConfigLocation },
+    #[error(
+        "{at}: {endpoint} is {node}'s domain itself - splot sends an endpoint name to public DNS, and the domain to {node}: dial a name inside it (wg.{endpoint})"
+    )]
+    EndpointIsADomain {
+        endpoint: Hostname,
+        node: Identifier,
+        at: ConfigLocation,
+    },
+    #[error(
+        "{at}: {node} has no domain to name it in - give it one (`dns: {{ domain, address }}`)"
+    )]
+    DnsNameWithoutDomain {
+        node: Identifier,
+        at: ConfigLocation,
+    },
+
     // endpoints
     #[error(
         "{at}: no node has an endpoint - at least one must, or no node can dial another and the mesh never forms"
@@ -312,6 +362,13 @@ impl ValidationError {
             Self::LocalNameCollision { at, .. } => at,
             Self::MacMissing { at, .. } => at,
             Self::InvalidHostname { at, .. } => at,
+            Self::DnsAddressOffNode { at, .. } => at,
+            Self::DomainOverlap { at, .. } => at,
+            Self::InvalidDnsName { at, .. } => at,
+            Self::DnsNameTaken { at, .. } => at,
+            Self::DnsNameNotOnAHost { at } => at,
+            Self::EndpointIsADomain { at, .. } => at,
+            Self::DnsNameWithoutDomain { at, .. } => at,
             Self::NetworkCollision { at, .. } => at,
             Self::HubOutsideMeshNetwork { at, .. } => at,
             Self::MeshIpInHubNetwork { at, .. } => at,
@@ -643,6 +700,37 @@ mod tests {
                 name: id("my_printer"),
                 node: id("Home"),
                 reason: "my_printer".parse::<DnsLabel>().unwrap_err(),
+                at: at(),
+            },
+            ValidationError::DnsAddressOffNode {
+                address: ip,
+                at: at(),
+            },
+            ValidationError::DomainOverlap {
+                domain: "cabin.home.example.org".parse().unwrap(),
+                node: id("Home"),
+                other: "home.example.org".parse().unwrap(),
+                at: at(),
+            },
+            ValidationError::InvalidDnsName {
+                name: "my_printer".to_owned(),
+                node: id("Home"),
+                reason: "my_printer".parse::<DnsLabel>().unwrap_err(),
+                at: at(),
+            },
+            ValidationError::DnsNameTaken {
+                name: "printer.home.example.org".parse().unwrap(),
+                with: with(),
+                at: at(),
+            },
+            ValidationError::DnsNameNotOnAHost { at: at() },
+            ValidationError::EndpointIsADomain {
+                endpoint: "cabin.example.org".parse().unwrap(),
+                node: id("Cabin"),
+                at: at(),
+            },
+            ValidationError::DnsNameWithoutDomain {
+                node: id("Home"),
                 at: at(),
             },
             ValidationError::PublicKeyMissing { at: at() },

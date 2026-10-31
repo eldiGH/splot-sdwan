@@ -56,6 +56,7 @@ pub(super) fn check_services(
                 proto: service.proto.clone().into(),
                 sources,
                 wan,
+                dns: service.dns.clone().into(),
             },
         );
     }

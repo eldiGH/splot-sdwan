@@ -10,6 +10,7 @@ use crate::{
             ClientLoc, ConfigLocation, DeviceLoc, HubClientLoc, HubLoc, NodeLoc, ServiceLoc,
             ZoneLoc,
         },
+        dns::{DnsLabel, Hostname},
         endpoint::EndpointHost,
         identifier::Identifier,
         interface::InterfaceName,
@@ -44,6 +45,10 @@ pub struct Service {
     pub allow_from: OneOrManyUnique<AllowFromRef>,
 
     pub wan: Option<ServiceWan>,
+    /// The names it's known by in its host's node's domain: aliases of its
+    /// host's name.
+    #[serde(default)]
+    pub dns: OneOrManyUnique<DnsLabel>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -146,6 +151,16 @@ pub struct Node {
     pub hub: Option<NodeHub>,
 
     pub wan_zone: Option<Identifier>,
+    pub dns: Option<NodeDns>,
+}
+
+/// A node's DNS domain, and the address it answers it at, where the other
+/// nodes forward it.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NodeDns {
+    pub domain: Hostname,
+    pub address: Ipv4Addr,
 }
 
 impl Node {

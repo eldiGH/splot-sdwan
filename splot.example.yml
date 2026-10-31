@@ -54,8 +54,8 @@ nodes:
   # WireGuard listen port in: the other nodes dial it at its endpoint.
   Home:
     # The software the node runs. On OpenWrt, splot manages WireGuard
-    # (netifd), the firewall (fw4) and DHCP (dnsmasq) unless told otherwise;
-    # `firewall: none`, for one, leaves the firewall to you.
+    # (netifd), the firewall (fw4), DHCP and DNS (dnsmasq) unless told
+    # otherwise; `firewall: none`, for one, leaves the firewall to you.
     platform:
       os: openwrt
       # Where splot reaches it over ssh: anything ssh takes, given to the
@@ -67,6 +67,12 @@ nodes:
     listenPort: 51820
     meshIp: 10.100.0.1
     wanZone: wan
+    # Its DNS domain: its devices and hub clients get names in it
+    # (printer.home.example.org), and the other nodes forward it here, to the
+    # address it answers it at, over the mesh.
+    dns:
+      domain: home.example.org
+      address: 192.168.1.1
 
     services:
       # SSH to the router itself, reachable from anything tagged `admin`
@@ -105,6 +111,9 @@ nodes:
                 wan:
                   via: [Home]
                   sources: ["198.51.100.0/24", "203.0.113.7/32"]
+                # Names it's known by in Home's domain, aliases of the NAS's:
+                # files.home.example.org and photos.home.example.org.
+                dns: [files, photos]
 
       # A network of its own (a VLAN on the router) for what shouldn't reach
       # the rest. splot drops whatever no service lets through between the
@@ -154,10 +163,15 @@ nodes:
     # through public DNS, never through the mesh: the tunnel can't need itself
     # to come up. A peer name that doesn't resolve keeps the whole mesh
     # interface down, not just that peer (on OpenWrt and with wg-quick alike).
-    endpoint: cabin.example.net
+    # It's inside Cabin's own domain, so every node whose DNS splot manages
+    # asks public DNS for it, not Cabin.
+    endpoint: wg.cabin.example.org
     listenPort: 51820
     meshIp: 10.100.0.2
     wanZone: wan
+    dns:
+      domain: cabin.example.org
+      address: 192.168.2.1
 
     services:
       # DNS on the router itself, for Home's resolver to forward Cabin's names
@@ -216,6 +230,8 @@ nodes:
     publicKey: ReplaceLakePublicKeyAAAAAAAAAAAAAAAAAAAAAAA=
     listenPort: 51820
     meshIp: 10.100.0.3
+    # No `dns` block: Lake has no domain of its own, so no names; its dnsmasq
+    # (splot manages it, OpenWrt's default) still forwards the others' domains.
 
     zones:
       lan:
@@ -252,6 +268,10 @@ nodes:
     listenPort: 51820
     meshIp: 10.100.0.4
     wanZone: wan
+    # Its DNS is the same dnsmasq, which answers it at its LAN address.
+    dns:
+      domain: barn.example.org
+      address: 192.168.4.2
 
     services:
       # SSH to Barn itself, from admin devices anywhere on the mesh.

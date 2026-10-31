@@ -33,6 +33,23 @@ pub enum NodeLoc {
     Zone(Identifier, ZoneLoc),
     Hub(HubLoc),
     Service(Identifier, ServiceLoc),
+    Dns(DnsLoc),
+}
+
+/// Where in a node's `dns` block.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DnsLoc {
+    Domain,
+    Address,
+}
+
+impl Display for DnsLoc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Domain => write!(f, ".domain"),
+            Self::Address => write!(f, ".address"),
+        }
+    }
 }
 
 impl Display for NodeLoc {
@@ -51,6 +68,7 @@ impl Display for NodeLoc {
             Self::Service(service_id, service_loc) => {
                 write!(f, ".services.{service_id}{service_loc}")
             }
+            Self::Dns(dns_loc) => write!(f, ".dns{dns_loc}"),
         }
     }
 }
@@ -80,6 +98,7 @@ pub enum ServiceLoc {
     Port,
     AllowFrom,
     Wan(WanLoc),
+    Dns,
 }
 
 impl Display for ServiceLoc {
@@ -89,6 +108,7 @@ impl Display for ServiceLoc {
             Self::Port => write!(f, ".port"),
             Self::AllowFrom => write!(f, ".allowFrom"),
             Self::Wan(wan_loc) => write!(f, ".wan{wan_loc}"),
+            Self::Dns => write!(f, ".dns"),
         }
     }
 }

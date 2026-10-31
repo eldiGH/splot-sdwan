@@ -24,3 +24,11 @@ otherwise drop: between [mesh, lan], and from mesh to any zone
 [dhcp]
 lease Cabin.camera as camera: 192.168.2.30 for [aa:bb:cc:00:00:04]
 lease Cabin.weather as weather: 192.168.2.40 for [aa:bb:cc:00:00:06]
+
+[dns]
+local cabin.example.org
+record camera.cabin.example.org: 192.168.2.30 (Cabin.camera)
+record weather.cabin.example.org: 192.168.2.40 (Cabin.weather)
+forward barn.example.org to 192.168.4.2 (Barn)
+forward home.example.org to 192.168.1.1 (Home)
+public wg.cabin.example.org
