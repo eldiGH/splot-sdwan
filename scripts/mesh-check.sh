@@ -7,8 +7,9 @@
 # node, Barn (Debian with wg-quick, and its firewall as splot's nft table),
 # joins, and runs across the three; then a router itself (`Home.$node`) is let
 # in to a service on the other, and to one on Barn; a run on a node that holds
-# a session the other end dropped still checks that peer; last, a port forward
-# from Home's WAN reaches Cabin over the mesh.
+# a session the other end dropped still checks that peer; a port forward from
+# Home's WAN reaches Cabin over the mesh; last, on fresh routers, Cabin without
+# an endpoint: only splot's listen-port rule lets its handshake in at Home.
 #
 #   scripts/mesh-check.sh [VERSION]     default: the newest version in use
 #
@@ -90,8 +91,10 @@ container() {
 }
 run() { podman exec "$(container "$1")" sh -c "$2"; }
 
-# Lets the check in at node $1 over ssh: a host of its ssh config.
+# Lets the check in at node $1 over ssh: a host of its ssh config, in place of
+# the one a container booted before had (ssh takes a host's first entry).
 reachable() {
+	sed -i "/^Host $1\$/,/^\$/d" "$work/ssh_config"
 	cat >>"$work/ssh_config" <<EOF
 Host $1
 	HostName 127.0.0.1
@@ -152,8 +155,9 @@ boot() {
 	podman cp "$work/key.pub" "$container:/etc/dropbear/authorized_keys"
 	# The other router's endpoint name is this machine, at the gateway's
 	# address. WireGuard's port comes in on the WAN, where only splot's rule
-	# lets it in. The tunnel doesn't prove that rule: both routers dial, and
-	# each one's handshakes let the other's in as replies.
+	# lets it in. Where both routers dial, the tunnel doesn't prove that rule:
+	# each one's handshakes let the other's in as replies. The last step does,
+	# where only Cabin dials.
 	run "$name" "chmod 600 /etc/dropbear/authorized_keys
 		gateway=\$(ip -4 route show default | awk '{ print \$3 }')
 		echo \"\$gateway $ENDPOINTS\" >>/etc/hosts"
@@ -571,6 +575,40 @@ if ! grep -qF "$cabin_key" <<<"$before" && [ "$status" -eq 0 ] && grep -q '^Conf
 else
 	fail "a port forward from Home's WAN reaches Cabin over the mesh, as Home" \
 		"before: $before"$'\n'"exit $status: $output"$'\n'"after: $after"$'\n'"$(run home 'nft list chain inet fw4 srcnat_spl_mesh' 2>&1)"
+fi
+
+# Only one side dials: fresh routers, and Cabin without an endpoint (nor a
+# wanZone, which it would leave unused). Home can't dial Cabin, so nothing it
+# sent opened its conntrack for Cabin's address: Cabin's handshake comes in on
+# Home's WAN unasked, and only splot's rule lets it in, the listen port from
+# the wanZone. Cabin sends keepalives (a node nobody can dial does), so once
+# Home has heard from it, WireGuard there roams to Cabin's address and Home's
+# pings get through too.
+echo
+echo "== Only Cabin dials: Home lets its handshake in"
+boot home "$HOME_PORT"
+boot cabin "$CABIN_PORT"
+undialled() { mesh "$1" "$2" | sed '/^  Cabin:$/,$ { /^    endpoint: /d; /^    wanZone: /d }'; }
+undialled AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA= >"$work/splot.yml"
+splot init --node Home >/dev/null
+splot init --node Cabin >/dev/null
+home_key=$(run home 'uci get splot.config.private_key | wg pubkey')
+cabin_key=$(run cabin 'uci get splot.config.private_key | wg pubkey')
+undialled "$home_key" "$cabin_key" >"$work/splot.yml"
+psk=$(run home 'wg genpsk')
+splot psk set --node Home Cabin <<<"$psk" >/dev/null
+splot psk set --node Cabin Home <<<"$psk" >/dev/null
+output=$(splot apply --yes 2>&1) && status=0 || status=$?
+# Home has Cabin as a peer, without an endpoint to dial.
+cabin_peer=$(run home 'uci -q get network.spl_wireguard_spl_mesh_Cabin') || true
+cabin_endpoint=$(run home 'uci -q get network.spl_wireguard_spl_mesh_Cabin.endpoint_host') || true
+if [ "$status" -eq 0 ] && grep -q '^Confirmed' <<<"$output" &&
+	[ "$cabin_peer" = wireguard_spl_mesh ] && [ -z "$cabin_endpoint" ] &&
+	run cabin 'ping -c 5 -W 2 10.100.0.1 >/dev/null' && run home 'ping -c 3 -W 2 10.100.0.2 >/dev/null'; then
+	pass "only Cabin dials: splot's rule lets its handshake in on Home's WAN, and each answers the other's ping"
+else
+	fail "only Cabin dials: splot's rule lets its handshake in on Home's WAN, and each answers the other's ping" \
+		"exit $status: $output"$'\n'"Home's peer Cabin: ${cabin_peer:-none}, its endpoint: ${cabin_endpoint:-none}"$'\n'"$(run home 'wg show spl_mesh; nft list chain inet fw4 input_wan' 2>&1)"
 fi
 
 if [ "${SPLOT_CHECK_KEEP:-}" = 1 ]; then
