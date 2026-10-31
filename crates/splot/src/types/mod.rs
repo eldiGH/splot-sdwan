@@ -5,6 +5,7 @@ pub use splot_core::{identifier, wg_key};
 
 pub mod allow_from_ref;
 pub mod config_location;
+pub mod dns;
 pub mod endpoint;
 pub mod interface;
 pub mod ip;
@@ -22,7 +23,8 @@ mod tests {
 
     use super::{
         allow_from_ref::AllowFromRef,
-        endpoint::{EndpointHost, Hostname},
+        dns::Hostname,
+        endpoint::EndpointHost,
         identifier::{Identifier, NestedIdentifier},
         interface::InterfaceName,
         ip::{Ipv4Interface, Ipv4Network},
@@ -70,7 +72,7 @@ mod tests {
         is_error::<super::wan_via_target::ParseWanViaTargetError>();
         is_error::<super::wan_via_target::ParseWanViaTargetsError>();
         is_error::<super::mac::ParseMacError>();
-        is_error::<super::endpoint::ParseHostnameError>();
+        is_error::<super::dns::ParseHostnameError>();
         is_error::<super::endpoint::ParseEndpointHostError>();
         is_error::<super::wg_key::KeyFormatError>();
         is_error::<super::platform::ParseSettingError>();
