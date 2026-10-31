@@ -23,8 +23,7 @@ pub(super) struct RedirectFrom<'a> {
 
 /// A redirect for each of the forward's WAN sources, or one from anywhere when
 /// it has none. fw4 takes a single `src_ip` on a redirect, and skips one that
-/// has a list. Its NAT reflection doesn't read `src_ip`, so fw4 repeats the
-/// same reflection rules for each source, which does no harm.
+/// has a list.
 pub(super) fn per_source(redirect: &Redirect) -> Vec<RedirectFrom<'_>> {
     if redirect.sources.is_empty() {
         return vec![RedirectFrom {
@@ -110,6 +109,11 @@ impl UciSection for RedirectFrom<'_> {
             .set("dest", zone_name(&redirect.dest_zone))
             .set("dest_ip", redirect.dest_ip.to_string())
             .set("dest_port", redirect.internal_port.to_string())
+            // fw4 reflects a forward by default: hosts in the destination's
+            // zone reach it at the WAN address, whatever `wan.sources` says.
+            // splot doesn't: they reach it at its own address, as `allowFrom`
+            // grants, the same on every backend.
+            .set("reflection", "0")
             .extend_list("proto", &redirect.proto)
     }
 }
@@ -308,6 +312,24 @@ mod tests {
             !commands.iter().any(|command| command.contains(".src_ip")),
             "{commands:?}"
         );
+    }
+
+    #[test]
+    fn no_redirect_is_reflected() {
+        // fw4 reflects one unless told not to, from every source alike.
+        for sources in [&[][..], &["198.51.100.0/24", "203.0.113.7/32"][..]] {
+            for commands in rendered(&redirect(sources)) {
+                let section = commands[0]
+                    .trim_start_matches("set ")
+                    .split('=')
+                    .next()
+                    .unwrap();
+                assert!(
+                    commands.contains(&format!("set {section}.reflection='0'")),
+                    "{commands:?}"
+                );
+            }
+        }
     }
 
     #[test]

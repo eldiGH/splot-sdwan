@@ -328,6 +328,7 @@ wan:
 - **`sources` is CIDR-only** — splot identifiers are not accepted because they all resolve to internal addresses with no meaningful WAN-side semantics. Real WAN allowlists (office IP, partner CIDRs, webhook source ranges) are always arbitrary public CIDRs.
 - **Empty/missing `sources` means public** — anyone on the internet can reach the forwarded port. Use `sources` to restrict.
 - **`wan.sources` does not overlap with service-level `allowFrom`**: `allowFrom` controls LAN/mesh accept rules using splot identifiers; `sources` restricts WAN-side sources using raw CIDRs. They're independent.
+- **No NAT reflection.** Hosts inside your networks reach a forwarded service at its own address, as `allowFrom` lets them, not at your WAN address: splot turns OpenWrt's reflection off on its forwards (it would ignore `sources`), and writes none on Linux.
 - **Splot does not gate WAN exposure beyond `sources`** — if you need richer logic, configure the OpenWRT firewall directly.
 
 ### Destination IP selection

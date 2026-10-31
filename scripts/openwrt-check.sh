@@ -149,9 +149,10 @@ EOF
 
 	# The LAN up, as on a real router: its bridge's one port, eth0, isn't in
 	# the container, and a bridge without ports stays down unless told to come
-	# up empty. fw4 takes a port forward's NAT reflection from the LAN's
-	# address, and warns without one. Here, not in prepare.sh: the mesh check's
-	# routers share the image, and Cabin routes Home's LAN over the mesh.
+	# up empty. fw4 would take a port forward's NAT reflection from the LAN's
+	# address (splot turns it off, which the check proves with the LAN up).
+	# Here, not in prepare.sh: the mesh check's routers share the image, and
+	# Cabin routes Home's LAN over the mesh.
 	run "for device in \$(uci show network | grep -F \".name='br-lan'\" | cut -d. -f2); do
 		uci set network.\$device.bridge_empty=1
 	done
@@ -424,6 +425,18 @@ EOF
 	else
 		fail "a forward into the mesh is sent as the router's mesh IP" \
 			"$output"$'\n'"dnat: $dnat"$'\n'"$chain"
+	fi
+
+	# Hosts inside reach a forwarded service at its own address: no forward of
+	# splot's is reflected. fw4 reflects one by default, from its destination's
+	# zone to the WAN address, whatever wan.sources says.
+	local ruleset reflected
+	ruleset=$(run 'nft list ruleset' 2>&1) || true
+	reflected=$(grep -F '[SPLOT]' <<<"$ruleset" | grep -F 'reflection') || true
+	if grep -qF '[SPLOT] Home.nas https' <<<"$ruleset" && [ -z "$reflected" ]; then
+		pass "no port forward of splot's is reflected"
+	else
+		fail "no port forward of splot's is reflected" "$reflected"
 	fi
 
 	if output=$(run 'for conf in /var/etc/dnsmasq.conf.*; do dnsmasq --test -C "$conf" 2>&1 || exit 1; done'); then
